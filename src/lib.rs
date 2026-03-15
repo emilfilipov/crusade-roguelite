@@ -13,6 +13,7 @@ pub mod squad;
 pub mod steam;
 pub mod ui;
 pub mod upgrades;
+pub mod visuals;
 
 use bevy::prelude::*;
 
@@ -32,6 +33,7 @@ pub fn configure_game_app(app: &mut App) {
         .add_plugins((
             data::DataPlugin,
             core::CorePlugin,
+            visuals::VisualPlugin,
             map::MapPlugin,
             squad::SquadPlugin,
             formation::FormationPlugin,

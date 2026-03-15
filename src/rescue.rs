@@ -5,6 +5,7 @@ use crate::map::MapBounds;
 use crate::model::{
     CommanderUnit, GameState, RecruitEvent, RescuableUnit, StartRunEvent, Team, Unit, UnitKind,
 };
+use crate::visuals::ArtAssets;
 
 #[derive(Component, Clone, Copy, Debug)]
 pub struct RescueProgress {
@@ -28,6 +29,7 @@ fn spawn_rescuables_on_run_start(
     mut start_events: EventReader<StartRunEvent>,
     existing_rescuables: Query<Entity, With<RescuableUnit>>,
     data: Res<GameData>,
+    art: Res<ArtAssets>,
     bounds: Option<Res<MapBounds>>,
 ) {
     if start_events.is_empty() {
@@ -56,8 +58,15 @@ fn spawn_rescuables_on_run_start(
             },
             RescuableUnit,
             RescueProgress { elapsed: 0.0 },
-            Transform::from_xyz(position.x, position.y, 2.0),
-            GlobalTransform::default(),
+            SpriteBundle {
+                texture: art.friendly_knight_rescuable_variant.clone(),
+                sprite: Sprite {
+                    custom_size: Some(Vec2::splat(32.0)),
+                    ..default()
+                },
+                transform: Transform::from_xyz(position.x, position.y, 2.0),
+                ..default()
+            },
         ));
     }
 }

@@ -18,18 +18,19 @@ Use this to inspect any entity, component, resource, event, or gameplay system w
 Configured in `configure_game_app()` (`src/lib.rs`) in this order:
 1. `DataPlugin`
 2. `CorePlugin`
-3. `MapPlugin`
-4. `SquadPlugin`
-5. `FormationPlugin`
-6. `RescuePlugin`
-7. `EnemyPlugin`
-8. `CombatPlugin`
-9. `ProjectilePlugin`
-10. `MoralePlugin`
-11. `BannerPlugin`
-12. `UpgradePlugin`
-13. `UiPlugin`
-14. `PlatformPlugin`
+3. `VisualPlugin`
+4. `MapPlugin`
+5. `SquadPlugin`
+6. `FormationPlugin`
+7. `RescuePlugin`
+8. `EnemyPlugin`
+9. `CombatPlugin`
+10. `ProjectilePlugin`
+11. `MoralePlugin`
+12. `BannerPlugin`
+13. `UpgradePlugin`
+14. `UiPlugin`
+15. `PlatformPlugin`
 
 ### Global Game States
 Defined in `src/model.rs` (`GameState`):
@@ -148,6 +149,7 @@ Loaded by `GameData::load_from_dir("assets/data")` (`src/data.rs`).
 - `UpgradeDraft { active, options, autopick_timer }`
 - `HudSnapshot { cohesion, banner_dropped, squad_size, xp, wave_index }`
 - `PlatformRuntime { service }`
+- `ArtAssets` (texture handles for commander/recruit/enemy/banner/oasis/background)
 
 ### Events
 - `StartRunEvent`
@@ -247,11 +249,18 @@ Expected when ranged attacks are introduced.
   - Loads all JSON config and validates them.
   - Inserts `GameData` resource.
 
+### `src/visuals.rs`
+- `load_art_assets` (`Startup`)
+  - Loads texture handles from `assets/sprites/**` into `ArtAssets`.
+  - Falls back to default handles when `AssetServer` is unavailable (headless tests).
+
 ### `src/map.rs`
 - `spawn_camera_once` (`Startup`)
   - Spawns a `Camera2dBundle`.
 - `initialize_map_resources` (`OnEnter(MainMenu)`)
   - Inserts `MapBounds` from map config.
+- `spawn_background_visual` (`OnEnter(MainMenu)`)
+  - Spawns one background sprite covering map extents.
 - `handle_start_run_oasis` (`Update`)
   - On run start:
     - clears old oasis entities

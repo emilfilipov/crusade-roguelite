@@ -6,6 +6,7 @@ use crate::model::{
     Armor, AttackCooldown, AttackProfile, EnemyUnit, FriendlyUnit, GameState, Health, MoveSpeed,
     StartRunEvent, Team, Unit, UnitKind,
 };
+use crate::visuals::ArtAssets;
 
 #[derive(Resource, Clone, Debug, Default)]
 pub struct WaveRuntime {
@@ -41,6 +42,7 @@ fn spawn_waves(
     mut commands: Commands,
     time: Res<Time>,
     data: Res<GameData>,
+    art: Res<ArtAssets>,
     bounds: Option<Res<MapBounds>>,
     mut wave_runtime: ResMut<WaveRuntime>,
 ) {
@@ -53,6 +55,7 @@ fn spawn_waves(
             &mut commands,
             next_wave.count,
             &data,
+            &art,
             bounds.as_deref().copied(),
             wave_runtime.next_wave_index,
         );
@@ -64,6 +67,7 @@ fn spawn_enemy_wave(
     commands: &mut Commands,
     count: u32,
     data: &GameData,
+    art: &ArtAssets,
     bounds: Option<MapBounds>,
     wave_idx: usize,
 ) {
@@ -94,8 +98,15 @@ fn spawn_enemy_wave(
                 TimerMode::Repeating,
             )),
             MoveSpeed(cfg.move_speed),
-            Transform::from_xyz(pos.x, pos.y, 5.0),
-            GlobalTransform::default(),
+            SpriteBundle {
+                texture: art.enemy_infantry_idle.clone(),
+                sprite: Sprite {
+                    custom_size: Some(Vec2::splat(32.0)),
+                    ..default()
+                },
+                transform: Transform::from_xyz(pos.x, pos.y, 5.0),
+                ..default()
+            },
         ));
     }
 }

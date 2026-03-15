@@ -25,6 +25,7 @@ cargo build --release --target x86_64-pc-windows-msvc
 ./scripts/check.ps1
 ./scripts/build_windows.ps1
 ./scripts/package_windows_installer.ps1
+py -3 ./scripts/generate_32x32_assets.py
 ```
 
 ## Documentation

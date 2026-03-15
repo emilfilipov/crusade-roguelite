@@ -7,6 +7,7 @@ use crate::model::{
     Health, MoveSpeed, PlayerControlled, RecruitEvent, RescuableUnit, StartRunEvent, Team, Unit,
     UnitDiedEvent, UnitKind,
 };
+use crate::visuals::ArtAssets;
 
 #[derive(Resource, Clone, Debug, Default)]
 pub struct SquadRoster {
@@ -41,6 +42,7 @@ fn handle_start_run(
     mut start_events: EventReader<StartRunEvent>,
     existing_units: Query<Entity, With<Unit>>,
     data: Res<GameData>,
+    art: Res<ArtAssets>,
 ) {
     if start_events.is_empty() {
         return;
@@ -51,13 +53,13 @@ fn handle_start_run(
         commands.entity(entity).despawn_recursive();
     }
 
-    let commander = spawn_commander(&mut commands, &data);
+    let commander = spawn_commander(&mut commands, &data, &art);
     roster.commander = Some(commander);
     roster.friendly_count = 1;
     roster.casualties = 0;
 }
 
-fn spawn_commander(commands: &mut Commands, data: &GameData) -> Entity {
+fn spawn_commander(commands: &mut Commands, data: &GameData, art: &ArtAssets) -> Entity {
     let cfg = &data.units.commander;
     commands
         .spawn((
@@ -82,13 +84,25 @@ fn spawn_commander(commands: &mut Commands, data: &GameData) -> Entity {
                 TimerMode::Repeating,
             )),
             MoveSpeed(cfg.move_speed),
-            Transform::from_xyz(0.0, 0.0, 10.0),
-            GlobalTransform::default(),
+            SpriteBundle {
+                texture: art.commander_idle.clone(),
+                sprite: Sprite {
+                    custom_size: Some(Vec2::splat(32.0)),
+                    ..default()
+                },
+                transform: Transform::from_xyz(0.0, 0.0, 10.0),
+                ..default()
+            },
         ))
         .id()
 }
 
-fn spawn_recruit(commands: &mut Commands, data: &GameData, position: Vec2) -> Entity {
+fn spawn_recruit(
+    commands: &mut Commands,
+    data: &GameData,
+    art: &ArtAssets,
+    position: Vec2,
+) -> Entity {
     let cfg = &data.units.recruit_infantry_knight;
     commands
         .spawn((
@@ -111,8 +125,15 @@ fn spawn_recruit(commands: &mut Commands, data: &GameData, position: Vec2) -> En
                 TimerMode::Repeating,
             )),
             MoveSpeed(cfg.move_speed),
-            Transform::from_xyz(position.x, position.y, 10.0),
-            GlobalTransform::default(),
+            SpriteBundle {
+                texture: art.friendly_knight_idle.clone(),
+                sprite: Sprite {
+                    custom_size: Some(Vec2::splat(32.0)),
+                    ..default()
+                },
+                transform: Transform::from_xyz(position.x, position.y, 10.0),
+                ..default()
+            },
         ))
         .id()
 }
@@ -170,9 +191,10 @@ fn apply_recruit_events(
     mut commands: Commands,
     mut recruit_events: EventReader<RecruitEvent>,
     data: Res<GameData>,
+    art: Res<ArtAssets>,
 ) {
     for event in recruit_events.read() {
-        spawn_recruit(&mut commands, &data, event.world_position);
+        spawn_recruit(&mut commands, &data, &art, event.world_position);
     }
 }
 
@@ -204,6 +226,7 @@ mod tests {
     use crate::data::GameData;
     use crate::model::{CommanderUnit, GameState, StartRunEvent};
     use crate::squad::SquadPlugin;
+    use crate::visuals::ArtAssets;
 
     #[test]
     fn starts_with_only_commander_on_run_start() {
@@ -214,6 +237,7 @@ mod tests {
         app.insert_resource(
             GameData::load_from_dir(std::path::Path::new("assets/data")).expect("data"),
         );
+        app.insert_resource(ArtAssets::default());
         app.add_plugins(SquadPlugin);
 
         app.world_mut().send_event(StartRunEvent);

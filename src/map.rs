@@ -2,6 +2,7 @@ use bevy::prelude::*;
 
 use crate::data::GameData;
 use crate::model::{FriendlyUnit, GameState, Health, StartRunEvent};
+use crate::visuals::ArtAssets;
 
 #[derive(Resource, Clone, Copy, Debug)]
 pub struct MapBounds {
@@ -22,6 +23,7 @@ impl Plugin for MapPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, spawn_camera_once)
             .add_systems(OnEnter(GameState::MainMenu), initialize_map_resources)
+            .add_systems(OnEnter(GameState::MainMenu), spawn_background_visual)
             .add_systems(Update, handle_start_run_oasis)
             .add_systems(
                 Update,
@@ -41,10 +43,40 @@ fn initialize_map_resources(mut commands: Commands, data: Res<GameData>) {
     });
 }
 
+#[derive(Component)]
+struct BackgroundVisual;
+
+fn spawn_background_visual(
+    mut commands: Commands,
+    bounds: Option<Res<MapBounds>>,
+    art: Res<ArtAssets>,
+    existing: Query<Entity, With<BackgroundVisual>>,
+) {
+    for entity in existing.iter() {
+        commands.entity(entity).despawn_recursive();
+    }
+    let Some(bounds) = bounds else {
+        return;
+    };
+    commands.spawn((
+        BackgroundVisual,
+        SpriteBundle {
+            texture: art.terrain_desert_base_tile_a.clone(),
+            sprite: Sprite {
+                custom_size: Some(Vec2::new(bounds.half_width * 2.0, bounds.half_height * 2.0)),
+                ..default()
+            },
+            transform: Transform::from_xyz(0.0, 0.0, -10.0),
+            ..default()
+        },
+    ));
+}
+
 fn handle_start_run_oasis(
     mut commands: Commands,
     mut start_events: EventReader<StartRunEvent>,
     data: Res<GameData>,
+    art: Res<ArtAssets>,
     existing_oasis: Query<Entity, With<OasisZone>>,
 ) {
     if start_events.is_empty() {
@@ -57,11 +89,22 @@ fn handle_start_run_oasis(
     }
 
     let center = Vec2::new(data.map.oasis_center[0], data.map.oasis_center[1]);
-    commands.spawn(OasisZone {
-        center,
-        radius: data.map.oasis_radius,
-        heal_per_second: data.map.oasis_heal_per_second,
-    });
+    commands.spawn((
+        OasisZone {
+            center,
+            radius: data.map.oasis_radius,
+            heal_per_second: data.map.oasis_heal_per_second,
+        },
+        SpriteBundle {
+            texture: art.oasis_water_core.clone(),
+            sprite: Sprite {
+                custom_size: Some(Vec2::splat(data.map.oasis_radius * 2.0)),
+                ..default()
+            },
+            transform: Transform::from_xyz(center.x, center.y, 1.0),
+            ..default()
+        },
+    ));
 }
 
 fn heal_units_inside_oasis(

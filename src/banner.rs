@@ -3,6 +3,7 @@ use bevy::prelude::*;
 use crate::model::{CommanderUnit, GameState, StartRunEvent};
 use crate::morale::Cohesion;
 use crate::squad::SquadRoster;
+use crate::visuals::ArtAssets;
 
 #[derive(Component, Clone, Copy, Debug)]
 pub struct BannerMarker;
@@ -50,6 +51,7 @@ impl Plugin for BannerPlugin {
                     follow_commander_when_banner_up,
                     drop_banner_condition,
                     recover_banner_nearby,
+                    sync_banner_texture,
                     refresh_banner_modifiers,
                 )
                     .run_if(in_state(GameState::InRun)),
@@ -62,6 +64,7 @@ fn reset_banner_on_run_start(
     mut start_events: EventReader<StartRunEvent>,
     commanders: Query<&Transform, With<CommanderUnit>>,
     existing_banner: Query<Entity, With<BannerMarker>>,
+    art: Res<ArtAssets>,
     mut banner_state: ResMut<BannerState>,
 ) {
     if start_events.is_empty() {
@@ -80,8 +83,15 @@ fn reset_banner_on_run_start(
     banner_state.world_position = commander_pos;
     commands.spawn((
         BannerMarker,
-        Transform::from_xyz(commander_pos.x, commander_pos.y, 3.0),
-        GlobalTransform::default(),
+        SpriteBundle {
+            texture: art.banner_upright.clone(),
+            sprite: Sprite {
+                custom_size: Some(Vec2::splat(32.0)),
+                ..default()
+            },
+            transform: Transform::from_xyz(commander_pos.x, commander_pos.y, 3.0),
+            ..default()
+        },
     ));
 }
 
@@ -131,6 +141,21 @@ fn recover_banner_nearby(
     let commander_pos = commander.translation.truncate();
     if commander_pos.distance(banner_state.world_position) <= 40.0 {
         banner_state.is_dropped = false;
+    }
+}
+
+fn sync_banner_texture(
+    banner_state: Res<BannerState>,
+    art: Res<ArtAssets>,
+    mut banner_query: Query<&mut Handle<Image>, With<BannerMarker>>,
+) {
+    if let Ok(mut texture) = banner_query.get_single_mut() {
+        let desired = if banner_state.is_dropped {
+            art.banner_dropped.clone()
+        } else {
+            art.banner_upright.clone()
+        };
+        *texture = desired;
     }
 }
 
