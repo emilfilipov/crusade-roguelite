@@ -251,7 +251,7 @@ Expected when ranged attacks are introduced.
 
 ### `src/visuals.rs`
 - `load_art_assets` (`Startup`)
-  - Loads texture handles from `assets/sprites/**` into `ArtAssets`.
+  - Loads texture handles from `assets/third_party/kenney_desert-shooter-pack_1.0/**` into `ArtAssets`.
   - Falls back to default handles when `AssetServer` is unavailable (headless tests).
 
 ### `src/map.rs`

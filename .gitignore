@@ -1,2 +1,4 @@
 /target
 /installer/dist/
+assets/third_party/*.zip
+assets/third_party/preview_*.png

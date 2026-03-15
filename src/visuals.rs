@@ -26,16 +26,20 @@ fn load_art_assets(mut assets: ResMut<ArtAssets>, asset_server: Option<Res<Asset
         return;
     };
 
-    assets.commander_idle = asset_server.load("sprites/characters/commander_baldiun_idle.png");
-    assets.friendly_knight_idle =
-        asset_server.load("sprites/characters/friendly_infantry_knight_idle.png");
-    assets.friendly_knight_rescuable_variant =
-        asset_server.load("sprites/characters/friendly_infantry_knight_rescuable_variant.png");
-    assets.enemy_infantry_idle =
-        asset_server.load("sprites/characters/enemy_infantry_melee_idle.png");
-    assets.banner_upright = asset_server.load("sprites/props/banner_upright.png");
-    assets.banner_dropped = asset_server.load("sprites/props/banner_dropped.png");
-    assets.oasis_water_core = asset_server.load("sprites/environment/oasis_water_core.png");
-    assets.terrain_desert_base_tile_a =
-        asset_server.load("sprites/environment/terrain_desert_base_tile_a.png");
+    assets.commander_idle = asset_server
+        .load("third_party/kenney_desert-shooter-pack_1.0/PNG/Players/Tiles/tile_0000.png");
+    assets.friendly_knight_idle = asset_server
+        .load("third_party/kenney_desert-shooter-pack_1.0/PNG/Players/Tiles/tile_0008.png");
+    assets.friendly_knight_rescuable_variant = asset_server
+        .load("third_party/kenney_desert-shooter-pack_1.0/PNG/Players/Tiles/tile_0001.png");
+    assets.enemy_infantry_idle = asset_server
+        .load("third_party/kenney_desert-shooter-pack_1.0/PNG/Enemies/Tiles/tile_0012.png");
+    assets.banner_upright = asset_server
+        .load("third_party/kenney_desert-shooter-pack_1.0/PNG/Weapons/Tiles/tile_0018.png");
+    assets.banner_dropped = asset_server
+        .load("third_party/kenney_desert-shooter-pack_1.0/PNG/Weapons/Tiles/tile_0003.png");
+    assets.oasis_water_core = asset_server
+        .load("third_party/kenney_desert-shooter-pack_1.0/PNG/Tiles/Tiles/tile_0006.png");
+    assets.terrain_desert_base_tile_a = asset_server
+        .load("third_party/kenney_desert-shooter-pack_1.0/PNG/Tiles/Tiles/tile_0000.png");
 }
