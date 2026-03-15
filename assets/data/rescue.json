@@ -1,0 +1,5 @@
+{
+  "spawn_count": 16,
+  "rescue_radius": 60.0,
+  "rescue_duration_secs": 2.5
+}

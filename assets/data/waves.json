@@ -1,0 +1,8 @@
+{
+  "waves": [
+    { "time_secs": 5.0, "count": 6 },
+    { "time_secs": 18.0, "count": 8 },
+    { "time_secs": 33.0, "count": 10 },
+    { "time_secs": 50.0, "count": 12 }
+  ]
+}

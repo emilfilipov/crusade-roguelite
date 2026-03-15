@@ -1,0 +1,11 @@
+{
+  "infantry_melee": {
+    "id": "enemy_infantry_melee",
+    "max_hp": 40.0,
+    "armor": 1.0,
+    "damage": 7.0,
+    "attack_cooldown_secs": 1.2,
+    "attack_range": 22.0,
+    "move_speed": 120.0
+  }
+}

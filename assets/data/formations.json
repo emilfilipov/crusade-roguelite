@@ -1,0 +1,9 @@
+{
+  "square": {
+    "id": "square",
+    "slot_spacing": 30.0,
+    "offense_multiplier": 0.95,
+    "defense_multiplier": 1.1,
+    "anti_cavalry_multiplier": 1.2
+  }
+}

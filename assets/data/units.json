@@ -1,0 +1,23 @@
+{
+  "commander": {
+    "id": "baldiun",
+    "max_hp": 120.0,
+    "armor": 6.0,
+    "damage": 12.0,
+    "attack_cooldown_secs": 0.9,
+    "attack_range": 26.0,
+    "move_speed": 170.0,
+    "morale_weight": 2.0,
+    "aura_radius": 180.0
+  },
+  "recruit_infantry_knight": {
+    "id": "infantry_knight",
+    "max_hp": 95.0,
+    "armor": 4.0,
+    "damage": 9.0,
+    "attack_cooldown_secs": 1.1,
+    "attack_range": 24.0,
+    "move_speed": 150.0,
+    "morale_weight": 1.0
+  }
+}
