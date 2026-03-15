@@ -46,5 +46,5 @@ It prevents scope creep and makes expansion decisions explicit.
 2. No open critical bugs in that system.
 3. Determinism is acceptable under fixed timestep for affected logic.
 4. Performance remains within target for expected encounter sizes.
-5. `TASKS.md` includes explicit tasks for the expansion work.
+5. `docs/TASKS.md` includes explicit tasks for the expansion work.
 6. This file is updated in the same change that introduces expansion.

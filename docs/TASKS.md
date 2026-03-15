@@ -6,7 +6,7 @@
 - Primary target: Windows (`x86_64-pc-windows-msvc`).
 - Distribution: Steam-ready, but local Windows installer is required from early milestones.
 - Initial gameplay scaffold: square formation only, commander-only start, rescue-based recruitment, and one recruitable unit archetype.
-- Scope limits and expansion gates are tracked in `SYSTEM_SCOPE_MAP.md`.
+- Scope limits and expansion gates are tracked in `docs/SYSTEM_SCOPE_MAP.md`.
 
 ## Global Delivery Rules (Apply to Every Task)
 1. Run full quality loop before closing a task:
@@ -18,7 +18,7 @@
 3. Any logic that can be unit tested must have unit tests.
 4. Do not close a task with failing tests.
 5. After successful build/test loop, push changes to repository.
-6. When expanding a previously limited system, update `SYSTEM_SCOPE_MAP.md` and add/update task cards in this file.
+6. When expanding a previously limited system, update `docs/SYSTEM_SCOPE_MAP.md` and add/update task cards in this file.
 7. Documentation-only changes (including `.md` files) must still be committed and pushed; no local-only markdown drift.
 
 ## Status Legend
@@ -444,4 +444,3 @@
 19. `CRU-018`
 20. `CRU-019`
 21. `CRU-020`
-

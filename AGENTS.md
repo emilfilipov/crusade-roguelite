@@ -21,10 +21,10 @@ The tone should be grounded, dusty, historical-inspired, and readable rather tha
 - Keep placeholder-friendly art/audio pipelines so gameplay iteration is not blocked by content polish.
 
 ## Scope Gating and Expansion Registry
-- The source of truth for "limited now vs expandable later" is `SYSTEM_SCOPE_MAP.md`.
+- The source of truth for "limited now vs expandable later" is `docs/SYSTEM_SCOPE_MAP.md`.
 - Default to one-example-first implementation per gameplay system in MVP.
 - Do not add a second variant/type/subsystem until the first variant is stable and tested.
-- When expanding a system beyond its MVP limit, update `SYSTEM_SCOPE_MAP.md` and `TASKS.md` in the same change.
+- When expanding a system beyond its MVP limit, update `docs/SYSTEM_SCOPE_MAP.md` and `docs/TASKS.md` in the same change.
 
 ## Core Design Pillars
 1. The squad is the player character and moves as a formation.
