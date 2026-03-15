@@ -22,6 +22,7 @@ The tone should be grounded, dusty, historical-inspired, and readable rather tha
 
 ## Scope Gating and Expansion Registry
 - The source of truth for "limited now vs expandable later" is `docs/SYSTEM_SCOPE_MAP.md`.
+- The source of truth for concrete implementation details (entities, components, systems, formulas) is `docs/SYSTEMS_REFERENCE.md`.
 - Default to one-example-first implementation per gameplay system in MVP.
 - Do not add a second variant/type/subsystem until the first variant is stable and tested.
 - When expanding a system beyond its MVP limit, update `docs/SYSTEM_SCOPE_MAP.md` and `docs/TASKS.md` in the same change.

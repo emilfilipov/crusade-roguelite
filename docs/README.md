@@ -26,3 +26,9 @@ cargo build --release --target x86_64-pc-windows-msvc
 ./scripts/build_windows.ps1
 ./scripts/package_windows_installer.ps1
 ```
+
+## Documentation
+- System scope map: `docs/SYSTEM_SCOPE_MAP.md`
+- Task backlog: `docs/TASKS.md`
+- Art requirements: `docs/requirements.md`
+- Full technical system reference: `docs/SYSTEMS_REFERENCE.md`
