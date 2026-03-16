@@ -32,6 +32,7 @@ Track all externally sourced art used by the project, including source URLs and 
 - License: Creative Commons CC0 (as listed on source page and in pack metadata)
 - Intended use:
   - Additional top-down medieval-compatible props and characters for prototype swaps.
+  - Chosen source for the MVP `bandit_raider` sprite variant.
 
 ### Kenney - Sketch Desert
 - URL: https://kenney.nl/assets/sketch-desert
@@ -66,7 +67,7 @@ Configured in `src/visuals.rs`:
 - `commander_idle` -> `.../PNG/Players/Tiles/tile_0000.png`
 - `friendly_knight_idle` -> `.../PNG/Players/Tiles/tile_0008.png`
 - `friendly_knight_rescuable_variant` -> `.../PNG/Players/Tiles/tile_0001.png`
-- `enemy_infantry_idle` -> `.../PNG/Enemies/Tiles/tile_0012.png`
+- `enemy_infantry_idle` -> `.../kenney_tiny-dungeon_1.0/Tiles/tile_0112.png`
 - `banner_upright` -> `.../PNG/Weapons/Tiles/tile_0018.png`
 - `banner_dropped` -> `.../PNG/Weapons/Tiles/tile_0003.png`
 - `oasis_water_core` -> `.../PNG/Tiles/Tiles/tile_0006.png`

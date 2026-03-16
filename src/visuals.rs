@@ -32,8 +32,8 @@ fn load_art_assets(mut assets: ResMut<ArtAssets>, asset_server: Option<Res<Asset
         .load("third_party/kenney_desert-shooter-pack_1.0/PNG/Players/Tiles/tile_0008.png");
     assets.friendly_knight_rescuable_variant = asset_server
         .load("third_party/kenney_desert-shooter-pack_1.0/PNG/Players/Tiles/tile_0001.png");
-    assets.enemy_infantry_idle = asset_server
-        .load("third_party/kenney_desert-shooter-pack_1.0/PNG/Enemies/Tiles/tile_0012.png");
+    assets.enemy_infantry_idle =
+        asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0112.png");
     assets.banner_upright = asset_server
         .load("third_party/kenney_desert-shooter-pack_1.0/PNG/Weapons/Tiles/tile_0018.png");
     assets.banner_dropped = asset_server
