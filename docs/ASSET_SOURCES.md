@@ -24,6 +24,43 @@ Track all externally sourced art used by the project, including source URLs and 
 - Usage in project:
   - Imported as an additional medieval-compatible source pack for future swaps/expansion.
 
+## Downloaded Candidate Packs (Top 5 Selection, Not Wired Yet)
+
+### Kenney - Tiny Dungeon
+- URL: https://kenney.nl/assets/tiny-dungeon
+- Local path: `assets/third_party/kenney_tiny-dungeon_1.0`
+- License: Creative Commons CC0 (as listed on source page and in pack metadata)
+- Intended use:
+  - Additional top-down medieval-compatible props and characters for prototype swaps.
+
+### Kenney - Sketch Desert
+- URL: https://kenney.nl/assets/sketch-desert
+- Local path: `assets/third_party/kenney_sketch-desert_1.0`
+- License: Creative Commons CC0 (as listed on source page and in pack metadata)
+- Intended use:
+  - Desert biome expansion tiles and props.
+
+### OpenGameArt - Top-Down Asset Pack 1.0
+- URL: https://opengameart.org/content/top-down-asset-pack-10
+- Local path: `assets/third_party/oga_ishtar_top-down-pack_1.1`
+- License: CC0 (as listed on source page)
+- Intended use:
+  - Additional top-down characters/props for enemy and environment variants.
+
+### OpenGameArt - Pixel FX Pack
+- URL: https://opengameart.org/content/pixel-fx-pack
+- Local path: `assets/third_party/oga_pixel_fx_pack`
+- License: CC0 (as listed on source page)
+- Intended use:
+  - Hit, impact, and combat effect overlays for MVP readability.
+
+### OpenGameArt - Top Down Asset Pack 1 (CTATZ)
+- URL: https://opengameart.org/content/top-down-asset-pack-1-ctatz
+- Local path: `assets/third_party/oga_ctatz_top-down-pack_1`
+- License: CC0 (as listed on source page)
+- Intended use:
+  - Supplemental top-down characters, terrain pieces, and props.
+
 ## Runtime Mapping (Current)
 Configured in `src/visuals.rs`:
 - `commander_idle` -> `.../PNG/Players/Tiles/tile_0000.png`
