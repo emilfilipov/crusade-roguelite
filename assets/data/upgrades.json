@@ -3,7 +3,7 @@
     { "id": "add_units", "kind": "add_units", "value": 1.0 },
     { "id": "armor_up", "kind": "armor", "value": 1.0 },
     { "id": "damage_up", "kind": "damage", "value": 1.5 },
-    { "id": "attack_speed_up", "kind": "attack_speed", "value": 0.08 },
+    { "id": "attack_speed_up", "kind": "attack_speed", "value": 0.06 },
     { "id": "cohesion_up", "kind": "cohesion", "value": 5.0 },
     { "id": "commander_aura_up", "kind": "commander_aura", "value": 8.0 }
   ]

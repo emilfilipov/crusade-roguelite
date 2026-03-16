@@ -63,13 +63,13 @@ Loaded by `GameData::load_from_dir("assets/data")` (`src/data.rs`).
   - `morale_weight: 1`
 
 ### `assets/data/enemies.json`
-- Enemy infantry melee
-  - `max_hp: 40`
+- Enemy `bandit_raider` (melee)
+  - `max_hp: 34`
   - `armor: 1`
-  - `damage: 7`
-  - `attack_cooldown_secs: 1.2`
+  - `damage: 6`
+  - `attack_cooldown_secs: 1.3`
   - `attack_range: 22`
-  - `move_speed: 120`
+  - `move_speed: 118`
 
 ### `assets/data/formations.json`
 - Square
@@ -80,16 +80,17 @@ Loaded by `GameData::load_from_dir("assets/data")` (`src/data.rs`).
 
 ### `assets/data/waves.json`
 - Wave schedule:
-  1. `t=5s`, `count=6`
-  2. `t=18s`, `count=8`
-  3. `t=33s`, `count=10`
-  4. `t=50s`, `count=12`
+  1. `t=6s`, `count=4`
+  2. `t=19s`, `count=6`
+  3. `t=35s`, `count=8`
+  4. `t=52s`, `count=10`
+  5. `t=72s`, `count=12`
 
 ### `assets/data/upgrades.json`
 - `add_units` (`add_units`, `1.0`)
 - `armor_up` (`armor`, `1.0`)
 - `damage_up` (`damage`, `1.5`)
-- `attack_speed_up` (`attack_speed`, `0.08`)
+- `attack_speed_up` (`attack_speed`, `0.06`)
 - `cohesion_up` (`cohesion`, `5.0`)
 - `commander_aura_up` (`commander_aura`, `8.0`)
 
@@ -101,9 +102,9 @@ Loaded by `GameData::load_from_dir("assets/data")` (`src/data.rs`).
 - `oasis_heal_per_second: 4`
 
 ### `assets/data/rescue.json`
-- `spawn_count: 16`
+- `spawn_count: 14`
 - `rescue_radius: 60`
-- `rescue_duration_secs: 2.5`
+- `rescue_duration_secs: 2.2`
 
 ## ECS Inventory
 
@@ -124,6 +125,8 @@ Loaded by `GameData::load_from_dir("assets/data")` (`src/data.rs`).
 ### Module-Specific Components
 - `OasisZone { center, radius, heal_per_second }` (`src/map.rs`)
 - `RescueProgress { elapsed }` (`src/rescue.rs`)
+- `BanditVisualState` (`Idle`, `Move`, `Attack`, `Hit`, `Dead`) (`src/enemies.rs`)
+- `BanditVisualRuntime { last_position, state }` (`src/enemies.rs`)
 - `Projectile { velocity, damage, lifetime_secs, radius, source_team }` (`src/projectiles.rs`)
 - `BannerMarker` (`src/banner.rs`)
 
@@ -149,7 +152,7 @@ Loaded by `GameData::load_from_dir("assets/data")` (`src/data.rs`).
 - `UpgradeDraft { active, options, autopick_timer }`
 - `HudSnapshot { cohesion, banner_dropped, squad_size, xp, wave_index }`
 - `PlatformRuntime { service }`
-- `ArtAssets` (texture handles for commander/recruit/enemy/banner/oasis/background)
+- `ArtAssets` (texture handles for commander/recruit/bandit-state set/banner/oasis/background)
 
 ### Events
 - `StartRunEvent`
@@ -186,11 +189,12 @@ Spawned by `spawn_recruit()` in `src/squad.rs` on `RecruitEvent`.
   - `MoveSpeed`
   - `Transform`, `GlobalTransform`
 
-### Enemy Infantry
+### Enemy Bandit Raider
 Spawned by `spawn_enemy_wave()` in `src/enemies.rs`.
 - Components:
-  - `Unit { team: Enemy, kind: EnemyInfantry, level: 1 }`
+  - `Unit { team: Enemy, kind: EnemyBanditRaider, level: 1 }`
   - `EnemyUnit`
+  - `BanditVisualRuntime`
   - `Health`
   - `Armor`
   - `AttackProfile`
@@ -248,6 +252,10 @@ Expected when ranged attacks are introduced.
 - `load_data_on_boot` (`OnEnter(Boot)`)
   - Loads all JSON config and validates them.
   - Inserts `GameData` resource.
+- Validation includes:
+  - positive stat/range checks for units/enemies
+  - non-empty upgrades/waves
+  - strictly increasing `waves[].time_secs`
 
 ### `src/visuals.rs`
 - `load_art_assets` (`Startup`)
@@ -314,11 +322,16 @@ Expected when ranged attacks are introduced.
   - Increments wave timer.
   - Spawns all waves whose scheduled time has passed.
 - `spawn_enemy_wave`
-  - Spawns infantry enemies on perimeter ring.
+  - Spawns `bandit_raider` enemies on perimeter ring.
   - Radius uses `max(map half width/height) * 0.9`.
 - `enemy_chase_targets` (`Update`, `InRun`)
   - Enemy AI: nearest-friendly chase.
   - Movement step: `normalize(target - enemy) * move_speed * dt`.
+- `update_bandit_visual_states` (`Update`, `InRun`)
+  - Computes per-bandit visual state from movement, attack cooldown progress, and HP ratio.
+  - Swaps sprite handle to matching state texture.
+- `decide_bandit_visual_state(...)`
+  - Priority: `Dead` -> `Hit` -> `Attack` -> `Move` -> `Idle`.
 - `choose_nearest(origin, candidates)`
   - Returns nearest point by squared distance.
 
@@ -433,6 +446,12 @@ Applied upgrade effects:
     - squad size
     - xp
     - next wave index
+- `attach_health_bars_to_units` (`Update`, `InRun`)
+  - Adds world-space health bar children to friendly/enemy units.
+- `update_health_bar_fills` (`Update`, `InRun`)
+  - Updates bar width and color based on owner HP and team.
+- `health_bar_fill_width(current, max, full_width)`
+  - Clamps ratio into `[0, 1]` for deterministic width math.
 
 ### `src/steam.rs`
 - `PlatformPlugin`
@@ -457,7 +476,7 @@ Applied upgrade effects:
 
 ## AI and Wave Behavior Summary
 - AI type currently implemented:
-  - melee infantry with nearest-target chase.
+  - `bandit_raider` melee chase AI with nearest-target selection.
 - No pathfinding graph, no avoidance fields, no ranged kiting yet.
 - Waves are strictly time-driven and deterministic based on config.
 

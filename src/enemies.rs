@@ -14,6 +14,21 @@ pub struct WaveRuntime {
     pub next_wave_index: usize,
 }
 
+#[derive(Component, Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BanditVisualState {
+    Idle,
+    Move,
+    Attack,
+    Hit,
+    Dead,
+}
+
+#[derive(Component, Clone, Copy, Debug)]
+pub struct BanditVisualRuntime {
+    pub last_position: Vec2,
+    pub state: BanditVisualState,
+}
+
 pub struct EnemyPlugin;
 
 impl Plugin for EnemyPlugin {
@@ -22,7 +37,13 @@ impl Plugin for EnemyPlugin {
             .add_systems(Update, reset_waves_on_run_start)
             .add_systems(
                 Update,
-                (spawn_waves, enemy_chase_targets).run_if(in_state(GameState::InRun)),
+                (
+                    spawn_waves,
+                    enemy_chase_targets,
+                    update_bandit_visual_states,
+                )
+                    .chain()
+                    .run_if(in_state(GameState::InRun)),
             );
     }
 }
@@ -71,7 +92,7 @@ fn spawn_enemy_wave(
     bounds: Option<MapBounds>,
     wave_idx: usize,
 ) {
-    let cfg = &data.enemies.infantry_melee;
+    let cfg = &data.enemies.bandit_raider;
     let radius = bounds
         .map(|b| b.half_width.max(b.half_height) * 0.9)
         .unwrap_or(900.0);
@@ -81,11 +102,15 @@ fn spawn_enemy_wave(
         commands.spawn((
             Unit {
                 team: Team::Enemy,
-                kind: UnitKind::EnemyInfantry,
+                kind: UnitKind::EnemyBanditRaider,
                 level: 1,
                 morale_weight: 1.0,
             },
             EnemyUnit,
+            BanditVisualRuntime {
+                last_position: pos,
+                state: BanditVisualState::Idle,
+            },
             Health::new(cfg.max_hp),
             Armor(cfg.armor),
             AttackProfile {
@@ -99,7 +124,7 @@ fn spawn_enemy_wave(
             )),
             MoveSpeed(cfg.move_speed),
             SpriteBundle {
-                texture: art.enemy_infantry_idle.clone(),
+                texture: art.enemy_bandit_raider_idle.clone(),
                 sprite: Sprite {
                     custom_size: Some(Vec2::splat(32.0)),
                     ..default()
@@ -138,6 +163,80 @@ fn enemy_chase_targets(
     }
 }
 
+#[allow(clippy::type_complexity)]
+fn update_bandit_visual_states(
+    art: Res<ArtAssets>,
+    mut enemies: Query<
+        (
+            &Unit,
+            &Health,
+            &AttackProfile,
+            &AttackCooldown,
+            &Transform,
+            &mut BanditVisualRuntime,
+            &mut Handle<Image>,
+        ),
+        With<EnemyUnit>,
+    >,
+) {
+    for (unit, health, attack, attack_cd, transform, mut runtime, mut texture) in &mut enemies {
+        if unit.kind != UnitKind::EnemyBanditRaider {
+            continue;
+        }
+
+        let position = transform.translation.truncate();
+        let moved_distance_sq = runtime.last_position.distance_squared(position);
+        let next_state = decide_bandit_visual_state(
+            moved_distance_sq,
+            attack_cd.0.elapsed_secs(),
+            attack.cooldown_secs,
+            health.current,
+            health.max,
+        );
+
+        if runtime.state != next_state {
+            *texture = bandit_texture_for_state(&art, next_state);
+            runtime.state = next_state;
+        }
+        runtime.last_position = position;
+    }
+}
+
+fn bandit_texture_for_state(art: &ArtAssets, state: BanditVisualState) -> Handle<Image> {
+    match state {
+        BanditVisualState::Idle => art.enemy_bandit_raider_idle.clone(),
+        BanditVisualState::Move => art.enemy_bandit_raider_move.clone(),
+        BanditVisualState::Attack => art.enemy_bandit_raider_attack.clone(),
+        BanditVisualState::Hit => art.enemy_bandit_raider_hit.clone(),
+        BanditVisualState::Dead => art.enemy_bandit_raider_dead.clone(),
+    }
+}
+
+pub fn decide_bandit_visual_state(
+    moved_distance_sq: f32,
+    cooldown_elapsed_secs: f32,
+    attack_cooldown_secs: f32,
+    current_hp: f32,
+    max_hp: f32,
+) -> BanditVisualState {
+    if current_hp <= 0.0 {
+        return BanditVisualState::Dead;
+    }
+    let hp_ratio = (current_hp / max_hp).clamp(0.0, 1.0);
+    if hp_ratio <= 0.35 {
+        return BanditVisualState::Hit;
+    }
+    let attack_window = (attack_cooldown_secs * 0.2).clamp(0.06, 0.2);
+    if cooldown_elapsed_secs <= attack_window {
+        return BanditVisualState::Attack;
+    }
+    if moved_distance_sq > 1.0 {
+        BanditVisualState::Move
+    } else {
+        BanditVisualState::Idle
+    }
+}
+
 pub fn choose_nearest(origin: Vec2, candidates: &[Vec2]) -> Option<Vec2> {
     candidates.iter().copied().min_by(|a, b| {
         let da = origin.distance_squared(*a);
@@ -150,7 +249,7 @@ pub fn choose_nearest(origin: Vec2, candidates: &[Vec2]) -> Option<Vec2> {
 mod tests {
     use bevy::prelude::Vec2;
 
-    use crate::enemies::choose_nearest;
+    use crate::enemies::{BanditVisualState, choose_nearest, decide_bandit_visual_state};
 
     #[test]
     fn chooses_nearest_target() {
@@ -167,5 +266,29 @@ mod tests {
     #[test]
     fn no_targets_returns_none() {
         assert_eq!(choose_nearest(Vec2::ZERO, &[]), None);
+    }
+
+    #[test]
+    fn bandit_visual_state_priority_is_dead_then_hit_then_attack_then_move_idle() {
+        assert_eq!(
+            decide_bandit_visual_state(0.0, 0.1, 1.0, 0.0, 10.0),
+            BanditVisualState::Dead
+        );
+        assert_eq!(
+            decide_bandit_visual_state(10.0, 0.1, 1.0, 3.0, 10.0),
+            BanditVisualState::Hit
+        );
+        assert_eq!(
+            decide_bandit_visual_state(10.0, 0.05, 1.0, 9.0, 10.0),
+            BanditVisualState::Attack
+        );
+        assert_eq!(
+            decide_bandit_visual_state(2.0, 0.8, 1.0, 9.0, 10.0),
+            BanditVisualState::Move
+        );
+        assert_eq!(
+            decide_bandit_visual_state(0.1, 0.8, 1.0, 9.0, 10.0),
+            BanditVisualState::Idle
+        );
     }
 }

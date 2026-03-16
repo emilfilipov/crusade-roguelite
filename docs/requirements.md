@@ -39,11 +39,11 @@ UI element art is intentionally excluded for now (basic programmatic shapes are 
 6. `friendly_infantry_knight_rescuable_variant`
 
 ### 3) Characters - Enemies
-1. `enemy_infantry_melee_idle` (loop)
-2. `enemy_infantry_melee_move` (loop)
-3. `enemy_infantry_melee_attack`
-4. `enemy_infantry_melee_hit_react`
-5. `enemy_infantry_melee_death`
+1. `enemy_bandit_raider_idle` (loop)
+2. `enemy_bandit_raider_move` (loop)
+3. `enemy_bandit_raider_attack`
+4. `enemy_bandit_raider_hit_react`
+5. `enemy_bandit_raider_death`
 
 ### 4) Shared Character Support
 1. `unit_shadow_blob_small`
@@ -101,7 +101,7 @@ UI element art is intentionally excluded for now (basic programmatic shapes are 
 2. `bg_haze_gradient`
 
 ## Recommended First-Pass Quantities
-- Fully animated unit sets: 3 total (commander, friendly infantry/knight, enemy infantry).
+- Fully animated unit sets: 3 total (commander, friendly infantry/knight, enemy bandit raider).
 - Terrain/foliage sprites: 14 base pieces (enough for visual variation without overproduction).
 - Gameplay object sprites: 5.
 - VFX sprites/flipbooks: 9.

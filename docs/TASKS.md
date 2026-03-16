@@ -420,6 +420,92 @@
   - Core MVP loop remains stable across consecutive changes.
   - No critical regression in movement, rescue recruitment, combat, formation, morale, banner, or upgrades.
 
+## CRU-022 - Enemy Identity Pass (`bandit_raider`)
+- Status: `DONE`
+- Type: `Gameplay/Content`
+- Priority: `P1`
+- Depends on: `CRU-008`, `CRU-009`, `CRU-010`
+- Goal: Rename and align the MVP enemy implementation to a concrete identity (`bandit_raider`) across data, runtime enums, and docs.
+- Implementation:
+  1. Rename enemy data key from `infantry_melee` to `bandit_raider`.
+  2. Rename runtime unit kind from `EnemyInfantry` to `EnemyBanditRaider`.
+  3. Update enemy spawn pipeline and config validation to use the new identity key.
+  4. Update all impacted tests and documentation references.
+- Unit Tests Required:
+  - Data loading tests cover renamed enemy schema.
+  - Existing enemy selection/chase tests continue to pass.
+- Acceptance Criteria:
+  - Game loads/spawns enemy via `bandit_raider` config key only.
+  - No stale `infantry_melee` or `EnemyInfantry` references remain in runtime code.
+
+## CRU-023 - Bandit Visual State Mapping (Idle/Move/Attack/Hit/Dead)
+- Status: `DONE`
+- Type: `Gameplay/Visual`
+- Priority: `P1`
+- Depends on: `CRU-022`
+- Goal: Improve enemy readability by swapping bandit sprite variants based on combat/movement state.
+- Implementation:
+  1. Add bandit visual state components (`BanditVisualState`, `BanditVisualRuntime`).
+  2. Add tiny-dungeon sprite handles for all state variants in `ArtAssets`.
+  3. Add enemy visual update system that maps health/cooldown/movement to state-specific textures.
+  4. Keep logic deterministic and testable via pure state-decision function.
+- Unit Tests Required:
+  - State priority tests (`Dead` -> `Hit` -> `Attack` -> `Move` -> `Idle`).
+- Acceptance Criteria:
+  - Bandit sprites visibly change state during movement/combat.
+  - State decisions are deterministic and test-covered.
+
+## CRU-024 - Windows Installer Slimming (Runtime Assets Only)
+- Status: `DONE`
+- Type: `Release`
+- Priority: `P1`
+- Depends on: `CRU-018`, `CRU-023`
+- Goal: Reduce installer payload by packaging only runtime-required assets rather than entire `assets` tree.
+- Implementation:
+  1. Replace broad `assets\*` include rule in Inno Setup script with explicit runtime subsets.
+  2. Keep `assets/data` plus active art pack subsets only.
+  3. Include third-party `License.txt` files for bundled packs.
+  4. Validate packaging still resolves all runtime asset paths.
+- Unit Tests Required:
+  - N/A (packaging script change; validated via packaging build step).
+- Acceptance Criteria:
+  - Installer generation succeeds with reduced asset scope.
+  - Installed game launches with no missing-asset errors for current MVP content.
+
+## CRU-025 - Combat Readability Pass v1 (World-Space Health Bars)
+- Status: `DONE`
+- Type: `Gameplay/UI`
+- Priority: `P1`
+- Depends on: `CRU-017`, `CRU-023`
+- Goal: Improve in-combat readability for unit survivability and target priority.
+- Implementation:
+  1. Add lightweight world-space health bars for friendly/enemy units.
+  2. Attach bars automatically to units at runtime and update fill width from HP ratio.
+  3. Apply team-color coding to improve friend/enemy scan speed.
+  4. Keep implementation data-light and cheap for MVP entity counts.
+- Unit Tests Required:
+  - Health-bar fill width clamp tests.
+- Acceptance Criteria:
+  - Health state is readable during active fights without opening menus.
+  - New UI logic remains deterministic and clippy-clean.
+
+## CRU-026 - Balance Pass v1 (Enemy/Wave/Rescue Cadence)
+- Status: `DONE`
+- Type: `Balance`
+- Priority: `P1`
+- Depends on: `CRU-022`, `CRU-025`
+- Goal: Smooth early-run pacing for commander-only starts and rescue onboarding.
+- Implementation:
+  1. Tune `bandit_raider` stat line in `assets/data/enemies.json`.
+  2. Adjust wave schedule/counts for gentler early pressure and clearer ramp.
+  3. Adjust rescue cadence values for slightly faster onboarding into squad growth.
+  4. Add wave validation guard ensuring strictly increasing wave times.
+- Unit Tests Required:
+  - Config validation test for unsorted wave times.
+- Acceptance Criteria:
+  - Early run pacing is more recoverable while still escalating.
+  - Balance data remains fully data-driven and validation-hardened.
+
 ---
 
 ## Recommended Implementation Order
@@ -444,3 +530,8 @@
 19. `CRU-018`
 20. `CRU-019`
 21. `CRU-020`
+22. `CRU-022`
+23. `CRU-023`
+24. `CRU-024`
+25. `CRU-025`
+26. `CRU-026`

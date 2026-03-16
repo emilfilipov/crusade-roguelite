@@ -12,10 +12,16 @@ Track all externally sourced art used by the project, including source URLs and 
 - Usage in game runtime:
   - Commander sprite source
   - Friendly knight sprite source
-  - Enemy infantry sprite source
   - Banner upright/dropped sprite sources
   - Oasis tile source
   - Background terrain tile source
+
+### Kenney - Tiny Dungeon
+- URL: https://kenney.nl/assets/tiny-dungeon
+- Local path: `assets/third_party/kenney_tiny-dungeon_1.0`
+- License: Creative Commons CC0 (as listed on source page and in pack metadata)
+- Usage in game runtime:
+  - `bandit_raider` idle/move/attack/hit/dead sprite sources.
 
 ### Kenney - Roguelike/RPG Pack
 - URL: https://kenney.nl/assets/roguelike-rpg-pack
@@ -25,14 +31,6 @@ Track all externally sourced art used by the project, including source URLs and 
   - Imported as an additional medieval-compatible source pack for future swaps/expansion.
 
 ## Downloaded Candidate Packs (Top 5 Selection, Not Wired Yet)
-
-### Kenney - Tiny Dungeon
-- URL: https://kenney.nl/assets/tiny-dungeon
-- Local path: `assets/third_party/kenney_tiny-dungeon_1.0`
-- License: Creative Commons CC0 (as listed on source page and in pack metadata)
-- Intended use:
-  - Additional top-down medieval-compatible props and characters for prototype swaps.
-  - Chosen source for the MVP `bandit_raider` sprite variant.
 
 ### Kenney - Sketch Desert
 - URL: https://kenney.nl/assets/sketch-desert
@@ -67,7 +65,11 @@ Configured in `src/visuals.rs`:
 - `commander_idle` -> `.../PNG/Players/Tiles/tile_0000.png`
 - `friendly_knight_idle` -> `.../PNG/Players/Tiles/tile_0008.png`
 - `friendly_knight_rescuable_variant` -> `.../PNG/Players/Tiles/tile_0001.png`
-- `enemy_infantry_idle` -> `.../kenney_tiny-dungeon_1.0/Tiles/tile_0112.png`
+- `enemy_bandit_raider_idle` -> `.../kenney_tiny-dungeon_1.0/Tiles/tile_0112.png`
+- `enemy_bandit_raider_move` -> `.../kenney_tiny-dungeon_1.0/Tiles/tile_0113.png`
+- `enemy_bandit_raider_attack` -> `.../kenney_tiny-dungeon_1.0/Tiles/tile_0114.png`
+- `enemy_bandit_raider_hit` -> `.../kenney_tiny-dungeon_1.0/Tiles/tile_0115.png`
+- `enemy_bandit_raider_dead` -> `.../kenney_tiny-dungeon_1.0/Tiles/tile_0116.png`
 - `banner_upright` -> `.../PNG/Weapons/Tiles/tile_0018.png`
 - `banner_dropped` -> `.../PNG/Weapons/Tiles/tile_0003.png`
 - `oasis_water_core` -> `.../PNG/Tiles/Tiles/tile_0006.png`

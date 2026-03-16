@@ -40,7 +40,7 @@ pub struct EnemyStatsConfig {
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct EnemiesConfigFile {
-    pub infantry_melee: EnemyStatsConfig,
+    pub bandit_raider: EnemyStatsConfig,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -169,11 +169,20 @@ fn validate_units(config: &UnitsConfigFile) -> Result<()> {
 }
 
 fn validate_enemies(config: &EnemiesConfigFile) -> Result<()> {
-    if config.infantry_melee.max_hp <= 0.0 {
-        bail!("enemy infantry_melee max_hp must be > 0");
+    if config.bandit_raider.max_hp <= 0.0 {
+        bail!("enemy bandit_raider max_hp must be > 0");
     }
-    if config.infantry_melee.attack_cooldown_secs <= 0.0 {
-        bail!("enemy infantry_melee attack_cooldown_secs must be > 0");
+    if config.bandit_raider.attack_cooldown_secs <= 0.0 {
+        bail!("enemy bandit_raider attack_cooldown_secs must be > 0");
+    }
+    if config.bandit_raider.damage <= 0.0 {
+        bail!("enemy bandit_raider damage must be > 0");
+    }
+    if config.bandit_raider.attack_range <= 0.0 {
+        bail!("enemy bandit_raider attack_range must be > 0");
+    }
+    if config.bandit_raider.move_speed <= 0.0 {
+        bail!("enemy bandit_raider move_speed must be > 0");
     }
     Ok(())
 }
@@ -192,6 +201,7 @@ fn validate_waves(config: &WavesConfigFile) -> Result<()> {
     if config.waves.is_empty() {
         bail!("waves list cannot be empty");
     }
+    let mut previous_time = -1.0;
     for (idx, wave) in config.waves.iter().enumerate() {
         if wave.time_secs < 0.0 {
             bail!("wave[{idx}] time_secs cannot be negative");
@@ -199,6 +209,10 @@ fn validate_waves(config: &WavesConfigFile) -> Result<()> {
         if wave.count == 0 {
             bail!("wave[{idx}] count must be > 0");
         }
+        if wave.time_secs <= previous_time {
+            bail!("waves must be strictly increasing by time_secs");
+        }
+        previous_time = wave.time_secs;
     }
     Ok(())
 }
@@ -274,7 +288,7 @@ mod tests {
         write_config(
             dir,
             "enemies.json",
-            r#"{"infantry_melee":{"id":"e","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0}}"#,
+            r#"{"bandit_raider":{"id":"e","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0}}"#,
         );
         write_config(
             dir,
@@ -284,7 +298,7 @@ mod tests {
         write_config(
             dir,
             "waves.json",
-            r#"{"waves":[{"time_secs":0.0,"count":1}]}"#,
+            r#"{"waves":[{"time_secs":0.0,"count":1},{"time_secs":1.0,"count":1}]}"#,
         );
         write_config(
             dir,
@@ -308,7 +322,7 @@ mod tests {
         let tmp = TempDir::new().expect("tmp");
         write_valid_set(tmp.path());
         let data = GameData::load_from_dir(tmp.path()).expect("load");
-        assert_eq!(data.waves.waves.len(), 1);
+        assert_eq!(data.waves.waves.len(), 2);
         assert_eq!(data.upgrades.upgrades.len(), 1);
     }
 
@@ -336,5 +350,18 @@ mod tests {
         fs::remove_file(tmp.path().join("waves.json")).expect("remove");
         let err = GameData::load_from_dir(tmp.path()).expect_err("expected missing file");
         assert!(err.to_string().contains("waves.json"));
+    }
+
+    #[test]
+    fn rejects_unsorted_wave_times() {
+        let tmp = TempDir::new().expect("tmp");
+        write_valid_set(tmp.path());
+        write_config(
+            tmp.path(),
+            "waves.json",
+            r#"{"waves":[{"time_secs":5.0,"count":1},{"time_secs":2.0,"count":2}]}"#,
+        );
+        let err = GameData::load_from_dir(tmp.path()).expect_err("expected invalid wave order");
+        assert!(err.to_string().contains("strictly increasing"));
     }
 }

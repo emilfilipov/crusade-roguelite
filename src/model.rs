@@ -26,7 +26,7 @@ pub enum Team {
 pub enum UnitKind {
     Commander,
     InfantryKnight,
-    EnemyInfantry,
+    EnemyBanditRaider,
     RescuableInfantry,
 }
 

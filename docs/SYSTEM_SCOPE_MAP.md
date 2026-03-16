@@ -6,7 +6,7 @@ It prevents scope creep and makes expansion decisions explicit.
 
 ## MVP Core Loop (Scaffold)
 1. Start run as commander (`Baldiun`) only, in square formation.
-2. Fight basic enemies with commander auto-attack.
+2. Fight basic `bandit_raider` enemies with commander auto-attack.
 3. Find neutral rescuable soldiers on the map.
 4. Stand near a rescuable soldier for the rescue channel duration.
 5. On successful rescue, soldier joins the retinue and fights automatically.
@@ -20,8 +20,9 @@ It prevents scope creep and makes expansion decisions explicit.
 | Formation Set | 1 formation: `Square` only | Add `Line`, `Wedge`, `Column` | Square formation stable across full runs with no slot/positioning bugs |
 | Commander Kit | 1 passive aura + 1 battle cry + basic auto-attack | Multiple aura trees, command actives, commander loadouts | Commander-only early game is reliable and balanced |
 | Recruit Roster | 1 recruit archetype/subtype: `Infantry/Knight` | Spearman, Archer, support units, faction variants | Rescue loop stable and roster growth bug-free |
-| Enemy Roster | 1 enemy type: basic melee infantry | Archers, cavalry, elites, event waves | Basic wave pacing and melee combat deterministic |
+| Enemy Roster | 1 enemy type: `bandit_raider` (melee infantry profile) | Archers, cavalry, elites, event waves | Basic wave pacing and melee combat deterministic |
 | Enemy AI | 1 behavior profile: chase + melee | Ranged kiting, cavalry charge, coordinated groups | No AI deadlocks and target selection stable |
+| Enemy Visual States | 1 state set for `bandit_raider`: idle/move/attack/hit/dead sprite swaps | Multi-frame animation sets and per-faction visual variants | State mapping remains readable and stable under combat load |
 | Weapon Types | 1 weapon class: melee | Bows, spears, anti-armor, weapon traits | Melee combat formula validated by tests |
 | Armor Model | 1 armor stat (flat mitigation) | Armor slots, resist types, durability | Damage model stable and readable |
 | Skill System | Minimal per-unit fields only | Per-unit skill trees and triggered abilities | Unit lifecycle and leveling stable |
