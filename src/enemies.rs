@@ -3,8 +3,8 @@ use bevy::prelude::*;
 use crate::data::GameData;
 use crate::map::MapBounds;
 use crate::model::{
-    Armor, AttackCooldown, AttackProfile, ColliderRadius, CommanderUnit, EnemyUnit, FriendlyUnit,
-    GameState, Health, MoveSpeed, StartRunEvent, Team, Unit, UnitKind,
+    Armor, AttackCooldown, AttackProfile, CommanderUnit, EnemyUnit, FriendlyUnit, GameState,
+    Health, MoveSpeed, StartRunEvent, Team, Unit, UnitKind,
 };
 use crate::visuals::ArtAssets;
 
@@ -167,7 +167,6 @@ fn spawn_enemy_wave(
                 TimerMode::Repeating,
             )),
             MoveSpeed(move_speed),
-            ColliderRadius(13.0),
             SpriteBundle {
                 texture: art.enemy_bandit_raider_idle.clone(),
                 sprite: Sprite {
@@ -200,7 +199,10 @@ pub fn infinite_wave_stat_multiplier(procedural_wave_index: u32) -> f32 {
 #[allow(clippy::type_complexity)]
 fn enemy_chase_targets(
     time: Res<Time>,
-    mut enemies: Query<(&MoveSpeed, &mut Transform), (With<EnemyUnit>, Without<FriendlyUnit>)>,
+    mut enemies: Query<
+        (&MoveSpeed, &AttackProfile, &mut Transform),
+        (With<EnemyUnit>, Without<FriendlyUnit>),
+    >,
     friendlies: Query<
         (&Transform, Option<&CommanderUnit>),
         (With<FriendlyUnit>, Without<EnemyUnit>),
@@ -215,11 +217,13 @@ fn enemy_chase_targets(
         return;
     }
 
-    for (move_speed, mut enemy_transform) in &mut enemies {
+    for (move_speed, attack_profile, mut enemy_transform) in &mut enemies {
         let enemy_position = enemy_transform.translation.truncate();
         if let Some(target) = choose_nearest(enemy_position, &targets) {
             let delta = target - enemy_position;
-            if delta.length_squared() > 0.0001 {
+            let dist_sq = delta.length_squared();
+            let stop_distance = (attack_profile.range * 0.85).max(10.0);
+            if dist_sq > stop_distance * stop_distance {
                 let step = delta.normalize() * move_speed.0 * time.delta_seconds();
                 enemy_transform.translation.x += step.x;
                 enemy_transform.translation.y += step.y;

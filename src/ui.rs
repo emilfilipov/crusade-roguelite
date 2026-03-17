@@ -36,9 +36,10 @@ enum MainMenuAction {
     Exit,
 }
 
-const MENU_BUTTON_NORMAL: Color = Color::srgb(0.18, 0.16, 0.14);
-const MENU_BUTTON_HOVERED: Color = Color::srgb(0.28, 0.24, 0.2);
-const MENU_BUTTON_PRESSED: Color = Color::srgb(0.4, 0.32, 0.22);
+const MENU_BACKGROUND: Color = Color::srgb(0.12, 0.1, 0.08);
+const MENU_BUTTON_TEXT_NORMAL: Color = Color::srgb(0.92, 0.88, 0.8);
+const MENU_BUTTON_TEXT_HOVERED: Color = Color::srgb(0.98, 0.96, 0.88);
+const MENU_BUTTON_BORDER_HOVERED: Color = Color::srgb(0.86, 0.78, 0.62);
 
 pub struct UiPlugin;
 
@@ -74,32 +75,18 @@ fn spawn_main_menu(mut commands: Commands) {
                     height: Val::Percent(100.0),
                     justify_content: JustifyContent::Center,
                     align_items: AlignItems::Center,
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px(18.0),
                     ..default()
                 },
-                background_color: BackgroundColor(Color::srgba(0.05, 0.04, 0.03, 0.72)),
+                background_color: BackgroundColor(MENU_BACKGROUND),
                 z_index: ZIndex::Global(100),
                 ..default()
             },
         ))
         .with_children(|parent| {
-            parent
-                .spawn(NodeBundle {
-                    style: Style {
-                        width: Val::Px(320.0),
-                        flex_direction: FlexDirection::Column,
-                        justify_content: JustifyContent::Center,
-                        align_items: AlignItems::Center,
-                        row_gap: Val::Px(16.0),
-                        padding: UiRect::all(Val::Px(20.0)),
-                        ..default()
-                    },
-                    background_color: BackgroundColor(Color::srgba(0.14, 0.12, 0.1, 0.9)),
-                    ..default()
-                })
-                .with_children(|panel| {
-                    spawn_menu_button(panel, MainMenuAction::Start, "START");
-                    spawn_menu_button(panel, MainMenuAction::Exit, "EXIT");
-                });
+            spawn_menu_button(parent, MainMenuAction::Start, "START");
+            spawn_menu_button(parent, MainMenuAction::Exit, "EXIT");
         });
 }
 
@@ -112,9 +99,11 @@ fn spawn_menu_button(parent: &mut ChildBuilder, action: MainMenuAction, label: &
                     height: Val::Px(56.0),
                     justify_content: JustifyContent::Center,
                     align_items: AlignItems::Center,
+                    border: UiRect::all(Val::Px(1.0)),
                     ..default()
                 },
-                background_color: BackgroundColor(MENU_BUTTON_NORMAL),
+                background_color: BackgroundColor(Color::NONE),
+                border_color: BorderColor(Color::NONE),
                 ..default()
             },
             action,
@@ -124,7 +113,7 @@ fn spawn_menu_button(parent: &mut ChildBuilder, action: MainMenuAction, label: &
                 label,
                 TextStyle {
                     font_size: 28.0,
-                    color: Color::srgb(0.92, 0.88, 0.8),
+                    color: MENU_BUTTON_TEXT_NORMAL,
                     ..default()
                 },
             ));
@@ -140,18 +129,34 @@ fn despawn_main_menu(mut commands: Commands, menu_roots: Query<Entity, With<Main
 #[allow(clippy::type_complexity)]
 fn handle_main_menu_buttons(
     mut buttons: Query<
-        (&Interaction, &MainMenuAction, &mut BackgroundColor),
+        (
+            &Interaction,
+            &MainMenuAction,
+            &Children,
+            &mut BorderColor,
+            &mut BackgroundColor,
+        ),
         (Changed<Interaction>, With<Button>),
     >,
+    mut text_query: Query<&mut Text>,
     mut next_state: ResMut<NextState<GameState>>,
     mut run_session: ResMut<RunSession>,
     mut start_run_events: EventWriter<StartRunEvent>,
     mut app_exit_events: EventWriter<AppExit>,
 ) {
-    for (interaction, action, mut background) in &mut buttons {
+    for (interaction, action, children, mut border_color, mut background) in &mut buttons {
+        if let Some(&text_entity) = children.first()
+            && let Ok(mut text) = text_query.get_mut(text_entity)
+        {
+            text.sections[0].style.color = match *interaction {
+                Interaction::Hovered | Interaction::Pressed => MENU_BUTTON_TEXT_HOVERED,
+                Interaction::None => MENU_BUTTON_TEXT_NORMAL,
+            };
+        }
         match *interaction {
             Interaction::Pressed => {
-                *background = MENU_BUTTON_PRESSED.into();
+                *border_color = BorderColor(MENU_BUTTON_BORDER_HOVERED);
+                *background = BackgroundColor(Color::NONE);
                 match action {
                     MainMenuAction::Start => {
                         info!("Start run requested from MainMenu button.");
@@ -166,10 +171,12 @@ fn handle_main_menu_buttons(
                 }
             }
             Interaction::Hovered => {
-                *background = MENU_BUTTON_HOVERED.into();
+                *border_color = BorderColor(MENU_BUTTON_BORDER_HOVERED);
+                *background = BackgroundColor(Color::NONE);
             }
             Interaction::None => {
-                *background = MENU_BUTTON_NORMAL.into();
+                *border_color = BorderColor(Color::NONE);
+                *background = BackgroundColor(Color::NONE);
             }
         }
     }

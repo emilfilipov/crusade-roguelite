@@ -11,8 +11,12 @@ impl Plugin for CorePlugin {
         app.add_systems(OnEnter(GameState::Boot), boot_to_menu)
             .add_systems(
                 OnEnter(GameState::MainMenu),
-                cleanup_run_entities_on_menu_enter,
+                (
+                    cleanup_run_entities_on_menu_enter,
+                    set_main_menu_clear_color,
+                ),
             )
+            .add_systems(OnExit(GameState::MainMenu), set_in_run_clear_color)
             .add_systems(Update, (pause_toggle, resume_from_pause))
             .add_systems(
                 PostUpdate,
@@ -47,6 +51,14 @@ fn cleanup_run_entities_on_menu_enter(
         commands.entity(entity).despawn_recursive();
     }
     *run_session = RunSession::default();
+}
+
+fn set_main_menu_clear_color(mut clear_color: ResMut<ClearColor>) {
+    clear_color.0 = Color::srgb(0.12, 0.1, 0.08);
+}
+
+fn set_in_run_clear_color(mut clear_color: ResMut<ClearColor>) {
+    clear_color.0 = Color::srgb(0.79, 0.68, 0.51);
 }
 
 fn pause_toggle(

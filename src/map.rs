@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use crate::data::GameData;
-use crate::model::{CommanderUnit, GameState};
+use crate::model::{CommanderUnit, GameState, Unit};
 use crate::visuals::ArtAssets;
 
 #[derive(Resource, Clone, Copy, Debug)]
@@ -19,7 +19,9 @@ impl Plugin for MapPlugin {
             .add_systems(OnEnter(GameState::MainMenu), spawn_background_visual)
             .add_systems(
                 Update,
-                follow_camera_commander.run_if(in_state(GameState::InRun)),
+                (follow_camera_commander, snap_world_to_pixel_grid)
+                    .chain()
+                    .run_if(in_state(GameState::InRun)),
             );
     }
 }
@@ -75,5 +77,19 @@ fn follow_camera_commander(
     for mut camera in &mut cameras {
         camera.translation.x = commander_position.x;
         camera.translation.y = commander_position.y;
+    }
+}
+
+fn snap_world_to_pixel_grid(
+    mut units: Query<&mut Transform, With<Unit>>,
+    mut cameras: Query<&mut Transform, (With<Camera2d>, Without<Unit>)>,
+) {
+    for mut transform in &mut units {
+        transform.translation.x = transform.translation.x.round();
+        transform.translation.y = transform.translation.y.round();
+    }
+    for mut transform in &mut cameras {
+        transform.translation.x = transform.translation.x.round();
+        transform.translation.y = transform.translation.y.round();
     }
 }
