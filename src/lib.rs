@@ -21,6 +21,8 @@ use bevy::asset::AssetPlugin;
 use bevy::log::tracing_subscriber::Layer;
 use bevy::log::{BoxedLayer, Level, LogPlugin};
 use bevy::prelude::*;
+use bevy::window::PrimaryWindow;
+use bevy::winit::WinitWindows;
 use tracing_appender::non_blocking::WorkerGuard;
 
 use crate::model::{
@@ -31,6 +33,38 @@ use crate::model::{
 #[allow(dead_code)]
 struct LogFileGuard(WorkerGuard);
 
+fn load_window_icon() -> Option<winit::window::Icon> {
+    let icon_bytes = include_bytes!("../assets/branding/game_icon.png");
+    let icon = image::load_from_memory(icon_bytes).ok()?;
+    let icon = icon.into_rgba8();
+    let (width, height) = icon.dimensions();
+    winit::window::Icon::from_rgba(icon.into_raw(), width, height).ok()
+}
+
+fn apply_window_icon_once(
+    windows: Option<NonSend<WinitWindows>>,
+    primary_window: Query<Entity, With<PrimaryWindow>>,
+    mut applied: Local<bool>,
+) {
+    if *applied {
+        return;
+    }
+    let Some(windows) = windows else {
+        return;
+    };
+    let Ok(primary_entity) = primary_window.get_single() else {
+        return;
+    };
+    let Some(primary) = windows.get_window(primary_entity) else {
+        return;
+    };
+    let Some(icon) = load_window_icon() else {
+        return;
+    };
+    primary.set_window_icon(Some(icon));
+    *applied = true;
+}
+
 pub fn configure_game_app(app: &mut App) {
     app.init_state::<GameState>()
         .insert_resource(ClearColor(Color::srgb(0.79, 0.68, 0.51)))
@@ -40,6 +74,7 @@ pub fn configure_game_app(app: &mut App) {
         .add_event::<DamageEvent>()
         .add_event::<UnitDiedEvent>()
         .add_event::<GainXpEvent>()
+        .add_systems(Update, apply_window_icon_once)
         .add_plugins((
             data::DataPlugin,
             core::CorePlugin,

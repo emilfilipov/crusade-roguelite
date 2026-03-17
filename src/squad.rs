@@ -87,7 +87,8 @@ fn spawn_commander(commands: &mut Commands, data: &GameData, art: &ArtAssets) ->
             SpriteBundle {
                 texture: art.commander_idle.clone(),
                 sprite: Sprite {
-                    custom_size: Some(Vec2::splat(32.0)),
+                    color: Color::srgb(1.0, 0.88, 0.88),
+                    custom_size: Some(Vec2::splat(36.0)),
                     ..default()
                 },
                 transform: Transform::from_xyz(0.0, 0.0, 10.0),
@@ -153,16 +154,16 @@ fn commander_movement(
     };
 
     let mut axis = Vec2::ZERO;
-    if keys.pressed(KeyCode::KeyW) {
+    if keys.pressed(KeyCode::KeyW) || keys.pressed(KeyCode::ArrowUp) {
         axis.y += 1.0;
     }
-    if keys.pressed(KeyCode::KeyS) {
+    if keys.pressed(KeyCode::KeyS) || keys.pressed(KeyCode::ArrowDown) {
         axis.y -= 1.0;
     }
-    if keys.pressed(KeyCode::KeyA) {
+    if keys.pressed(KeyCode::KeyA) || keys.pressed(KeyCode::ArrowLeft) {
         axis.x -= 1.0;
     }
-    if keys.pressed(KeyCode::KeyD) {
+    if keys.pressed(KeyCode::KeyD) || keys.pressed(KeyCode::ArrowRight) {
         axis.x += 1.0;
     }
     if axis.length_squared() == 0.0 {

@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use crate::data::GameData;
-use crate::model::{FriendlyUnit, GameState, Health, StartRunEvent};
+use crate::model::{CommanderUnit, FriendlyUnit, GameState, Health, StartRunEvent};
 use crate::visuals::ArtAssets;
 
 #[derive(Resource, Clone, Copy, Debug)]
@@ -27,7 +27,8 @@ impl Plugin for MapPlugin {
             .add_systems(Update, handle_start_run_oasis)
             .add_systems(
                 Update,
-                heal_units_inside_oasis.run_if(in_state(GameState::InRun)),
+                (heal_units_inside_oasis, follow_camera_commander)
+                    .run_if(in_state(GameState::InRun)),
             );
     }
 }
@@ -120,6 +121,20 @@ fn heal_units_inside_oasis(
                     (health.current + oasis.heal_per_second * time.delta_seconds()).min(health.max);
             }
         }
+    }
+}
+
+fn follow_camera_commander(
+    commanders: Query<&Transform, With<CommanderUnit>>,
+    mut cameras: Query<&mut Transform, (With<Camera2d>, Without<CommanderUnit>)>,
+) {
+    let Ok(commander) = commanders.get_single() else {
+        return;
+    };
+    let commander_position = commander.translation;
+    for mut camera in &mut cameras {
+        camera.translation.x = commander_position.x;
+        camera.translation.y = commander_position.y;
     }
 }
 

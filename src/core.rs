@@ -25,6 +25,7 @@ impl Plugin for CorePlugin {
 }
 
 fn boot_to_menu(mut next_state: ResMut<NextState<GameState>>) {
+    info!("Transition Boot -> MainMenu");
     next_state.set(GameState::MainMenu);
 }
 
@@ -41,10 +42,15 @@ fn start_run_from_main_menu(
 
     let should_start = keyboard
         .as_ref()
-        .map(|keys| keys.just_pressed(KeyCode::Enter))
+        .map(|keys| {
+            keys.just_pressed(KeyCode::Enter)
+                || keys.just_pressed(KeyCode::NumpadEnter)
+                || keys.just_pressed(KeyCode::Space)
+        })
         .unwrap_or(false);
 
     if should_start {
+        info!("Start run requested from MainMenu");
         *run_session = RunSession::default();
         next_state.set(GameState::InRun);
         start_run_events.send(StartRunEvent);
@@ -110,9 +116,10 @@ fn restart_from_game_over(
     }
     if keyboard
         .as_ref()
-        .map(|keys| keys.just_pressed(KeyCode::Enter))
+        .map(|keys| keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::NumpadEnter))
         .unwrap_or(false)
     {
+        info!("Restart requested from GameOver");
         *session = RunSession::default();
         next_state.set(GameState::MainMenu);
     }
