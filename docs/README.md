@@ -18,6 +18,14 @@ cargo run
 - If `%LOCALAPPDATA%` is unavailable, fallback path:
   - `<project-or-launch-dir>\logs\crusade_roguelite.log`
 
+## Runtime Asset Discovery
+- Runtime looks for an `assets` directory:
+  1. next to the executable
+  2. then by walking parent directories (to support direct runs from `target/.../release`)
+- This allows both:
+  - installed builds (`assets` next to `.exe`)
+  - local dev/release runs from project build folders
+
 ## Quality Loop
 ```powershell
 cargo fmt --all
