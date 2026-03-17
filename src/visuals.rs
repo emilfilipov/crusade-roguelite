@@ -30,28 +30,28 @@ fn load_art_assets(mut assets: ResMut<ArtAssets>, asset_server: Option<Res<Asset
         return;
     };
 
-    assets.commander_idle = asset_server
-        .load("third_party/kenney_desert-shooter-pack_1.0/PNG/Players/Tiles/tile_0000.png");
-    assets.friendly_knight_idle = asset_server
-        .load("third_party/kenney_desert-shooter-pack_1.0/PNG/Players/Tiles/tile_0008.png");
-    assets.friendly_knight_rescuable_variant = asset_server
-        .load("third_party/kenney_desert-shooter-pack_1.0/PNG/Players/Tiles/tile_0001.png");
+    assets.commander_idle =
+        asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0097.png");
+    assets.friendly_knight_idle =
+        asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0096.png");
+    assets.friendly_knight_rescuable_variant =
+        asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0086.png");
     assets.enemy_bandit_raider_idle =
-        asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0112.png");
+        asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0105.png");
     assets.enemy_bandit_raider_move =
-        asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0113.png");
+        asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0100.png");
     assets.enemy_bandit_raider_attack =
-        asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0114.png");
+        asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0099.png");
     assets.enemy_bandit_raider_hit =
-        asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0115.png");
+        asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0098.png");
     assets.enemy_bandit_raider_dead =
-        asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0116.png");
+        asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0120.png");
     assets.banner_upright = asset_server
         .load("third_party/kenney_desert-shooter-pack_1.0/PNG/Weapons/Tiles/tile_0018.png");
     assets.banner_dropped = asset_server
         .load("third_party/kenney_desert-shooter-pack_1.0/PNG/Weapons/Tiles/tile_0003.png");
-    assets.oasis_water_core = asset_server
-        .load("third_party/kenney_desert-shooter-pack_1.0/PNG/Tiles/Tiles/tile_0006.png");
+    assets.oasis_water_core =
+        asset_server.load("third_party/kenney_sketch-desert_1.0/Tiles/water_center_N.png");
     assets.terrain_desert_base_tile_a = asset_server
         .load("third_party/kenney_desert-shooter-pack_1.0/PNG/Tiles/Tiles/tile_0000.png");
 }

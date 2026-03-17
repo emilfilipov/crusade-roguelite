@@ -33,7 +33,9 @@ impl Plugin for FormationPlugin {
             .add_systems(OnEnter(GameState::MainMenu), load_square_modifiers)
             .add_systems(
                 Update,
-                apply_square_formation.run_if(in_state(GameState::InRun)),
+                (apply_square_formation, sync_friendly_depth_sorting)
+                    .chain()
+                    .run_if(in_state(GameState::InRun)),
             );
     }
 }
@@ -61,7 +63,7 @@ fn apply_square_formation(
     let spacing = data.formations.square.slot_spacing;
     let mut members: Vec<(Entity, Mut<Transform>)> = friendlies.iter_mut().collect();
     members.sort_by_key(|(entity, _)| entity.index());
-    let offsets = square_offsets(members.len(), spacing);
+    let offsets = square_offsets_excluding_commander_slot(members.len(), spacing);
 
     for ((_, mut transform), offset) in members.into_iter().zip(offsets.into_iter()) {
         let target = commander_transform.translation.truncate() + offset;
@@ -71,6 +73,42 @@ fn apply_square_formation(
         transform.translation.x = next.x;
         transform.translation.y = next.y;
     }
+}
+
+#[allow(clippy::type_complexity)]
+fn sync_friendly_depth_sorting(
+    mut units: Query<&mut Transform, (With<FriendlyUnit>, Without<Camera>)>,
+) {
+    for mut transform in &mut units {
+        transform.translation.z = depth_z_for_world_y(transform.translation.y);
+    }
+}
+
+fn square_offsets_excluding_commander_slot(recruit_count: usize, spacing: f32) -> Vec<Vec2> {
+    if recruit_count == 0 {
+        return Vec::new();
+    }
+
+    let mut offsets = square_offsets(recruit_count + 1, spacing);
+    let commander_slot = offsets
+        .iter()
+        .enumerate()
+        .min_by(|(_, a), (_, b)| {
+            a.length_squared()
+                .partial_cmp(&b.length_squared())
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .map(|(idx, _)| idx)
+        .unwrap_or(0);
+    let commander_offset = offsets.remove(commander_slot);
+    for offset in &mut offsets {
+        *offset -= commander_offset;
+    }
+    offsets
+}
+
+pub fn depth_z_for_world_y(y: f32) -> f32 {
+    20.0 - y * 0.001
 }
 
 pub fn square_offsets(count: usize, spacing: f32) -> Vec<Vec2> {
@@ -96,7 +134,9 @@ mod tests {
 
     use bevy::prelude::Vec2;
 
-    use crate::formation::square_offsets;
+    use crate::formation::{
+        depth_z_for_world_y, square_offsets, square_offsets_excluding_commander_slot,
+    };
 
     #[test]
     fn square_offsets_return_expected_count() {
@@ -118,5 +158,23 @@ mod tests {
     fn zero_count_returns_empty() {
         let offsets = square_offsets(0, 10.0);
         assert_eq!(offsets, Vec::<Vec2>::new());
+    }
+
+    #[test]
+    fn formation_reserves_commander_slot() {
+        let offsets = square_offsets_excluding_commander_slot(8, 12.0);
+        assert_eq!(offsets.len(), 8);
+        assert!(
+            !offsets
+                .iter()
+                .any(|offset| offset.length_squared() < 0.0001)
+        );
+    }
+
+    #[test]
+    fn depth_sorting_places_lower_units_on_top() {
+        let upper = depth_z_for_world_y(100.0);
+        let lower = depth_z_for_world_y(-100.0);
+        assert!(lower > upper);
     }
 }

@@ -12,6 +12,8 @@ use crate::visuals::ArtAssets;
 pub struct WaveRuntime {
     pub elapsed: f32,
     pub next_wave_index: usize,
+    pub infinite_wave_index: u32,
+    pub next_infinite_spawn_time: f32,
 }
 
 #[derive(Component, Clone, Copy, Debug, Eq, PartialEq)]
@@ -79,8 +81,41 @@ fn spawn_waves(
             &art,
             bounds.as_deref().copied(),
             wave_runtime.next_wave_index,
+            1.0,
         );
         wave_runtime.next_wave_index += 1;
+    }
+
+    if wave_runtime.next_wave_index < data.waves.waves.len() {
+        return;
+    }
+
+    if wave_runtime.next_infinite_spawn_time <= 0.0 {
+        wave_runtime.next_infinite_spawn_time = data
+            .waves
+            .waves
+            .last()
+            .map(|wave| wave.time_secs)
+            .unwrap_or(0.0)
+            + infinite_wave_interval_secs();
+    }
+
+    let base_count = data.waves.waves.last().map(|wave| wave.count).unwrap_or(3);
+    while wave_runtime.elapsed >= wave_runtime.next_infinite_spawn_time {
+        let procedural_index = wave_runtime.infinite_wave_index;
+        let count = infinite_wave_enemy_count(base_count, procedural_index);
+        let stat_scale = infinite_wave_stat_multiplier(procedural_index);
+        spawn_enemy_wave(
+            &mut commands,
+            count,
+            &data,
+            &art,
+            bounds.as_deref().copied(),
+            data.waves.waves.len() + procedural_index as usize,
+            stat_scale,
+        );
+        wave_runtime.infinite_wave_index = wave_runtime.infinite_wave_index.saturating_add(1);
+        wave_runtime.next_infinite_spawn_time += infinite_wave_interval_secs();
     }
 }
 
@@ -91,11 +126,18 @@ fn spawn_enemy_wave(
     art: &ArtAssets,
     bounds: Option<MapBounds>,
     wave_idx: usize,
+    stat_scale: f32,
 ) {
     let cfg = &data.enemies.bandit_raider;
     let radius = bounds
         .map(|b| b.half_width.max(b.half_height) * 0.9)
         .unwrap_or(900.0);
+    let hp = cfg.max_hp * stat_scale;
+    let armor = cfg.armor + (stat_scale - 1.0) * 2.0;
+    let damage = cfg.damage * stat_scale;
+    let attack_cooldown_secs = (cfg.attack_cooldown_secs / (1.0 + (stat_scale - 1.0) * 0.15))
+        .clamp(0.2, cfg.attack_cooldown_secs);
+    let move_speed = cfg.move_speed * (1.0 + (stat_scale - 1.0) * 0.2);
     for idx in 0..count {
         let angle = (idx as f32 / count as f32) * std::f32::consts::TAU + wave_idx as f32 * 0.21;
         let pos = Vec2::new(radius * angle.cos(), radius * angle.sin());
@@ -111,18 +153,18 @@ fn spawn_enemy_wave(
                 last_position: pos,
                 state: BanditVisualState::Idle,
             },
-            Health::new(cfg.max_hp),
-            Armor(cfg.armor),
+            Health::new(hp),
+            Armor(armor),
             AttackProfile {
-                damage: cfg.damage,
+                damage,
                 range: cfg.attack_range,
-                cooldown_secs: cfg.attack_cooldown_secs,
+                cooldown_secs: attack_cooldown_secs,
             },
             AttackCooldown(Timer::from_seconds(
-                cfg.attack_cooldown_secs,
+                attack_cooldown_secs,
                 TimerMode::Repeating,
             )),
-            MoveSpeed(cfg.move_speed),
+            MoveSpeed(move_speed),
             SpriteBundle {
                 texture: art.enemy_bandit_raider_idle.clone(),
                 sprite: Sprite {
@@ -134,6 +176,18 @@ fn spawn_enemy_wave(
             },
         ));
     }
+}
+
+fn infinite_wave_interval_secs() -> f32 {
+    10.0
+}
+
+pub fn infinite_wave_enemy_count(base_count: u32, procedural_wave_index: u32) -> u32 {
+    base_count.saturating_add((procedural_wave_index.saturating_add(1)) * 2)
+}
+
+pub fn infinite_wave_stat_multiplier(procedural_wave_index: u32) -> f32 {
+    1.0 + (procedural_wave_index.saturating_add(1)) as f32 * 0.08
 }
 
 #[allow(clippy::type_complexity)]
@@ -249,7 +303,10 @@ pub fn choose_nearest(origin: Vec2, candidates: &[Vec2]) -> Option<Vec2> {
 mod tests {
     use bevy::prelude::Vec2;
 
-    use crate::enemies::{BanditVisualState, choose_nearest, decide_bandit_visual_state};
+    use crate::enemies::{
+        BanditVisualState, choose_nearest, decide_bandit_visual_state, infinite_wave_enemy_count,
+        infinite_wave_stat_multiplier,
+    };
 
     #[test]
     fn chooses_nearest_target() {
@@ -290,5 +347,13 @@ mod tests {
             decide_bandit_visual_state(0.1, 0.8, 1.0, 9.0, 10.0),
             BanditVisualState::Idle
         );
+    }
+
+    #[test]
+    fn infinite_wave_progression_scales_count_and_stats() {
+        assert_eq!(infinite_wave_enemy_count(6, 0), 8);
+        assert_eq!(infinite_wave_enemy_count(6, 4), 16);
+        assert!((infinite_wave_stat_multiplier(0) - 1.08).abs() < 0.001);
+        assert!(infinite_wave_stat_multiplier(5) > infinite_wave_stat_multiplier(2));
     }
 }
