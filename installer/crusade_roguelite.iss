@@ -1,18 +1,25 @@
 #define MyAppName "Crusade Roguelite"
-#define MyAppVersion "0.1.0"
 #define MyAppPublisher "Crusade Roguelite Team"
 #define MyAppExeName "crusade_roguelite.exe"
+#ifndef MyAppVersion
+  #define MyAppVersion "0.0.0"
+#endif
+#ifndef MyOutputVersionTag
+  #define MyOutputVersionTag "0_0_0"
+#endif
 
 [Setup]
 AppId={{D9D3AFD8-3D3B-4987-8748-8ED5668A641B}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
+VersionInfoVersion={#MyAppVersion}
+VersionInfoTextVersion={#MyAppVersion}
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 OutputDir=dist
-OutputBaseFilename=crusade_roguelite_installer
+OutputBaseFilename=crusade_roguelite_installer_{#MyOutputVersionTag}
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern

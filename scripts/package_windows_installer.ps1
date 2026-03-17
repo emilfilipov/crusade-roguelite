@@ -4,7 +4,25 @@ $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $installerScript = Join-Path $repoRoot "installer/crusade_roguelite.iss"
+$installerVersionFile = Join-Path $repoRoot "installer/version.json"
 $targetExe = Join-Path $repoRoot "target/x86_64-pc-windows-msvc/release/crusade_roguelite.exe"
+
+if (-not (Test-Path $installerVersionFile)) {
+    @{ installer_patch = 1 } | ConvertTo-Json | Set-Content $installerVersionFile
+}
+
+$versionState = Get-Content $installerVersionFile -Raw | ConvertFrom-Json
+if ($null -eq $versionState.installer_patch) {
+    throw "Invalid installer version file, expected installer_patch: $installerVersionFile"
+}
+
+$patch = [int]$versionState.installer_patch
+if ($patch -lt 0) {
+    throw "installer_patch must be >= 0 in $installerVersionFile"
+}
+
+$appVersion = "0.0.$patch"
+$outputVersionTag = "0_0_$patch"
 
 Write-Host "Building Windows release first..."
 cargo build --release --target x86_64-pc-windows-msvc
@@ -31,7 +49,13 @@ if (-not $iscc) {
     }
 }
 
-Write-Host "Packaging installer..."
-& $iscc.Source $installerScript
+Write-Host "Packaging installer version $appVersion..."
+& $iscc.Source "/DMyAppVersion=$appVersion" "/DMyOutputVersionTag=$outputVersionTag" $installerScript
+if ($LASTEXITCODE -ne 0) {
+    throw "Inno Setup compilation failed with exit code $LASTEXITCODE"
+}
+
+$nextPatch = $patch + 1
+@{ installer_patch = $nextPatch } | ConvertTo-Json | Set-Content $installerVersionFile
 
 Write-Host "Installer packaging completed."

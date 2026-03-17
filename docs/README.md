@@ -41,6 +41,13 @@ cargo build --release --target x86_64-pc-windows-msvc
 ./scripts/package_windows_installer.ps1
 ```
 
+## Installer Versioning
+- Installer versions use `0.0.x` and are driven by `installer/version.json` (`installer_patch`).
+- Each successful `./scripts/package_windows_installer.ps1` run:
+  1. builds installer version `0.0.<installer_patch>`
+  2. writes output file `installer/dist/crusade_roguelite_installer_0_0_<installer_patch>.exe`
+  3. increments `installer_patch` for the next package build
+
 ## Documentation
 - System scope map: `docs/SYSTEM_SCOPE_MAP.md`
 - Task backlog: `docs/TASKS.md`
