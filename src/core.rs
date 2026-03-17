@@ -13,9 +13,12 @@ impl Plugin for CorePlugin {
                     start_run_from_main_menu,
                     pause_toggle,
                     resume_from_pause,
-                    detect_game_over,
                     restart_from_game_over,
                 ),
+            )
+            .add_systems(
+                PostUpdate,
+                detect_game_over.run_if(in_state(GameState::InRun)),
             )
             .add_systems(
                 Update,
@@ -96,11 +99,11 @@ fn tick_survival_time(time: Res<Time>, mut session: ResMut<RunSession>) {
 }
 
 fn detect_game_over(
-    state: Res<State<GameState>>,
     commanders: Query<Entity, With<CommanderUnit>>,
     mut next_state: ResMut<NextState<GameState>>,
 ) {
-    if *state.get() == GameState::InRun && commanders.is_empty() {
+    if commanders.is_empty() {
+        warn!("No commander found during InRun; transitioning to GameOver.");
         next_state.set(GameState::GameOver);
     }
 }
@@ -130,7 +133,7 @@ mod tests {
     use bevy::prelude::*;
 
     use crate::configure_game_app;
-    use crate::model::GameState;
+    use crate::model::{CommanderUnit, GameState, StartRunEvent};
 
     #[test]
     fn transitions_boot_to_main_menu() {
@@ -143,5 +146,36 @@ mod tests {
             app.world().resource::<State<GameState>>().get(),
             &GameState::MainMenu
         );
+    }
+
+    #[test]
+    fn in_run_start_event_spawns_commander_without_immediate_game_over() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, bevy::state::app::StatesPlugin));
+        configure_game_app(&mut app);
+
+        app.update();
+        assert_eq!(
+            app.world().resource::<State<GameState>>().get(),
+            &GameState::MainMenu
+        );
+
+        app.world_mut()
+            .resource_mut::<NextState<GameState>>()
+            .set(GameState::InRun);
+        app.world_mut().send_event(StartRunEvent);
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<State<GameState>>().get(),
+            &GameState::InRun
+        );
+
+        let commander_count = {
+            let world = app.world_mut();
+            let mut query = world.query_filtered::<Entity, With<CommanderUnit>>();
+            query.iter(world).count()
+        };
+        assert_eq!(commander_count, 1);
     }
 }

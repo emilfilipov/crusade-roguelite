@@ -23,6 +23,7 @@ use bevy::log::{BoxedLayer, Level, LogPlugin};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use bevy::winit::WinitWindows;
+use image::imageops::FilterType;
 use tracing_appender::non_blocking::WorkerGuard;
 
 use crate::model::{
@@ -35,10 +36,17 @@ struct LogFileGuard(WorkerGuard);
 
 fn load_window_icon() -> Option<winit::window::Icon> {
     let icon_bytes = include_bytes!("../assets/branding/game_icon.png");
-    let icon = image::load_from_memory(icon_bytes).ok()?;
-    let icon = icon.into_rgba8();
-    let (width, height) = icon.dimensions();
-    winit::window::Icon::from_rgba(icon.into_raw(), width, height).ok()
+    let decoded = image::load_from_memory(icon_bytes).ok()?;
+    let rgba = decoded.into_rgba8();
+    let (width, height, raw) = if rgba.width() > 256 || rgba.height() > 256 {
+        let resized = image::imageops::resize(&rgba, 256, 256, FilterType::Lanczos3);
+        let (rw, rh) = resized.dimensions();
+        (rw, rh, resized.into_raw())
+    } else {
+        let (rw, rh) = rgba.dimensions();
+        (rw, rh, rgba.into_raw())
+    };
+    winit::window::Icon::from_rgba(raw, width, height).ok()
 }
 
 fn apply_window_icon_once(
@@ -59,9 +67,12 @@ fn apply_window_icon_once(
         return;
     };
     let Some(icon) = load_window_icon() else {
+        warn!("Failed to decode runtime window icon from assets/branding/game_icon.png.");
+        *applied = true;
         return;
     };
     primary.set_window_icon(Some(icon));
+    info!("Applied runtime window icon from assets/branding/game_icon.png.");
     *applied = true;
 }
 
