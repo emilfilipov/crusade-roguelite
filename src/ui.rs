@@ -3,7 +3,7 @@ use bevy::prelude::*;
 
 use crate::banner::BannerState;
 use crate::enemies::WaveRuntime;
-use crate::model::{GameState, Health, RunSession, StartRunEvent, Team, Unit};
+use crate::model::{FrameRateCap, GameState, Health, RunSession, StartRunEvent, Team, Unit};
 use crate::morale::Cohesion;
 use crate::squad::SquadRoster;
 use crate::upgrades::Progression;
@@ -36,10 +36,16 @@ enum MainMenuAction {
     Exit,
 }
 
+#[derive(Component, Clone, Copy, Debug, Eq, PartialEq)]
+struct FpsCapButton {
+    cap: FrameRateCap,
+}
+
 const MENU_BACKGROUND: Color = Color::srgb(0.12, 0.1, 0.08);
 const MENU_BUTTON_TEXT_NORMAL: Color = Color::srgb(0.92, 0.88, 0.8);
 const MENU_BUTTON_TEXT_HOVERED: Color = Color::srgb(0.98, 0.96, 0.88);
 const MENU_BUTTON_BORDER_HOVERED: Color = Color::srgb(0.86, 0.78, 0.62);
+const MENU_FPS_BOX_BORDER: Color = Color::srgba(0.86, 0.78, 0.62, 0.7);
 
 pub struct UiPlugin;
 
@@ -50,7 +56,13 @@ impl Plugin for UiPlugin {
             .add_systems(OnExit(GameState::MainMenu), despawn_main_menu)
             .add_systems(
                 Update,
-                handle_main_menu_buttons.run_if(in_state(GameState::MainMenu)),
+                (
+                    handle_main_menu_buttons,
+                    handle_fps_cap_buttons,
+                    refresh_fps_cap_button_visuals,
+                )
+                    .chain()
+                    .run_if(in_state(GameState::MainMenu)),
             )
             .add_systems(
                 Update,
@@ -65,7 +77,7 @@ impl Plugin for UiPlugin {
     }
 }
 
-fn spawn_main_menu(mut commands: Commands) {
+fn spawn_main_menu(mut commands: Commands, frame_cap: Res<FrameRateCap>) {
     commands
         .spawn((
             MainMenuRoot,
@@ -85,8 +97,40 @@ fn spawn_main_menu(mut commands: Commands) {
             },
         ))
         .with_children(|parent| {
+            spawn_fps_selector(parent, *frame_cap);
             spawn_menu_button(parent, MainMenuAction::Start, "START");
             spawn_menu_button(parent, MainMenuAction::Exit, "EXIT");
+        });
+}
+
+fn spawn_fps_selector(parent: &mut ChildBuilder, selected: FrameRateCap) {
+    parent
+        .spawn(NodeBundle {
+            style: Style {
+                flex_direction: FlexDirection::Row,
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                column_gap: Val::Px(8.0),
+                border: UiRect::all(Val::Px(1.0)),
+                padding: UiRect::axes(Val::Px(10.0), Val::Px(8.0)),
+                ..default()
+            },
+            background_color: BackgroundColor(Color::NONE),
+            border_color: BorderColor(MENU_FPS_BOX_BORDER),
+            ..default()
+        })
+        .with_children(|row| {
+            row.spawn(TextBundle::from_section(
+                "FPS",
+                TextStyle {
+                    font_size: 18.0,
+                    color: MENU_BUTTON_TEXT_NORMAL,
+                    ..default()
+                },
+            ));
+            for cap in FrameRateCap::all() {
+                spawn_fps_button(row, cap, selected == cap);
+            }
         });
 }
 
@@ -114,6 +158,44 @@ fn spawn_menu_button(parent: &mut ChildBuilder, action: MainMenuAction, label: &
                 TextStyle {
                     font_size: 28.0,
                     color: MENU_BUTTON_TEXT_NORMAL,
+                    ..default()
+                },
+            ));
+        });
+}
+
+fn spawn_fps_button(parent: &mut ChildBuilder, cap: FrameRateCap, selected: bool) {
+    parent
+        .spawn((
+            ButtonBundle {
+                style: Style {
+                    width: Val::Px(56.0),
+                    height: Val::Px(32.0),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    border: UiRect::all(Val::Px(1.0)),
+                    ..default()
+                },
+                background_color: BackgroundColor(Color::NONE),
+                border_color: BorderColor(if selected {
+                    MENU_BUTTON_BORDER_HOVERED
+                } else {
+                    Color::NONE
+                }),
+                ..default()
+            },
+            FpsCapButton { cap },
+        ))
+        .with_children(|button| {
+            button.spawn(TextBundle::from_section(
+                frame_cap_label(cap),
+                TextStyle {
+                    font_size: 18.0,
+                    color: if selected {
+                        MENU_BUTTON_TEXT_HOVERED
+                    } else {
+                        MENU_BUTTON_TEXT_NORMAL
+                    },
                     ..default()
                 },
             ));
@@ -179,6 +261,65 @@ fn handle_main_menu_buttons(
                 *background = BackgroundColor(Color::NONE);
             }
         }
+    }
+}
+
+#[allow(clippy::type_complexity)]
+fn handle_fps_cap_buttons(
+    mut buttons: Query<(&Interaction, &FpsCapButton), (Changed<Interaction>, With<Button>)>,
+    mut frame_cap: ResMut<FrameRateCap>,
+) {
+    for (interaction, fps_button) in &mut buttons {
+        if *interaction == Interaction::Pressed && *frame_cap != fps_button.cap {
+            *frame_cap = fps_button.cap;
+            info!("Set frame rate cap to {} FPS.", fps_button.cap.as_u32());
+        }
+    }
+}
+
+#[allow(clippy::type_complexity)]
+fn refresh_fps_cap_button_visuals(
+    frame_cap: Res<FrameRateCap>,
+    mut buttons: Query<
+        (
+            &Interaction,
+            &FpsCapButton,
+            &Children,
+            &mut BorderColor,
+            &mut BackgroundColor,
+        ),
+        (With<Button>, With<FpsCapButton>),
+    >,
+    mut text_query: Query<&mut Text>,
+) {
+    for (interaction, fps_button, children, mut border_color, mut background_color) in &mut buttons
+    {
+        let is_selected = *frame_cap == fps_button.cap;
+        let is_hovered = matches!(*interaction, Interaction::Hovered | Interaction::Pressed);
+        *border_color = BorderColor(if is_selected || is_hovered {
+            MENU_BUTTON_BORDER_HOVERED
+        } else {
+            Color::NONE
+        });
+        *background_color = BackgroundColor(Color::NONE);
+
+        if let Some(&text_entity) = children.first()
+            && let Ok(mut text) = text_query.get_mut(text_entity)
+        {
+            text.sections[0].style.color = if is_selected || is_hovered {
+                MENU_BUTTON_TEXT_HOVERED
+            } else {
+                MENU_BUTTON_TEXT_NORMAL
+            };
+        }
+    }
+}
+
+pub fn frame_cap_label(cap: FrameRateCap) -> &'static str {
+    match cap {
+        FrameRateCap::Fps60 => "60",
+        FrameRateCap::Fps90 => "90",
+        FrameRateCap::Fps120 => "120",
     }
 }
 
@@ -268,7 +409,8 @@ pub fn health_bar_fill_width(current: f32, max: f32, full_width: f32) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use crate::ui::{HudSnapshot, health_bar_fill_width};
+    use crate::model::FrameRateCap;
+    use crate::ui::{HudSnapshot, frame_cap_label, health_bar_fill_width};
 
     #[test]
     fn snapshot_holds_expected_values() {
@@ -289,5 +431,12 @@ mod tests {
         assert_eq!(health_bar_fill_width(100.0, 100.0, 22.0), 22.0);
         assert_eq!(health_bar_fill_width(150.0, 100.0, 22.0), 22.0);
         assert_eq!(health_bar_fill_width(-10.0, 100.0, 22.0), 0.0);
+    }
+
+    #[test]
+    fn frame_cap_labels_match_expected_values() {
+        assert_eq!(frame_cap_label(FrameRateCap::Fps60), "60");
+        assert_eq!(frame_cap_label(FrameRateCap::Fps90), "90");
+        assert_eq!(frame_cap_label(FrameRateCap::Fps120), "120");
     }
 }

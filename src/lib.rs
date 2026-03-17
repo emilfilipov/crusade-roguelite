@@ -8,6 +8,7 @@ pub mod formation;
 pub mod map;
 pub mod model;
 pub mod morale;
+pub mod performance;
 pub mod projectiles;
 pub mod rescue;
 pub mod squad;
@@ -90,11 +91,14 @@ pub fn configure_game_app(app: &mut App) {
         .add_plugins((
             data::DataPlugin,
             core::CorePlugin,
+            performance::PerformancePlugin,
             visuals::VisualPlugin,
             map::MapPlugin,
             squad::SquadPlugin,
             formation::FormationPlugin,
             rescue::RescuePlugin,
+        ))
+        .add_plugins((
             enemies::EnemyPlugin,
             combat::CombatPlugin,
             projectiles::ProjectilePlugin,

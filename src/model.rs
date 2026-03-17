@@ -15,6 +15,32 @@ pub struct RunSession {
     pub survived_seconds: f32,
 }
 
+#[derive(Resource, Clone, Copy, Debug, Eq, PartialEq, Hash, Default)]
+pub enum FrameRateCap {
+    #[default]
+    Fps60,
+    Fps90,
+    Fps120,
+}
+
+impl FrameRateCap {
+    pub const fn as_u32(self) -> u32 {
+        match self {
+            Self::Fps60 => 60,
+            Self::Fps90 => 90,
+            Self::Fps120 => 120,
+        }
+    }
+
+    pub const fn all() -> [FrameRateCap; 3] {
+        [
+            FrameRateCap::Fps60,
+            FrameRateCap::Fps90,
+            FrameRateCap::Fps120,
+        ]
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Team {
     Friendly,
