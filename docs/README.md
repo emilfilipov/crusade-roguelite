@@ -12,6 +12,12 @@ Small 2D survivor-like prototype where the player controls a squad centered arou
 cargo run
 ```
 
+## Runtime Logs
+- Windows log file path:
+  - `%LOCALAPPDATA%\CrusadeRoguelite\logs\crusade_roguelite.log`
+- If `%LOCALAPPDATA%` is unavailable, fallback path:
+  - `<project-or-launch-dir>\logs\crusade_roguelite.log`
+
 ## Quality Loop
 ```powershell
 cargo fmt --all
