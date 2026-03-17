@@ -3,8 +3,8 @@ use bevy::prelude::*;
 use crate::data::GameData;
 use crate::map::MapBounds;
 use crate::model::{
-    Armor, AttackCooldown, AttackProfile, EnemyUnit, FriendlyUnit, GameState, Health, MoveSpeed,
-    StartRunEvent, Team, Unit, UnitKind,
+    Armor, AttackCooldown, AttackProfile, ColliderRadius, CommanderUnit, EnemyUnit, FriendlyUnit,
+    GameState, Health, MoveSpeed, StartRunEvent, Team, Unit, UnitKind,
 };
 use crate::visuals::ArtAssets;
 
@@ -30,6 +30,8 @@ pub struct BanditVisualRuntime {
     pub last_position: Vec2,
     pub state: BanditVisualState,
 }
+
+const ENEMY_BASE_SPEED_MULTIPLIER: f32 = 0.72;
 
 pub struct EnemyPlugin;
 
@@ -137,7 +139,7 @@ fn spawn_enemy_wave(
     let damage = cfg.damage * stat_scale;
     let attack_cooldown_secs = (cfg.attack_cooldown_secs / (1.0 + (stat_scale - 1.0) * 0.15))
         .clamp(0.2, cfg.attack_cooldown_secs);
-    let move_speed = cfg.move_speed * (1.0 + (stat_scale - 1.0) * 0.2);
+    let move_speed = enemy_move_speed(cfg.move_speed);
     for idx in 0..count {
         let angle = (idx as f32 / count as f32) * std::f32::consts::TAU + wave_idx as f32 * 0.21;
         let pos = Vec2::new(radius * angle.cos(), radius * angle.sin());
@@ -165,6 +167,7 @@ fn spawn_enemy_wave(
                 TimerMode::Repeating,
             )),
             MoveSpeed(move_speed),
+            ColliderRadius(13.0),
             SpriteBundle {
                 texture: art.enemy_bandit_raider_idle.clone(),
                 sprite: Sprite {
@@ -182,6 +185,10 @@ fn infinite_wave_interval_secs() -> f32 {
     10.0
 }
 
+pub fn enemy_move_speed(base_speed: f32) -> f32 {
+    base_speed * ENEMY_BASE_SPEED_MULTIPLIER
+}
+
 pub fn infinite_wave_enemy_count(base_count: u32, procedural_wave_index: u32) -> u32 {
     base_count.saturating_add((procedural_wave_index.saturating_add(1)) * 2)
 }
@@ -194,12 +201,16 @@ pub fn infinite_wave_stat_multiplier(procedural_wave_index: u32) -> f32 {
 fn enemy_chase_targets(
     time: Res<Time>,
     mut enemies: Query<(&MoveSpeed, &mut Transform), (With<EnemyUnit>, Without<FriendlyUnit>)>,
-    friendlies: Query<&Transform, (With<FriendlyUnit>, Without<EnemyUnit>)>,
+    friendlies: Query<
+        (&Transform, Option<&CommanderUnit>),
+        (With<FriendlyUnit>, Without<EnemyUnit>),
+    >,
 ) {
-    let targets: Vec<Vec2> = friendlies
+    let all_friendlies: Vec<(Vec2, bool)> = friendlies
         .iter()
-        .map(|transform| transform.translation.truncate())
+        .map(|(transform, commander)| (transform.translation.truncate(), commander.is_some()))
         .collect();
+    let targets = chase_target_positions(&all_friendlies);
     if targets.is_empty() {
         return;
     }
@@ -215,6 +226,23 @@ fn enemy_chase_targets(
             }
         }
     }
+}
+
+pub fn chase_target_positions(all_friendlies: &[(Vec2, bool)]) -> Vec<Vec2> {
+    if all_friendlies.is_empty() {
+        return Vec::new();
+    }
+    let has_retinue = all_friendlies.iter().any(|(_, is_commander)| !is_commander);
+    all_friendlies
+        .iter()
+        .filter_map(|(position, is_commander)| {
+            if has_retinue && *is_commander {
+                None
+            } else {
+                Some(*position)
+            }
+        })
+        .collect()
 }
 
 #[allow(clippy::type_complexity)]
@@ -304,8 +332,8 @@ mod tests {
     use bevy::prelude::Vec2;
 
     use crate::enemies::{
-        BanditVisualState, choose_nearest, decide_bandit_visual_state, infinite_wave_enemy_count,
-        infinite_wave_stat_multiplier,
+        BanditVisualState, chase_target_positions, choose_nearest, decide_bandit_visual_state,
+        enemy_move_speed, infinite_wave_enemy_count, infinite_wave_stat_multiplier,
     };
 
     #[test]
@@ -355,5 +383,18 @@ mod tests {
         assert_eq!(infinite_wave_enemy_count(6, 4), 16);
         assert!((infinite_wave_stat_multiplier(0) - 1.08).abs() < 0.001);
         assert!(infinite_wave_stat_multiplier(5) > infinite_wave_stat_multiplier(2));
+        assert!(enemy_move_speed(100.0) < 100.0);
+    }
+
+    #[test]
+    fn chase_targets_exclude_commander_when_retinue_exists() {
+        let commander = (Vec2::new(0.0, 0.0), true);
+        let retinue = (Vec2::new(10.0, 0.0), false);
+        let targets = chase_target_positions(&[commander, retinue]);
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0], retinue.0);
+
+        let commander_only = chase_target_positions(&[commander]);
+        assert_eq!(commander_only, vec![commander.0]);
     }
 }

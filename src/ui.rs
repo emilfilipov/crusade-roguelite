@@ -1,8 +1,9 @@
+use bevy::app::AppExit;
 use bevy::prelude::*;
 
 use crate::banner::BannerState;
 use crate::enemies::WaveRuntime;
-use crate::model::{GameState, Health, Team, Unit};
+use crate::model::{GameState, Health, RunSession, StartRunEvent, Team, Unit};
 use crate::morale::Cohesion;
 use crate::squad::SquadRoster;
 use crate::upgrades::Progression;
@@ -26,11 +27,30 @@ const HEALTH_BAR_WIDTH: f32 = 22.0;
 const HEALTH_BAR_HEIGHT: f32 = 3.0;
 const HEALTH_BAR_Y_OFFSET: f32 = 24.0;
 
+#[derive(Component, Clone, Copy, Debug)]
+struct MainMenuRoot;
+
+#[derive(Component, Clone, Copy, Debug, Eq, PartialEq)]
+enum MainMenuAction {
+    Start,
+    Exit,
+}
+
+const MENU_BUTTON_NORMAL: Color = Color::srgb(0.18, 0.16, 0.14);
+const MENU_BUTTON_HOVERED: Color = Color::srgb(0.28, 0.24, 0.2);
+const MENU_BUTTON_PRESSED: Color = Color::srgb(0.4, 0.32, 0.22);
+
 pub struct UiPlugin;
 
 impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<HudSnapshot>()
+            .add_systems(OnEnter(GameState::MainMenu), spawn_main_menu)
+            .add_systems(OnExit(GameState::MainMenu), despawn_main_menu)
+            .add_systems(
+                Update,
+                handle_main_menu_buttons.run_if(in_state(GameState::MainMenu)),
+            )
             .add_systems(
                 Update,
                 refresh_hud_snapshot.run_if(in_state(GameState::InRun)),
@@ -41,6 +61,117 @@ impl Plugin for UiPlugin {
                     .chain()
                     .run_if(in_state(GameState::InRun)),
             );
+    }
+}
+
+fn spawn_main_menu(mut commands: Commands) {
+    commands
+        .spawn((
+            MainMenuRoot,
+            NodeBundle {
+                style: Style {
+                    width: Val::Percent(100.0),
+                    height: Val::Percent(100.0),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                background_color: BackgroundColor(Color::srgba(0.05, 0.04, 0.03, 0.72)),
+                z_index: ZIndex::Global(100),
+                ..default()
+            },
+        ))
+        .with_children(|parent| {
+            parent
+                .spawn(NodeBundle {
+                    style: Style {
+                        width: Val::Px(320.0),
+                        flex_direction: FlexDirection::Column,
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        row_gap: Val::Px(16.0),
+                        padding: UiRect::all(Val::Px(20.0)),
+                        ..default()
+                    },
+                    background_color: BackgroundColor(Color::srgba(0.14, 0.12, 0.1, 0.9)),
+                    ..default()
+                })
+                .with_children(|panel| {
+                    spawn_menu_button(panel, MainMenuAction::Start, "START");
+                    spawn_menu_button(panel, MainMenuAction::Exit, "EXIT");
+                });
+        });
+}
+
+fn spawn_menu_button(parent: &mut ChildBuilder, action: MainMenuAction, label: &str) {
+    parent
+        .spawn((
+            ButtonBundle {
+                style: Style {
+                    width: Val::Px(220.0),
+                    height: Val::Px(56.0),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                background_color: BackgroundColor(MENU_BUTTON_NORMAL),
+                ..default()
+            },
+            action,
+        ))
+        .with_children(|button| {
+            button.spawn(TextBundle::from_section(
+                label,
+                TextStyle {
+                    font_size: 28.0,
+                    color: Color::srgb(0.92, 0.88, 0.8),
+                    ..default()
+                },
+            ));
+        });
+}
+
+fn despawn_main_menu(mut commands: Commands, menu_roots: Query<Entity, With<MainMenuRoot>>) {
+    for entity in &menu_roots {
+        commands.entity(entity).despawn_recursive();
+    }
+}
+
+#[allow(clippy::type_complexity)]
+fn handle_main_menu_buttons(
+    mut buttons: Query<
+        (&Interaction, &MainMenuAction, &mut BackgroundColor),
+        (Changed<Interaction>, With<Button>),
+    >,
+    mut next_state: ResMut<NextState<GameState>>,
+    mut run_session: ResMut<RunSession>,
+    mut start_run_events: EventWriter<StartRunEvent>,
+    mut app_exit_events: EventWriter<AppExit>,
+) {
+    for (interaction, action, mut background) in &mut buttons {
+        match *interaction {
+            Interaction::Pressed => {
+                *background = MENU_BUTTON_PRESSED.into();
+                match action {
+                    MainMenuAction::Start => {
+                        info!("Start run requested from MainMenu button.");
+                        *run_session = RunSession::default();
+                        next_state.set(GameState::InRun);
+                        start_run_events.send(StartRunEvent);
+                    }
+                    MainMenuAction::Exit => {
+                        info!("Exit requested from MainMenu button.");
+                        app_exit_events.send(AppExit::Success);
+                    }
+                }
+            }
+            Interaction::Hovered => {
+                *background = MENU_BUTTON_HOVERED.into();
+            }
+            Interaction::None => {
+                *background = MENU_BUTTON_NORMAL.into();
+            }
+        }
     }
 }
 

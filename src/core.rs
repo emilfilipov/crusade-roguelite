@@ -1,6 +1,8 @@
 use bevy::prelude::*;
 
-use crate::model::{CommanderUnit, GameState, RunSession, StartRunEvent};
+use crate::banner::BannerMarker;
+use crate::model::{CommanderUnit, GameState, RunSession, Unit};
+use crate::projectiles::Projectile;
 
 pub struct CorePlugin;
 
@@ -8,14 +10,10 @@ impl Plugin for CorePlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(OnEnter(GameState::Boot), boot_to_menu)
             .add_systems(
-                Update,
-                (
-                    start_run_from_main_menu,
-                    pause_toggle,
-                    resume_from_pause,
-                    restart_from_game_over,
-                ),
+                OnEnter(GameState::MainMenu),
+                cleanup_run_entities_on_menu_enter,
             )
+            .add_systems(Update, (pause_toggle, resume_from_pause))
             .add_systems(
                 PostUpdate,
                 detect_game_over.run_if(in_state(GameState::InRun)),
@@ -32,32 +30,23 @@ fn boot_to_menu(mut next_state: ResMut<NextState<GameState>>) {
     next_state.set(GameState::MainMenu);
 }
 
-fn start_run_from_main_menu(
-    state: Res<State<GameState>>,
-    mut next_state: ResMut<NextState<GameState>>,
+fn cleanup_run_entities_on_menu_enter(
+    mut commands: Commands,
+    units: Query<Entity, With<Unit>>,
+    banners: Query<Entity, With<BannerMarker>>,
+    projectiles: Query<Entity, With<Projectile>>,
     mut run_session: ResMut<RunSession>,
-    mut start_run_events: EventWriter<StartRunEvent>,
-    keyboard: Option<Res<ButtonInput<KeyCode>>>,
 ) {
-    if *state.get() != GameState::MainMenu {
-        return;
+    for entity in &units {
+        commands.entity(entity).despawn_recursive();
     }
-
-    let should_start = keyboard
-        .as_ref()
-        .map(|keys| {
-            keys.just_pressed(KeyCode::Enter)
-                || keys.just_pressed(KeyCode::NumpadEnter)
-                || keys.just_pressed(KeyCode::Space)
-        })
-        .unwrap_or(false);
-
-    if should_start {
-        info!("Start run requested from MainMenu");
-        *run_session = RunSession::default();
-        next_state.set(GameState::InRun);
-        start_run_events.send(StartRunEvent);
+    for entity in &banners {
+        commands.entity(entity).despawn_recursive();
     }
+    for entity in &projectiles {
+        commands.entity(entity).despawn_recursive();
+    }
+    *run_session = RunSession::default();
 }
 
 fn pause_toggle(
@@ -103,27 +92,7 @@ fn detect_game_over(
     mut next_state: ResMut<NextState<GameState>>,
 ) {
     if commanders.is_empty() {
-        warn!("No commander found during InRun; transitioning to GameOver.");
-        next_state.set(GameState::GameOver);
-    }
-}
-
-fn restart_from_game_over(
-    state: Res<State<GameState>>,
-    mut next_state: ResMut<NextState<GameState>>,
-    mut session: ResMut<RunSession>,
-    keyboard: Option<Res<ButtonInput<KeyCode>>>,
-) {
-    if *state.get() != GameState::GameOver {
-        return;
-    }
-    if keyboard
-        .as_ref()
-        .map(|keys| keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::NumpadEnter))
-        .unwrap_or(false)
-    {
-        info!("Restart requested from GameOver");
-        *session = RunSession::default();
+        warn!("Commander defeated; returning to MainMenu.");
         next_state.set(GameState::MainMenu);
     }
 }

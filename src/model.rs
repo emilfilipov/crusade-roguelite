@@ -67,6 +67,9 @@ pub struct AttackCooldown(pub Timer);
 pub struct MoveSpeed(pub f32);
 
 #[derive(Component, Clone, Copy, Debug)]
+pub struct ColliderRadius(pub f32);
+
+#[derive(Component, Clone, Copy, Debug)]
 pub struct PlayerControlled;
 
 #[derive(Component, Clone, Copy, Debug)]

@@ -4,7 +4,7 @@ use crate::banner::BannerCombatModifiers;
 use crate::formation::FormationModifiers;
 use crate::model::{
     AttackCooldown, AttackProfile, DamageEvent, EnemyUnit, GainXpEvent, GameState, GlobalBuffs,
-    Health, Team, Unit, UnitDiedEvent,
+    Health, Team, Unit, UnitDiedEvent, UnitKind,
 };
 use crate::morale::CohesionCombatModifiers;
 
@@ -78,6 +78,9 @@ fn emit_damage_events(
             )
         })
         .collect();
+    let has_non_commander_friendlies = target_snapshot.iter().any(|(_, unit, _, health, _)| {
+        unit.team == Team::Friendly && unit.kind != UnitKind::Commander && *health > 0.0
+    });
 
     for (_, attacker_unit, attacker_transform, attack_profile, mut attack_cd) in &mut attackers {
         if !attack_cd.0.finished() {
@@ -96,6 +99,13 @@ fn emit_damage_events(
             &target_snapshot
         {
             if target_unit.team != opposite_team || *target_health <= 0.0 {
+                continue;
+            }
+            if !enemy_target_allowed(
+                attacker_unit.team,
+                target_unit.kind,
+                has_non_commander_friendlies,
+            ) {
                 continue;
             }
             let dist_sq = attacker_position.distance_squared(*target_pos);
@@ -131,6 +141,20 @@ fn emit_damage_events(
             });
         }
     }
+}
+
+pub fn enemy_target_allowed(
+    attacker_team: Team,
+    target_kind: UnitKind,
+    has_non_commander_friendlies: bool,
+) -> bool {
+    if attacker_team == Team::Enemy
+        && has_non_commander_friendlies
+        && target_kind == UnitKind::Commander
+    {
+        return false;
+    }
+    true
 }
 
 pub fn compute_damage(
@@ -189,8 +213,8 @@ fn _satisfy_marker(_enemy: Option<EnemyUnit>) {}
 
 #[cfg(test)]
 mod tests {
-    use crate::combat::compute_damage;
-    use crate::model::Team;
+    use crate::combat::{compute_damage, enemy_target_allowed};
+    use crate::model::{Team, UnitKind};
 
     #[test]
     fn damage_formula_respects_armor_floor() {
@@ -202,5 +226,24 @@ mod tests {
     fn damage_formula_applies_multipliers_for_friendlies() {
         let damage = compute_damage(10.0, 0.0, Team::Friendly, 1.1, 0.9, 0.8, 1.2);
         assert!((damage - 9.504).abs() < 0.01);
+    }
+
+    #[test]
+    fn enemies_prioritize_retinue_over_commander() {
+        assert!(!enemy_target_allowed(
+            Team::Enemy,
+            UnitKind::Commander,
+            true
+        ));
+        assert!(enemy_target_allowed(
+            Team::Enemy,
+            UnitKind::Commander,
+            false
+        ));
+        assert!(enemy_target_allowed(
+            Team::Enemy,
+            UnitKind::InfantryKnight,
+            true
+        ));
     }
 }

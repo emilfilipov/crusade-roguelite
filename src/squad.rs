@@ -3,9 +3,9 @@ use bevy::prelude::*;
 use crate::data::GameData;
 use crate::map::MapBounds;
 use crate::model::{
-    Armor, AttackCooldown, AttackProfile, CommanderUnit, EnemyUnit, FriendlyUnit, GameState,
-    Health, MoveSpeed, PlayerControlled, RecruitEvent, RescuableUnit, StartRunEvent, Team, Unit,
-    UnitDiedEvent, UnitKind,
+    Armor, AttackCooldown, AttackProfile, ColliderRadius, CommanderUnit, EnemyUnit, FriendlyUnit,
+    GameState, Health, MoveSpeed, PlayerControlled, RecruitEvent, RescuableUnit, StartRunEvent,
+    Team, Unit, UnitDiedEvent, UnitKind,
 };
 use crate::visuals::ArtAssets;
 
@@ -84,6 +84,7 @@ fn spawn_commander(commands: &mut Commands, data: &GameData, art: &ArtAssets) ->
                 TimerMode::Repeating,
             )),
             MoveSpeed(cfg.move_speed),
+            ColliderRadius(14.0),
             SpriteBundle {
                 texture: art.commander_idle.clone(),
                 sprite: Sprite {
@@ -126,6 +127,7 @@ fn spawn_recruit(
                 TimerMode::Repeating,
             )),
             MoveSpeed(cfg.move_speed),
+            ColliderRadius(13.0),
             SpriteBundle {
                 texture: art.friendly_knight_idle.clone(),
                 sprite: Sprite {

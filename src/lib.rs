@@ -1,4 +1,5 @@
 pub mod banner;
+pub mod collision;
 pub mod combat;
 pub mod core;
 pub mod data;
@@ -86,6 +87,7 @@ pub fn configure_game_app(app: &mut App) {
         .add_event::<UnitDiedEvent>()
         .add_event::<GainXpEvent>()
         .add_systems(Update, apply_window_icon_once)
+        .add_plugins(collision::CollisionPlugin)
         .add_plugins((
             data::DataPlugin,
             core::CorePlugin,

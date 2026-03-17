@@ -3,7 +3,8 @@ use bevy::prelude::*;
 use crate::data::GameData;
 use crate::map::MapBounds;
 use crate::model::{
-    CommanderUnit, GameState, RecruitEvent, RescuableUnit, StartRunEvent, Team, Unit, UnitKind,
+    ColliderRadius, CommanderUnit, GameState, RecruitEvent, RescuableUnit, StartRunEvent, Team,
+    Unit, UnitKind,
 };
 use crate::visuals::ArtAssets;
 
@@ -137,6 +138,7 @@ fn spawn_rescuable(commands: &mut Commands, position: Vec2, art: &ArtAssets) {
         },
         RescuableUnit,
         RescueProgress { elapsed: 0.0 },
+        ColliderRadius(13.0),
         SpriteBundle {
             texture: art.friendly_knight_rescuable_variant.clone(),
             sprite: Sprite {
