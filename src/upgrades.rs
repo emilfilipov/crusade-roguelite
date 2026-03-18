@@ -17,7 +17,7 @@ impl Default for Progression {
         Self {
             xp: 0.0,
             level: 1,
-            next_level_xp: 30.0,
+            next_level_xp: xp_required_for_level(1),
         }
     }
 }
@@ -82,12 +82,21 @@ fn open_draft_on_level_up(
     if progression.xp >= progression.next_level_xp {
         progression.level += 1;
         progression.xp -= progression.next_level_xp;
-        progression.next_level_xp *= 1.25;
+        progression.next_level_xp = xp_required_for_level(progression.level);
         draft.options = roll_upgrade_options(&data.upgrades.upgrades, progression.level);
         draft.active = true;
         draft.autopick_timer = 0.0;
         next_state.set(GameState::Paused);
     }
+}
+
+pub fn xp_required_for_level(level: u32) -> f32 {
+    let safe_level = level.max(1);
+    let mut requirement = 30.0;
+    for _ in 1..safe_level {
+        requirement *= 1.25;
+    }
+    requirement
 }
 
 fn resolve_upgrade_draft(
@@ -180,7 +189,7 @@ fn apply_upgrade(
 mod tests {
     use crate::data::UpgradeConfig;
     use crate::model::GlobalBuffs;
-    use crate::upgrades::roll_upgrade_options;
+    use crate::upgrades::{roll_upgrade_options, xp_required_for_level};
 
     #[test]
     fn rolls_three_options() {
@@ -216,5 +225,12 @@ mod tests {
         buffs.damage_multiplier += 0.05;
         buffs.damage_multiplier += 0.05;
         assert!((buffs.damage_multiplier - 1.10).abs() < 0.001);
+    }
+
+    #[test]
+    fn xp_requirements_increase_each_level() {
+        assert!((xp_required_for_level(1) - 30.0).abs() < 0.001);
+        assert!(xp_required_for_level(2) > xp_required_for_level(1));
+        assert!(xp_required_for_level(5) > xp_required_for_level(4));
     }
 }

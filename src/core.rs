@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 
 use crate::banner::BannerMarker;
+use crate::drops::ExpPack;
 use crate::model::{CommanderUnit, GameState, RunSession, Unit};
 use crate::projectiles::Projectile;
 
@@ -37,11 +38,15 @@ fn boot_to_menu(mut next_state: ResMut<NextState<GameState>>) {
 fn cleanup_run_entities_on_menu_enter(
     mut commands: Commands,
     units: Query<Entity, With<Unit>>,
+    drops: Query<Entity, With<ExpPack>>,
     banners: Query<Entity, With<BannerMarker>>,
     projectiles: Query<Entity, With<Projectile>>,
     mut run_session: ResMut<RunSession>,
 ) {
     for entity in &units {
+        commands.entity(entity).despawn_recursive();
+    }
+    for entity in &drops {
         commands.entity(entity).despawn_recursive();
     }
     for entity in &banners {

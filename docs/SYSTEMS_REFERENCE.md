@@ -4,6 +4,16 @@
 Single-file technical reference for the current MVP implementation.
 Use this to inspect any entity, component, resource, event, or gameplay system without scanning source files.
 
+## Latest Update (2026-03-18)
+- Added data-driven XP drop system (`src/drops.rs`, `assets/data/drops.json`).
+- XP packs now spawn continuously during `InRun` and are picked up instantly by any `FriendlyUnit` (commander or retinue) within pickup radius.
+- Rescue interaction changed from commander-only proximity to any friendly-unit proximity.
+- Added explicit XP level-requirement helper (`xp_required_for_level`) for progression thresholds.
+- Added in-run HUD strip:
+  - Top-left: wave number
+  - Top-center: commander level + XP bar
+  - Top-right: elapsed run time (`MM:SS`)
+
 ## Runtime Architecture
 
 ### App Builders

@@ -96,6 +96,15 @@ pub struct RescueConfig {
     pub rescue_duration_secs: f32,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+pub struct DropsConfig {
+    pub initial_spawn_count: u32,
+    pub spawn_interval_secs: f32,
+    pub pickup_radius: f32,
+    pub xp_per_pack: f32,
+    pub max_active_packs: u32,
+}
+
 #[derive(Resource, Clone, Debug)]
 pub struct GameData {
     pub units: UnitsConfigFile,
@@ -105,6 +114,7 @@ pub struct GameData {
     pub upgrades: UpgradesConfigFile,
     pub map: MapConfig,
     pub rescue: RescueConfig,
+    pub drops: DropsConfig,
 }
 
 impl GameData {
@@ -116,6 +126,7 @@ impl GameData {
         let upgrades: UpgradesConfigFile = read_json(base_dir.join("upgrades.json"))?;
         let map: MapConfig = read_json(base_dir.join("map.json"))?;
         let rescue: RescueConfig = read_json(base_dir.join("rescue.json"))?;
+        let drops: DropsConfig = read_json(base_dir.join("drops.json"))?;
 
         validate_units(&units)?;
         validate_enemies(&enemies)?;
@@ -124,6 +135,7 @@ impl GameData {
         validate_upgrades(&upgrades)?;
         validate_map(&map)?;
         validate_rescue(&rescue)?;
+        validate_drops(&drops)?;
 
         Ok(Self {
             units,
@@ -133,6 +145,7 @@ impl GameData {
             upgrades,
             map,
             rescue,
+            drops,
         })
     }
 }
@@ -249,6 +262,25 @@ fn validate_rescue(config: &RescueConfig) -> Result<()> {
     Ok(())
 }
 
+fn validate_drops(config: &DropsConfig) -> Result<()> {
+    if config.initial_spawn_count == 0 {
+        bail!("drops initial_spawn_count must be > 0");
+    }
+    if config.spawn_interval_secs <= 0.0 {
+        bail!("drops spawn_interval_secs must be > 0");
+    }
+    if config.pickup_radius <= 0.0 {
+        bail!("drops pickup_radius must be > 0");
+    }
+    if config.xp_per_pack <= 0.0 {
+        bail!("drops xp_per_pack must be > 0");
+    }
+    if config.max_active_packs == 0 {
+        bail!("drops max_active_packs must be > 0");
+    }
+    Ok(())
+}
+
 pub struct DataPlugin;
 
 impl Plugin for DataPlugin {
@@ -314,6 +346,11 @@ mod tests {
             dir,
             "rescue.json",
             r#"{"spawn_count":1,"rescue_radius":10.0,"rescue_duration_secs":1.0}"#,
+        );
+        write_config(
+            dir,
+            "drops.json",
+            r#"{"initial_spawn_count":3,"spawn_interval_secs":1.5,"pickup_radius":15.0,"xp_per_pack":5.0,"max_active_packs":30}"#,
         );
     }
 

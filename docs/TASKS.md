@@ -506,6 +506,29 @@
   - Early run pacing is more recoverable while still escalating.
   - Balance data remains fully data-driven and validation-hardened.
 
+## CRU-027 - XP Drop Pickups + Squad-Wide Interactions + Run HUD
+- Status: `DONE`
+- Type: `Gameplay/UI`
+- Priority: `P1`
+- Depends on: `CRU-015`, `CRU-017`, `CRU-021`, `CRU-026`
+- Goal: Improve run pacing/readability by adding map XP pickups, allowing squad-wide rescue/pickup interactions, and surfacing run status in a top HUD.
+- Implementation:
+  1. Add data-driven XP drop config (`assets/data/drops.json`) and validation.
+  2. Add `DropsPlugin` to spawn XP packs over time and award XP on proximity pickup.
+  3. Make pickup/rescue proximity checks use any `FriendlyUnit` (commander or retinue), not commander-only.
+  4. Add explicit XP requirement helper for level thresholds.
+  5. Add top HUD with wave number, commander level + XP bar, and elapsed timer (`MM:SS`).
+- Unit Tests Required:
+  - Drop spawn bounds tests.
+  - Drop pickup radius tests.
+  - Squad-wide rescue radius tests.
+  - Elapsed-time formatter tests.
+  - XP requirement growth tests.
+- Acceptance Criteria:
+  - XP packs spawn throughout runs and grant XP when touched by any friendly unit.
+  - Any friendly unit can complete rescues by proximity.
+  - HUD displays wave, level/XP, and time in required screen positions.
+
 ---
 
 ## Recommended Implementation Order
@@ -535,3 +558,4 @@
 24. `CRU-024`
 25. `CRU-025`
 26. `CRU-026`
+27. `CRU-027`

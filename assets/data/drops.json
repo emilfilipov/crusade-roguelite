@@ -1,0 +1,7 @@
+{
+  "initial_spawn_count": 8,
+  "spawn_interval_secs": 2.5,
+  "pickup_radius": 30.0,
+  "xp_per_pack": 6.0,
+  "max_active_packs": 40
+}

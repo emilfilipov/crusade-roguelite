@@ -8,13 +8,33 @@ use crate::morale::Cohesion;
 use crate::squad::SquadRoster;
 use crate::upgrades::Progression;
 
-#[derive(Resource, Clone, Debug, Default)]
+#[derive(Resource, Clone, Debug)]
 pub struct HudSnapshot {
     pub cohesion: f32,
     pub banner_dropped: bool,
     pub squad_size: usize,
+    pub level: u32,
     pub xp: f32,
+    pub next_level_xp: f32,
     pub wave_index: usize,
+    pub current_wave: u32,
+    pub elapsed_seconds: f32,
+}
+
+impl Default for HudSnapshot {
+    fn default() -> Self {
+        Self {
+            cohesion: 100.0,
+            banner_dropped: false,
+            squad_size: 1,
+            level: 1,
+            xp: 0.0,
+            next_level_xp: 30.0,
+            wave_index: 0,
+            current_wave: 1,
+            elapsed_seconds: 0.0,
+        }
+    }
 }
 
 #[derive(Component, Clone, Copy, Debug)]
@@ -41,11 +61,29 @@ struct FpsCapButton {
     cap: FrameRateCap,
 }
 
+#[derive(Component, Clone, Copy, Debug)]
+struct InRunHudRoot;
+
+#[derive(Component, Clone, Copy, Debug)]
+struct WaveHudText;
+
+#[derive(Component, Clone, Copy, Debug)]
+struct TimeHudText;
+
+#[derive(Component, Clone, Copy, Debug)]
+struct CommanderLevelHudText;
+
+#[derive(Component, Clone, Copy, Debug)]
+struct XpBarFill;
+
 const MENU_BACKGROUND: Color = Color::srgb(0.12, 0.1, 0.08);
 const MENU_BUTTON_TEXT_NORMAL: Color = Color::srgb(0.92, 0.88, 0.8);
 const MENU_BUTTON_TEXT_HOVERED: Color = Color::srgb(0.98, 0.96, 0.88);
 const MENU_BUTTON_BORDER_HOVERED: Color = Color::srgb(0.86, 0.78, 0.62);
 const MENU_FPS_BOX_BORDER: Color = Color::srgba(0.86, 0.78, 0.62, 0.7);
+const HUD_TEXT_COLOR: Color = Color::srgb(0.97, 0.95, 0.9);
+const HUD_BAR_BG: Color = Color::srgba(0.12, 0.1, 0.08, 0.8);
+const HUD_BAR_FILL: Color = Color::srgb(0.88, 0.72, 0.28);
 
 pub struct UiPlugin;
 
@@ -54,6 +92,8 @@ impl Plugin for UiPlugin {
         app.init_resource::<HudSnapshot>()
             .add_systems(OnEnter(GameState::MainMenu), spawn_main_menu)
             .add_systems(OnExit(GameState::MainMenu), despawn_main_menu)
+            .add_systems(OnEnter(GameState::MainMenu), despawn_in_run_hud)
+            .add_systems(OnEnter(GameState::InRun), spawn_in_run_hud)
             .add_systems(
                 Update,
                 (
@@ -68,6 +108,7 @@ impl Plugin for UiPlugin {
                 Update,
                 refresh_hud_snapshot.run_if(in_state(GameState::InRun)),
             )
+            .add_systems(Update, update_in_run_hud.run_if(in_state(GameState::InRun)))
             .add_systems(
                 Update,
                 (attach_health_bars_to_units, update_health_bar_fills)
@@ -208,6 +249,131 @@ fn despawn_main_menu(mut commands: Commands, menu_roots: Query<Entity, With<Main
     }
 }
 
+fn spawn_in_run_hud(mut commands: Commands, existing: Query<Entity, With<InRunHudRoot>>) {
+    if !existing.is_empty() {
+        return;
+    }
+
+    commands
+        .spawn((
+            InRunHudRoot,
+            NodeBundle {
+                style: Style {
+                    position_type: PositionType::Absolute,
+                    left: Val::Px(0.0),
+                    right: Val::Px(0.0),
+                    top: Val::Px(0.0),
+                    width: Val::Percent(100.0),
+                    height: Val::Percent(100.0),
+                    ..default()
+                },
+                background_color: BackgroundColor(Color::NONE),
+                z_index: ZIndex::Global(90),
+                ..default()
+            },
+        ))
+        .with_children(|root| {
+            root.spawn(NodeBundle {
+                style: Style {
+                    position_type: PositionType::Absolute,
+                    top: Val::Px(12.0),
+                    left: Val::Px(12.0),
+                    right: Val::Px(12.0),
+                    justify_content: JustifyContent::SpaceBetween,
+                    align_items: AlignItems::FlexStart,
+                    ..default()
+                },
+                background_color: BackgroundColor(Color::NONE),
+                ..default()
+            })
+            .with_children(|top_row| {
+                top_row.spawn((
+                    WaveHudText,
+                    TextBundle::from_section(
+                        "Wave 1",
+                        TextStyle {
+                            font_size: 26.0,
+                            color: HUD_TEXT_COLOR,
+                            ..default()
+                        },
+                    ),
+                ));
+
+                top_row
+                    .spawn(NodeBundle {
+                        style: Style {
+                            width: Val::Px(340.0),
+                            flex_direction: FlexDirection::Column,
+                            justify_content: JustifyContent::FlexStart,
+                            align_items: AlignItems::Center,
+                            row_gap: Val::Px(6.0),
+                            ..default()
+                        },
+                        background_color: BackgroundColor(Color::NONE),
+                        ..default()
+                    })
+                    .with_children(|center| {
+                        center.spawn((
+                            CommanderLevelHudText,
+                            TextBundle::from_section(
+                                "Commander Lv 1",
+                                TextStyle {
+                                    font_size: 24.0,
+                                    color: HUD_TEXT_COLOR,
+                                    ..default()
+                                },
+                            ),
+                        ));
+
+                        center
+                            .spawn(NodeBundle {
+                                style: Style {
+                                    width: Val::Px(320.0),
+                                    height: Val::Px(14.0),
+                                    border: UiRect::all(Val::Px(1.0)),
+                                    ..default()
+                                },
+                                background_color: BackgroundColor(HUD_BAR_BG),
+                                border_color: BorderColor(HUD_TEXT_COLOR),
+                                ..default()
+                            })
+                            .with_children(|bar| {
+                                bar.spawn((
+                                    XpBarFill,
+                                    NodeBundle {
+                                        style: Style {
+                                            width: Val::Percent(0.0),
+                                            height: Val::Percent(100.0),
+                                            ..default()
+                                        },
+                                        background_color: BackgroundColor(HUD_BAR_FILL),
+                                        ..default()
+                                    },
+                                ));
+                            });
+                    });
+
+                top_row.spawn((
+                    TimeHudText,
+                    TextBundle::from_section(
+                        "00:00",
+                        TextStyle {
+                            font_size: 26.0,
+                            color: HUD_TEXT_COLOR,
+                            ..default()
+                        },
+                    ),
+                ));
+            });
+        });
+}
+
+fn despawn_in_run_hud(mut commands: Commands, roots: Query<Entity, With<InRunHudRoot>>) {
+    for entity in &roots {
+        commands.entity(entity).despawn_recursive();
+    }
+}
+
 #[allow(clippy::type_complexity)]
 fn handle_main_menu_buttons(
     mut buttons: Query<
@@ -329,15 +495,61 @@ fn refresh_hud_snapshot(
     roster: Res<SquadRoster>,
     progression: Res<Progression>,
     waves: Res<WaveRuntime>,
+    run_session: Res<RunSession>,
     mut hud: ResMut<HudSnapshot>,
 ) {
     *hud = HudSnapshot {
         cohesion: cohesion.value,
         banner_dropped: banner_state.is_dropped,
         squad_size: roster.friendly_count,
+        level: progression.level,
         xp: progression.xp,
+        next_level_xp: progression.next_level_xp,
         wave_index: waves.next_wave_index,
+        current_wave: displayed_wave_number(&waves),
+        elapsed_seconds: run_session.survived_seconds,
     };
+}
+
+#[allow(clippy::type_complexity)]
+fn update_in_run_hud(
+    hud: Res<HudSnapshot>,
+    mut texts: ParamSet<(
+        Query<&mut Text, With<WaveHudText>>,
+        Query<&mut Text, With<TimeHudText>>,
+        Query<&mut Text, With<CommanderLevelHudText>>,
+    )>,
+    mut xp_fill_styles: Query<&mut Style, With<XpBarFill>>,
+) {
+    if let Ok(mut text) = texts.p0().get_single_mut() {
+        text.sections[0].value = format!("Wave {}", hud.current_wave);
+    }
+    if let Ok(mut text) = texts.p1().get_single_mut() {
+        text.sections[0].value = format_elapsed_mm_ss(hud.elapsed_seconds);
+    }
+    if let Ok(mut text) = texts.p2().get_single_mut() {
+        text.sections[0].value = format!("Commander Lv {}", hud.level);
+    }
+    let xp_ratio = if hud.next_level_xp <= 0.0 {
+        0.0
+    } else {
+        (hud.xp / hud.next_level_xp).clamp(0.0, 1.0)
+    };
+    if let Ok(mut style) = xp_fill_styles.get_single_mut() {
+        style.width = Val::Percent(xp_ratio * 100.0);
+    }
+}
+
+pub fn displayed_wave_number(runtime: &WaveRuntime) -> u32 {
+    let spawned = runtime.next_wave_index as u32 + runtime.infinite_wave_index;
+    spawned.max(1)
+}
+
+pub fn format_elapsed_mm_ss(seconds: f32) -> String {
+    let total_seconds = seconds.max(0.0).floor() as u64;
+    let minutes = total_seconds / 60;
+    let secs = total_seconds % 60;
+    format!("{minutes:02}:{secs:02}")
 }
 
 #[allow(clippy::type_complexity)]
@@ -409,8 +621,12 @@ pub fn health_bar_fill_width(current: f32, max: f32, full_width: f32) -> f32 {
 
 #[cfg(test)]
 mod tests {
+    use crate::enemies::WaveRuntime;
     use crate::model::FrameRateCap;
-    use crate::ui::{HudSnapshot, frame_cap_label, health_bar_fill_width};
+    use crate::ui::{
+        HudSnapshot, displayed_wave_number, format_elapsed_mm_ss, frame_cap_label,
+        health_bar_fill_width,
+    };
 
     #[test]
     fn snapshot_holds_expected_values() {
@@ -418,8 +634,12 @@ mod tests {
             cohesion: 70.0,
             banner_dropped: true,
             squad_size: 5,
+            level: 2,
             xp: 12.0,
+            next_level_xp: 45.0,
             wave_index: 2,
+            current_wave: 2,
+            elapsed_seconds: 61.0,
         };
         assert!(snapshot.banner_dropped);
         assert_eq!(snapshot.squad_size, 5);
@@ -438,5 +658,22 @@ mod tests {
         assert_eq!(frame_cap_label(FrameRateCap::Fps60), "60");
         assert_eq!(frame_cap_label(FrameRateCap::Fps90), "90");
         assert_eq!(frame_cap_label(FrameRateCap::Fps120), "120");
+    }
+
+    #[test]
+    fn elapsed_time_formats_as_minutes_seconds() {
+        assert_eq!(format_elapsed_mm_ss(0.0), "00:00");
+        assert_eq!(format_elapsed_mm_ss(65.3), "01:05");
+        assert_eq!(format_elapsed_mm_ss(600.9), "10:00");
+    }
+
+    #[test]
+    fn displayed_wave_number_never_below_one() {
+        let mut runtime = WaveRuntime::default();
+        assert_eq!(displayed_wave_number(&runtime), 1);
+        runtime.next_wave_index = 3;
+        assert_eq!(displayed_wave_number(&runtime), 3);
+        runtime.infinite_wave_index = 4;
+        assert_eq!(displayed_wave_number(&runtime), 7);
     }
 }

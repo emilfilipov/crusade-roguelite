@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use crate::data::GameData;
 use crate::map::MapBounds;
 use crate::model::{
-    CommanderUnit, GameState, RecruitEvent, RescuableUnit, StartRunEvent, Team, Unit, UnitKind,
+    FriendlyUnit, GameState, RecruitEvent, RescuableUnit, StartRunEvent, Team, Unit, UnitKind,
 };
 use crate::visuals::ArtAssets;
 
@@ -99,19 +99,26 @@ fn tick_rescue_progress(
     mut commands: Commands,
     time: Res<Time>,
     data: Res<GameData>,
-    commanders: Query<&Transform, With<CommanderUnit>>,
+    friendlies: Query<&Transform, With<FriendlyUnit>>,
     mut rescuables: Query<(Entity, &Transform, &mut RescueProgress), With<RescuableUnit>>,
     mut recruit_events: EventWriter<RecruitEvent>,
 ) {
-    let Ok(commander_transform) = commanders.get_single() else {
+    let friendly_positions: Vec<Vec2> = friendlies
+        .iter()
+        .map(|transform| transform.translation.truncate())
+        .collect();
+    if friendly_positions.is_empty() {
         return;
-    };
-    let commander_pos = commander_transform.translation.truncate();
+    }
     let rescue_radius = data.rescue.rescue_radius;
     let rescue_duration = data.rescue.rescue_duration_secs;
 
     for (entity, transform, mut rescue_progress) in &mut rescuables {
-        let in_range = transform.translation.truncate().distance(commander_pos) <= rescue_radius;
+        let in_range = any_friendly_in_rescue_radius(
+            transform.translation.truncate(),
+            &friendly_positions,
+            rescue_radius,
+        );
         rescue_progress.elapsed = advance_rescue_progress(
             rescue_progress.elapsed,
             in_range,
@@ -125,6 +132,17 @@ fn tick_rescue_progress(
             commands.entity(entity).despawn_recursive();
         }
     }
+}
+
+pub fn any_friendly_in_rescue_radius(
+    rescuable_position: Vec2,
+    friendly_positions: &[Vec2],
+    rescue_radius: f32,
+) -> bool {
+    let rescue_radius_sq = rescue_radius * rescue_radius;
+    friendly_positions
+        .iter()
+        .any(|position| position.distance_squared(rescuable_position) <= rescue_radius_sq)
 }
 
 fn spawn_rescuable(commands: &mut Commands, position: Vec2, art: &ArtAssets) {
@@ -174,8 +192,12 @@ pub fn advance_rescue_progress(
 
 #[cfg(test)]
 mod tests {
+    use bevy::prelude::Vec2;
+
     use crate::map::MapBounds;
-    use crate::rescue::{advance_rescue_progress, rescue_spawn_position};
+    use crate::rescue::{
+        advance_rescue_progress, any_friendly_in_rescue_radius, rescue_spawn_position,
+    };
 
     #[test]
     fn rescue_progress_advances_when_in_range() {
@@ -199,5 +221,20 @@ mod tests {
             let point = rescue_spawn_position(sequence, Some(bounds));
             assert!(point.length() <= 1000.0 * 0.82 + 0.01);
         }
+    }
+
+    #[test]
+    fn any_friendly_in_range_allows_non_commander_rescue() {
+        let friendlies = [Vec2::new(100.0, 40.0), Vec2::new(-35.0, 12.0)];
+        assert!(any_friendly_in_rescue_radius(
+            Vec2::new(102.0, 42.0),
+            &friendlies,
+            4.0
+        ));
+        assert!(!any_friendly_in_rescue_radius(
+            Vec2::new(180.0, 180.0),
+            &friendlies,
+            12.0
+        ));
     }
 }

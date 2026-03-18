@@ -8,7 +8,7 @@ It prevents scope creep and makes expansion decisions explicit.
 1. Start run as commander (`Baldiun`) only, in square formation.
 2. Fight basic `bandit_raider` enemies with commander auto-attack.
 3. Find neutral rescuable soldiers on the map.
-4. Stand near a rescuable soldier for the rescue channel duration.
+4. Keep any squad member (commander or retinue) near a rescuable soldier for the rescue channel duration.
 5. On successful rescue, soldier joins the retinue and fights automatically.
 6. Survive escalating waves while managing cohesion and banner state.
 7. Draft upgrades on level-up.
@@ -27,13 +27,13 @@ It prevents scope creep and makes expansion decisions explicit.
 | Armor Model | 1 armor stat (flat mitigation) | Armor slots, resist types, durability | Damage model stable and readable |
 | Skill System | Minimal per-unit fields only | Per-unit skill trees and triggered abilities | Unit lifecycle and leveling stable |
 | Unit Progression | 1 progression track (simple level/veterancy) | Multi-stat growth profiles and role specialization | Level-up logic deterministic and test-covered |
-| Rescue System | 1 rescue interaction: stand in radius for fixed time | Escort rescues, contested rescues, rescue events | Base rescue flow has no stuck/interruption bugs |
+| Rescue System | 1 rescue interaction: any friendly unit in radius for fixed time | Escort rescues, contested rescues, rescue events | Base rescue flow has no stuck/interruption bugs |
 | Upgrade Draft | Small pool (6-10 options) | Wider pools, synergies, rarity tiers | Starter upgrade set balanced and test-covered |
 | Morale/Cohesion | 1 cohesion meter with 2 thresholds | More morale states, event modifiers, trait interactions | Current thresholds produce clear tactical outcomes |
 | Banner | 2 states: `Up` / `Dropped`, 1 recovery interaction | Banner traits, relocation rules, enemy banner threats | Drop/recover flow stable in combat stress |
 | Map Set | 1 map: desert battlefield | Additional biomes/maps and tactical terrain variants | First map supports full run loop cleanly |
 | Points of Interest | 1 POI type: oasis heal zone | Shrines, supply carts, event zones | Oasis interaction stable and not abusable |
-| Resource Economy | 1 run currency: XP only | Gold/supplies/reputation meta layers | XP and upgrade cadence balanced |
+| Resource Economy | 1 run currency: XP only (from kills + XP pickup drops) | Gold/supplies/reputation meta layers | XP and upgrade cadence balanced |
 | UI | Minimal tactical HUD only | Advanced overlays, breakdown panels, analytics | Core HUD readable during heavy combat |
 | Audio/FX | Placeholder-first minimal effects | Layered soundscape and richer combat FX | Gameplay readability preserved with effects enabled |
 

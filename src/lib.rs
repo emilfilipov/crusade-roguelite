@@ -3,6 +3,7 @@ pub mod collision;
 pub mod combat;
 pub mod core;
 pub mod data;
+pub mod drops;
 pub mod enemies;
 pub mod formation;
 pub mod map;
@@ -97,6 +98,7 @@ pub fn configure_game_app(app: &mut App) {
             squad::SquadPlugin,
             formation::FormationPlugin,
             rescue::RescuePlugin,
+            drops::DropsPlugin,
         ))
         .add_plugins((
             enemies::EnemyPlugin,
