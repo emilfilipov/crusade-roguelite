@@ -138,9 +138,37 @@ fn spawn_main_menu(mut commands: Commands, frame_cap: Res<FrameRateCap>) {
             },
         ))
         .with_children(|parent| {
-            spawn_fps_selector(parent, *frame_cap);
-            spawn_menu_button(parent, MainMenuAction::Start, "START");
-            spawn_menu_button(parent, MainMenuAction::Exit, "EXIT");
+            parent
+                .spawn(NodeBundle {
+                    style: Style {
+                        flex_direction: FlexDirection::Column,
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        row_gap: Val::Px(18.0),
+                        ..default()
+                    },
+                    background_color: BackgroundColor(Color::NONE),
+                    ..default()
+                })
+                .with_children(|menu_buttons| {
+                    spawn_menu_button(menu_buttons, MainMenuAction::Start, "START");
+                    spawn_menu_button(menu_buttons, MainMenuAction::Exit, "EXIT");
+                });
+
+            parent
+                .spawn(NodeBundle {
+                    style: Style {
+                        position_type: PositionType::Absolute,
+                        right: Val::Px(16.0),
+                        bottom: Val::Px(16.0),
+                        ..default()
+                    },
+                    background_color: BackgroundColor(Color::NONE),
+                    ..default()
+                })
+                .with_children(|fps_anchor| {
+                    spawn_fps_selector(fps_anchor, *frame_cap);
+                });
         });
 }
 
