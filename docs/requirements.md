@@ -10,7 +10,8 @@ UI element art is intentionally excluded for now (basic programmatic shapes are 
 - One recruitable soldier type (`Infantry/Knight`).
 - One enemy type (melee infantry).
 - One formation in use (`Square`).
-- One map biome (desert) with one POI type (oasis).
+- One map biome (desert).
+- Oasis POI assets are optional/deferred until oasis gameplay is re-enabled.
 - Banner drop/recovery and rescue recruitment are included.
 
 ## Global Art Specs
@@ -56,7 +57,7 @@ UI element art is intentionally excluded for now (basic programmatic shapes are 
 2. `banner_dropped`
 3. `banner_recover_fx_marker` (simple marker for interaction readability)
 4. `rescue_marker_neutral` (icon/beacon above rescuable unit)
-5. `xp_shard_pickup`
+5. `xp_coin_stack_pickup`
 
 ### 6) Environment - Terrain and Foliage
 1. `terrain_desert_base_tile_a`
@@ -74,7 +75,7 @@ UI element art is intentionally excluded for now (basic programmatic shapes are 
 13. `palm_tree_a`
 14. `palm_tree_b`
 
-### 7) Environment - Oasis POI
+### 7) Environment - Oasis POI (Deferred/Optional for Current Runtime)
 1. `oasis_water_core`
 2. `oasis_shore_edge`
 3. `oasis_reeds_patch`

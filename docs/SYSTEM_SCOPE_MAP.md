@@ -32,8 +32,8 @@ It prevents scope creep and makes expansion decisions explicit.
 | Morale/Cohesion | 1 cohesion meter with 2 thresholds | More morale states, event modifiers, trait interactions | Current thresholds produce clear tactical outcomes |
 | Banner | 2 states: `Up` / `Dropped`, 1 recovery interaction | Banner traits, relocation rules, enemy banner threats | Drop/recover flow stable in combat stress |
 | Map Set | 1 map: desert battlefield | Additional biomes/maps and tactical terrain variants | First map supports full run loop cleanly |
-| Points of Interest | 1 POI type: oasis heal zone | Shrines, supply carts, event zones | Oasis interaction stable and not abusable |
-| Resource Economy | 1 run currency: XP only (from kills + XP pickup drops) | Gold/supplies/reputation meta layers | XP and upgrade cadence balanced |
+| Points of Interest | No active POI in runtime (oasis is deferred/config-only) | Oasis return, shrines, supply carts, event zones | Core loop stable before reintroducing POI interactions |
+| Resource Economy | 1 run currency: XP via collectible XP packs (ambient + enemy drop spawns) | Gold/supplies/reputation meta layers | XP and upgrade cadence balanced |
 | UI | Minimal tactical HUD only | Advanced overlays, breakdown panels, analytics | Core HUD readable during heavy combat |
 | Audio/FX | Placeholder-first minimal effects | Layered soundscape and richer combat FX | Gameplay readability preserved with effects enabled |
 
