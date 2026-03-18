@@ -77,6 +77,9 @@ impl Health {
 }
 
 #[derive(Component, Clone, Copy, Debug)]
+pub struct BaseMaxHealth(pub f32);
+
+#[derive(Component, Clone, Copy, Debug)]
 pub struct Armor(pub f32);
 
 #[derive(Component, Clone, Copy, Debug)]
@@ -155,3 +158,9 @@ pub struct UnitDiedEvent {
 
 #[derive(Event, Clone, Copy, Debug)]
 pub struct GainXpEvent(pub f32);
+
+#[derive(Event, Clone, Copy, Debug)]
+pub struct SpawnExpPackEvent {
+    pub world_position: Vec2,
+    pub xp_value_override: Option<f32>,
+}

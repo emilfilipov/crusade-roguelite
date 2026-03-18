@@ -2,7 +2,8 @@ use bevy::prelude::*;
 
 use crate::data::{GameData, UpgradeConfig};
 use crate::model::{
-    CommanderUnit, GainXpEvent, GameState, GlobalBuffs, RecruitEvent, StartRunEvent,
+    BaseMaxHealth, CommanderUnit, FriendlyUnit, GainXpEvent, GameState, GlobalBuffs, Health,
+    RecruitEvent, StartRunEvent,
 };
 
 #[derive(Resource, Clone, Debug)]
@@ -29,17 +30,35 @@ pub struct UpgradeDraft {
     pub autopick_timer: f32,
 }
 
+#[derive(Resource, Clone, Copy, Debug)]
+struct LevelPassiveRuntime {
+    applied_level: u32,
+}
+
+impl Default for LevelPassiveRuntime {
+    fn default() -> Self {
+        Self { applied_level: 1 }
+    }
+}
+
 pub struct UpgradePlugin;
 
 impl Plugin for UpgradePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Progression>()
             .init_resource::<UpgradeDraft>()
+            .init_resource::<LevelPassiveRuntime>()
             .init_resource::<GlobalBuffs>()
             .add_systems(Update, reset_progress_on_run_start)
             .add_systems(
                 Update,
-                (gain_xp, open_draft_on_level_up).run_if(in_state(GameState::InRun)),
+                (
+                    gain_xp,
+                    open_draft_on_level_up,
+                    sync_friendly_level_health_caps,
+                )
+                    .chain()
+                    .run_if(in_state(GameState::InRun)),
             )
             .add_systems(
                 Update,
@@ -52,6 +71,7 @@ fn reset_progress_on_run_start(
     mut start_events: EventReader<StartRunEvent>,
     mut progression: ResMut<Progression>,
     mut draft: ResMut<UpgradeDraft>,
+    mut passive_runtime: ResMut<LevelPassiveRuntime>,
     mut buffs: ResMut<GlobalBuffs>,
 ) {
     if start_events.is_empty() {
@@ -60,6 +80,7 @@ fn reset_progress_on_run_start(
     for _ in start_events.read() {}
     *progression = Progression::default();
     *draft = UpgradeDraft::default();
+    *passive_runtime = LevelPassiveRuntime::default();
     *buffs = GlobalBuffs::default();
 }
 
@@ -97,6 +118,34 @@ pub fn xp_required_for_level(level: u32) -> f32 {
         requirement *= 1.25;
     }
     requirement
+}
+
+pub fn commander_level_hp_bonus(level: u32) -> f32 {
+    level.saturating_sub(1) as f32
+}
+
+fn sync_friendly_level_health_caps(
+    progression: Res<Progression>,
+    mut passive_runtime: ResMut<LevelPassiveRuntime>,
+    mut friendlies: Query<(&mut Health, &BaseMaxHealth), With<FriendlyUnit>>,
+) {
+    let level = progression.level.max(1);
+    let hp_bonus = commander_level_hp_bonus(level);
+    let leveled_up = level > passive_runtime.applied_level;
+    for (mut health, base_max) in &mut friendlies {
+        let expected_max = base_max.0 + hp_bonus;
+        let previous_max = health.max;
+        if (health.max - expected_max).abs() > 0.001 {
+            health.max = expected_max;
+        }
+        if leveled_up || health.max > previous_max {
+            health.current = health.max;
+        }
+        if health.current > health.max {
+            health.current = health.max;
+        }
+    }
+    passive_runtime.applied_level = passive_runtime.applied_level.max(level);
 }
 
 fn resolve_upgrade_draft(
@@ -189,7 +238,7 @@ fn apply_upgrade(
 mod tests {
     use crate::data::UpgradeConfig;
     use crate::model::GlobalBuffs;
-    use crate::upgrades::{roll_upgrade_options, xp_required_for_level};
+    use crate::upgrades::{commander_level_hp_bonus, roll_upgrade_options, xp_required_for_level};
 
     #[test]
     fn rolls_three_options() {
@@ -232,5 +281,11 @@ mod tests {
         assert!((xp_required_for_level(1) - 30.0).abs() < 0.001);
         assert!(xp_required_for_level(2) > xp_required_for_level(1));
         assert!(xp_required_for_level(5) > xp_required_for_level(4));
+    }
+
+    #[test]
+    fn commander_level_hp_bonus_increases_linearly() {
+        assert_eq!(commander_level_hp_bonus(1), 0.0);
+        assert_eq!(commander_level_hp_bonus(6), 5.0);
     }
 }

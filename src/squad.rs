@@ -3,9 +3,9 @@ use bevy::prelude::*;
 use crate::data::GameData;
 use crate::map::MapBounds;
 use crate::model::{
-    Armor, AttackCooldown, AttackProfile, CommanderUnit, EnemyUnit, FriendlyUnit, GameState,
-    Health, MoveSpeed, PlayerControlled, RecruitEvent, RescuableUnit, StartRunEvent, Team, Unit,
-    UnitDiedEvent, UnitKind,
+    Armor, AttackCooldown, AttackProfile, BaseMaxHealth, ColliderRadius, CommanderUnit, EnemyUnit,
+    FriendlyUnit, GameState, Health, MoveSpeed, PlayerControlled, RecruitEvent, RescuableUnit,
+    StartRunEvent, Team, Unit, UnitDiedEvent, UnitKind,
 };
 use crate::visuals::ArtAssets;
 
@@ -73,7 +73,9 @@ fn spawn_commander(commands: &mut Commands, data: &GameData, art: &ArtAssets) ->
             FriendlyUnit,
             PlayerControlled,
             Health::new(cfg.max_hp),
+            BaseMaxHealth(cfg.max_hp),
             Armor(cfg.armor),
+            ColliderRadius(14.0),
             AttackProfile {
                 damage: cfg.damage,
                 range: cfg.attack_range,
@@ -115,7 +117,9 @@ fn spawn_recruit(
             },
             FriendlyUnit,
             Health::new(cfg.max_hp),
+            BaseMaxHealth(cfg.max_hp),
             Armor(cfg.armor),
+            ColliderRadius(12.0),
             AttackProfile {
                 damage: cfg.damage,
                 range: cfg.attack_range,

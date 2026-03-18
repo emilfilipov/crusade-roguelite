@@ -2,9 +2,13 @@ use bevy::app::AppExit;
 use bevy::prelude::*;
 
 use crate::banner::BannerState;
+use crate::data::GameData;
 use crate::enemies::WaveRuntime;
-use crate::model::{FrameRateCap, GameState, Health, RunSession, StartRunEvent, Team, Unit};
+use crate::model::{
+    FrameRateCap, GameState, Health, RescuableUnit, RunSession, StartRunEvent, Team, Unit,
+};
 use crate::morale::Cohesion;
+use crate::rescue::RescueProgress;
 use crate::squad::SquadRoster;
 use crate::upgrades::Progression;
 
@@ -76,6 +80,9 @@ struct CommanderLevelHudText;
 #[derive(Component, Clone, Copy, Debug)]
 struct XpBarFill;
 
+#[derive(Component, Clone, Copy, Debug)]
+struct RescueProgressBarsRoot;
+
 const MENU_BACKGROUND: Color = Color::srgb(0.12, 0.1, 0.08);
 const MENU_BUTTON_TEXT_NORMAL: Color = Color::srgb(0.92, 0.88, 0.8);
 const MENU_BUTTON_TEXT_HOVERED: Color = Color::srgb(0.98, 0.96, 0.88);
@@ -108,7 +115,10 @@ impl Plugin for UiPlugin {
                 Update,
                 refresh_hud_snapshot.run_if(in_state(GameState::InRun)),
             )
-            .add_systems(Update, update_in_run_hud.run_if(in_state(GameState::InRun)))
+            .add_systems(
+                Update,
+                (update_in_run_hud, update_rescue_progress_hud).run_if(in_state(GameState::InRun)),
+            )
             .add_systems(
                 Update,
                 (attach_health_bars_to_units, update_health_bar_fills)
@@ -379,6 +389,22 @@ fn spawn_in_run_hud(mut commands: Commands, existing: Query<Entity, With<InRunHu
                                     },
                                 ));
                             });
+
+                        center.spawn((
+                            RescueProgressBarsRoot,
+                            NodeBundle {
+                                style: Style {
+                                    width: Val::Px(320.0),
+                                    flex_direction: FlexDirection::Column,
+                                    justify_content: JustifyContent::FlexStart,
+                                    align_items: AlignItems::Stretch,
+                                    row_gap: Val::Px(4.0),
+                                    ..default()
+                                },
+                                background_color: BackgroundColor(Color::NONE),
+                                ..default()
+                            },
+                        ));
                     });
 
                 top_row.spawn((
@@ -568,6 +594,63 @@ fn update_in_run_hud(
     }
 }
 
+fn update_rescue_progress_hud(
+    mut commands: Commands,
+    data: Res<GameData>,
+    rescue_bars_root: Query<Entity, With<RescueProgressBarsRoot>>,
+    rescuables: Query<&RescueProgress, With<RescuableUnit>>,
+) {
+    let Ok(root_entity) = rescue_bars_root.get_single() else {
+        return;
+    };
+    commands.entity(root_entity).despawn_descendants();
+
+    let duration = data.rescue.rescue_duration_secs;
+    let mut ratios: Vec<f32> = rescuables
+        .iter()
+        .filter_map(|progress| rescue_progress_ratio(progress.elapsed, duration))
+        .collect();
+    if ratios.is_empty() {
+        return;
+    }
+    ratios.sort_by(|a: &f32, b: &f32| b.total_cmp(a));
+
+    commands.entity(root_entity).with_children(|parent| {
+        for ratio in ratios {
+            parent
+                .spawn(NodeBundle {
+                    style: Style {
+                        width: Val::Px(320.0),
+                        height: Val::Px(6.0),
+                        border: UiRect::all(Val::Px(1.0)),
+                        ..default()
+                    },
+                    background_color: BackgroundColor(HUD_BAR_BG),
+                    border_color: BorderColor(HUD_TEXT_COLOR),
+                    ..default()
+                })
+                .with_children(|bar| {
+                    bar.spawn(NodeBundle {
+                        style: Style {
+                            width: Val::Percent(ratio * 100.0),
+                            height: Val::Percent(100.0),
+                            ..default()
+                        },
+                        background_color: BackgroundColor(Color::srgb(0.56, 0.78, 0.95)),
+                        ..default()
+                    });
+                });
+        }
+    });
+}
+
+pub fn rescue_progress_ratio(elapsed: f32, duration: f32) -> Option<f32> {
+    if duration <= 0.0 || elapsed <= 0.0 || elapsed >= duration {
+        return None;
+    }
+    Some((elapsed / duration).clamp(0.0, 1.0))
+}
+
 pub fn displayed_wave_number(runtime: &WaveRuntime) -> u32 {
     let spawned = runtime.next_wave_index as u32 + runtime.infinite_wave_index;
     spawned.max(1)
@@ -653,7 +736,7 @@ mod tests {
     use crate::model::FrameRateCap;
     use crate::ui::{
         HudSnapshot, displayed_wave_number, format_elapsed_mm_ss, frame_cap_label,
-        health_bar_fill_width,
+        health_bar_fill_width, rescue_progress_ratio,
     };
 
     #[test]
@@ -703,5 +786,13 @@ mod tests {
         assert_eq!(displayed_wave_number(&runtime), 3);
         runtime.infinite_wave_index = 4;
         assert_eq!(displayed_wave_number(&runtime), 7);
+    }
+
+    #[test]
+    fn rescue_progress_ratio_visible_only_while_channeling() {
+        assert_eq!(rescue_progress_ratio(0.0, 2.0), None);
+        assert_eq!(rescue_progress_ratio(2.0, 2.0), None);
+        assert_eq!(rescue_progress_ratio(2.4, 2.0), None);
+        assert!(rescue_progress_ratio(0.5, 2.0).is_some());
     }
 }

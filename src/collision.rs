@@ -1,7 +1,8 @@
 use bevy::prelude::*;
 
+use crate::data::GameData;
 use crate::map::MapBounds;
-use crate::model::{ColliderRadius, GameState, Unit};
+use crate::model::{ColliderRadius, GameState, Team, Unit, UnitKind};
 
 pub struct CollisionPlugin;
 
@@ -16,30 +17,54 @@ impl Plugin for CollisionPlugin {
 
 #[allow(clippy::type_complexity)]
 fn resolve_unit_collisions(
+    data: Res<GameData>,
     mut unit_queries: ParamSet<(
-        Query<(Entity, &ColliderRadius, &Transform), With<Unit>>,
+        Query<(Entity, &ColliderRadius, &Transform, &Unit), With<Unit>>,
         Query<&mut Transform, With<Unit>>,
     )>,
     bounds: Option<Res<MapBounds>>,
 ) {
-    let snapshot: Vec<(Entity, f32, Vec2)> = {
+    let snapshot: Vec<(Entity, f32, Vec2, Unit)> = {
         let read_units = unit_queries.p0();
         read_units
             .iter()
-            .map(|(entity, radius, transform)| {
-                (entity, radius.0.max(0.0), transform.translation.truncate())
+            .map(|(entity, radius, transform, unit)| {
+                (
+                    entity,
+                    radius.0.max(0.0),
+                    transform.translation.truncate(),
+                    *unit,
+                )
             })
             .collect()
     };
     if snapshot.len() < 2 {
         return;
     }
+    let commander_position = snapshot.iter().find_map(|(_, _, position, unit)| {
+        if unit.kind == UnitKind::Commander {
+            Some(*position)
+        } else {
+            None
+        }
+    });
+    let inner_retinue_radius = data.formations.square.slot_spacing * 1.6;
 
     let mut corrections = vec![Vec2::ZERO; snapshot.len()];
     for i in 0..snapshot.len() {
         for j in (i + 1)..snapshot.len() {
-            let (_, radius_a, position_a) = snapshot[i];
-            let (_, radius_b, position_b) = snapshot[j];
+            let (_, radius_a, position_a, unit_a) = snapshot[i];
+            let (_, radius_b, position_b, unit_b) = snapshot[j];
+            if !should_resolve_collision_pair(
+                unit_a,
+                position_a,
+                unit_b,
+                position_b,
+                commander_position,
+                inner_retinue_radius,
+            ) {
+                continue;
+            }
             let min_distance = radius_a + radius_b;
             if min_distance <= 0.0 {
                 continue;
@@ -51,7 +76,7 @@ fn resolve_unit_collisions(
         }
     }
 
-    for (index, (entity, _, _)) in snapshot.iter().enumerate() {
+    for (index, (entity, _, _, _)) in snapshot.iter().enumerate() {
         let correction = corrections[index];
         if correction.length_squared() <= 0.000001 {
             continue;
@@ -71,6 +96,43 @@ fn resolve_unit_collisions(
             }
         }
     }
+}
+
+pub fn should_resolve_collision_pair(
+    unit_a: Unit,
+    position_a: Vec2,
+    unit_b: Unit,
+    position_b: Vec2,
+    commander_position: Option<Vec2>,
+    inner_retinue_radius: f32,
+) -> bool {
+    let enemy_a = unit_a.team == Team::Enemy;
+    let enemy_b = unit_b.team == Team::Enemy;
+    if enemy_a && enemy_b {
+        return true;
+    }
+    if enemy_a == enemy_b {
+        return false;
+    }
+    if enemy_a {
+        return is_inner_ring_retinue(unit_b, position_b, commander_position, inner_retinue_radius);
+    }
+    is_inner_ring_retinue(unit_a, position_a, commander_position, inner_retinue_radius)
+}
+
+fn is_inner_ring_retinue(
+    unit: Unit,
+    position: Vec2,
+    commander_position: Option<Vec2>,
+    inner_retinue_radius: f32,
+) -> bool {
+    if unit.team != Team::Friendly || unit.kind == UnitKind::Commander {
+        return false;
+    }
+    let Some(commander_pos) = commander_position else {
+        return false;
+    };
+    position.distance_squared(commander_pos) <= inner_retinue_radius * inner_retinue_radius
 }
 
 pub fn pair_push(position_a: Vec2, position_b: Vec2, min_distance: f32, seed: u32) -> Option<Vec2> {
@@ -99,7 +161,17 @@ pub fn pair_push(position_a: Vec2, position_b: Vec2, min_distance: f32, seed: u3
 mod tests {
     use bevy::prelude::Vec2;
 
-    use crate::collision::pair_push;
+    use crate::collision::{pair_push, should_resolve_collision_pair};
+    use crate::model::{Team, Unit, UnitKind};
+
+    fn unit(team: Team, kind: UnitKind) -> Unit {
+        Unit {
+            team,
+            kind,
+            level: 1,
+            morale_weight: 1.0,
+        }
+    }
 
     #[test]
     fn overlapping_units_generate_push_vector() {
@@ -117,5 +189,48 @@ mod tests {
     fn exact_overlap_uses_deterministic_fallback_direction() {
         let push = pair_push(Vec2::ZERO, Vec2::ZERO, 10.0, 7).expect("push");
         assert!(push.length() > 0.0);
+    }
+
+    #[test]
+    fn collision_rules_match_enemy_and_inner_ring_design() {
+        let commander_pos = Some(Vec2::ZERO);
+        let inner_radius = 24.0;
+        let enemy = unit(Team::Enemy, UnitKind::EnemyBanditRaider);
+        let commander = unit(Team::Friendly, UnitKind::Commander);
+        let inner_retinue = unit(Team::Friendly, UnitKind::InfantryKnight);
+        let outer_retinue = unit(Team::Friendly, UnitKind::InfantryKnight);
+
+        assert!(should_resolve_collision_pair(
+            enemy,
+            Vec2::new(10.0, 0.0),
+            unit(Team::Enemy, UnitKind::EnemyBanditRaider),
+            Vec2::new(13.0, 0.0),
+            commander_pos,
+            inner_radius,
+        ));
+        assert!(!should_resolve_collision_pair(
+            enemy,
+            Vec2::new(10.0, 0.0),
+            commander,
+            Vec2::ZERO,
+            commander_pos,
+            inner_radius,
+        ));
+        assert!(should_resolve_collision_pair(
+            enemy,
+            Vec2::new(10.0, 0.0),
+            inner_retinue,
+            Vec2::new(8.0, 0.0),
+            commander_pos,
+            inner_radius,
+        ));
+        assert!(!should_resolve_collision_pair(
+            enemy,
+            Vec2::new(10.0, 0.0),
+            outer_retinue,
+            Vec2::new(50.0, 0.0),
+            commander_pos,
+            inner_radius,
+        ));
     }
 }

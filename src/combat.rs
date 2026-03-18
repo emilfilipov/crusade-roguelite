@@ -3,10 +3,11 @@ use bevy::prelude::*;
 use crate::banner::BannerCombatModifiers;
 use crate::formation::FormationModifiers;
 use crate::model::{
-    AttackCooldown, AttackProfile, DamageEvent, EnemyUnit, GainXpEvent, GameState, GlobalBuffs,
-    Health, Team, Unit, UnitDiedEvent, UnitKind,
+    AttackCooldown, AttackProfile, DamageEvent, EnemyUnit, GameState, GlobalBuffs, Health,
+    SpawnExpPackEvent, Team, Unit, UnitDiedEvent, UnitKind,
 };
 use crate::morale::CohesionCombatModifiers;
+use crate::upgrades::Progression;
 
 pub struct CombatPlugin;
 
@@ -28,13 +29,19 @@ impl Plugin for CombatPlugin {
 fn tick_attack_timers(
     time: Res<Time>,
     cohesion_mods: Res<CohesionCombatModifiers>,
+    progression: Option<Res<Progression>>,
     global_buffs: Option<Res<GlobalBuffs>>,
     mut attackers: Query<(&Unit, &mut AttackCooldown)>,
 ) {
+    let level_multiplier = progression
+        .as_ref()
+        .map(|value| commander_level_combat_multiplier(value.level))
+        .unwrap_or(1.0);
     for (unit, mut cooldown) in &mut attackers {
         let mut speed_scale = 1.0;
         if unit.team == Team::Friendly {
             speed_scale *= cohesion_mods.attack_speed_multiplier;
+            speed_scale *= level_multiplier;
             if let Some(buff) = &global_buffs {
                 speed_scale *= buff.attack_speed_multiplier;
             }
@@ -45,11 +52,13 @@ fn tick_attack_timers(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn emit_damage_events(
     mut damage_events: EventWriter<DamageEvent>,
     formation_mods: Res<FormationModifiers>,
     cohesion_mods: Res<CohesionCombatModifiers>,
     banner_mods: Res<BannerCombatModifiers>,
+    progression: Option<Res<Progression>>,
     global_buffs: Option<Res<GlobalBuffs>>,
     mut attackers: Query<(
         Entity,
@@ -66,6 +75,10 @@ fn emit_damage_events(
         Option<&crate::model::Armor>,
     )>,
 ) {
+    let level_multiplier = progression
+        .as_ref()
+        .map(|value| commander_level_combat_multiplier(value.level))
+        .unwrap_or(1.0);
     let target_snapshot: Vec<(Entity, Unit, Vec2, f32, f32)> = targets
         .iter()
         .map(|(entity, unit, transform, health, armor)| {
@@ -131,7 +144,8 @@ fn emit_damage_events(
                 global_buffs
                     .as_ref()
                     .map(|buff| buff.damage_multiplier)
-                    .unwrap_or(1.0),
+                    .unwrap_or(1.0)
+                    * level_multiplier,
             );
 
             damage_events.send(DamageEvent {
@@ -155,6 +169,10 @@ pub fn enemy_target_allowed(
         return false;
     }
     true
+}
+
+pub fn commander_level_combat_multiplier(level: u32) -> f32 {
+    1.0 + level.saturating_sub(1) as f32 * 0.01
 }
 
 pub fn compute_damage(
@@ -190,7 +208,7 @@ fn apply_damage_events(
 fn resolve_deaths(
     mut commands: Commands,
     mut death_events: EventWriter<UnitDiedEvent>,
-    mut xp_events: EventWriter<GainXpEvent>,
+    mut exp_pack_events: EventWriter<SpawnExpPackEvent>,
     dead_units: Query<(Entity, &Unit, &Health, &Transform)>,
 ) {
     for (entity, unit, health, transform) in &dead_units {
@@ -201,7 +219,10 @@ fn resolve_deaths(
                 world_position: transform.translation.truncate(),
             });
             if unit.team == Team::Enemy {
-                xp_events.send(GainXpEvent(5.0));
+                exp_pack_events.send(SpawnExpPackEvent {
+                    world_position: transform.translation.truncate(),
+                    xp_value_override: None,
+                });
             }
             commands.entity(entity).despawn_recursive();
         }
@@ -213,7 +234,7 @@ fn _satisfy_marker(_enemy: Option<EnemyUnit>) {}
 
 #[cfg(test)]
 mod tests {
-    use crate::combat::{compute_damage, enemy_target_allowed};
+    use crate::combat::{commander_level_combat_multiplier, compute_damage, enemy_target_allowed};
     use crate::model::{Team, UnitKind};
 
     #[test]
@@ -245,5 +266,11 @@ mod tests {
             UnitKind::InfantryKnight,
             true
         ));
+    }
+
+    #[test]
+    fn commander_level_multiplier_gains_one_percent_per_level() {
+        assert!((commander_level_combat_multiplier(1) - 1.0).abs() < 0.0001);
+        assert!((commander_level_combat_multiplier(8) - 1.07).abs() < 0.0001);
     }
 }

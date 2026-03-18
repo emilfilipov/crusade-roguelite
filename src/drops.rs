@@ -1,8 +1,10 @@
 use bevy::prelude::*;
 
 use crate::data::GameData;
+use crate::enemies::WaveRuntime;
 use crate::map::MapBounds;
-use crate::model::{FriendlyUnit, GainXpEvent, GameState, StartRunEvent};
+use crate::model::{FriendlyUnit, GainXpEvent, GameState, SpawnExpPackEvent, StartRunEvent};
+use crate::upgrades::Progression;
 use crate::visuals::ArtAssets;
 
 #[derive(Component, Clone, Copy, Debug)]
@@ -33,16 +35,24 @@ impl Plugin for DropsPlugin {
             .add_systems(Update, spawn_exp_packs_on_run_start)
             .add_systems(
                 Update,
-                (spawn_exp_packs_over_time, pickup_exp_packs).run_if(in_state(GameState::InRun)),
+                (
+                    spawn_exp_packs_over_time,
+                    spawn_exp_packs_from_events,
+                    pickup_exp_packs,
+                )
+                    .run_if(in_state(GameState::InRun)),
             );
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_exp_packs_on_run_start(
     mut commands: Commands,
     mut start_events: EventReader<StartRunEvent>,
     data: Res<GameData>,
     art: Res<ArtAssets>,
+    waves: Option<Res<WaveRuntime>>,
+    progression: Option<Res<Progression>>,
     bounds: Option<Res<MapBounds>>,
     existing_packs: Query<Entity, With<ExpPack>>,
     mut runtime: ResMut<DropSpawnRuntime>,
@@ -57,20 +67,26 @@ fn spawn_exp_packs_on_run_start(
     }
 
     let initial_count = data.drops.initial_spawn_count.max(1);
+    let wave_number = current_wave_number(waves.as_deref());
+    let commander_level = current_commander_level(progression.as_deref());
+    let xp_value = scaled_pack_xp(data.drops.xp_per_pack, wave_number, commander_level);
     for sequence in 0..initial_count {
         let position = drop_spawn_position(sequence, bounds.as_deref().copied());
-        spawn_exp_pack(&mut commands, position, data.drops.xp_per_pack, &art);
+        spawn_exp_pack(&mut commands, position, xp_value, &art);
     }
 
     runtime.sequence = initial_count;
     runtime.timer = Timer::from_seconds(data.drops.spawn_interval_secs, TimerMode::Repeating);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_exp_packs_over_time(
     mut commands: Commands,
     time: Res<Time>,
     data: Res<GameData>,
     art: Res<ArtAssets>,
+    waves: Option<Res<WaveRuntime>>,
+    progression: Option<Res<Progression>>,
     bounds: Option<Res<MapBounds>>,
     packs: Query<Entity, With<ExpPack>>,
     mut runtime: ResMut<DropSpawnRuntime>,
@@ -86,8 +102,38 @@ fn spawn_exp_packs_over_time(
     }
 
     let position = drop_spawn_position(runtime.sequence, bounds.as_deref().copied());
-    spawn_exp_pack(&mut commands, position, data.drops.xp_per_pack, &art);
+    let wave_number = current_wave_number(waves.as_deref());
+    let commander_level = current_commander_level(progression.as_deref());
+    let xp_value = scaled_pack_xp(data.drops.xp_per_pack, wave_number, commander_level);
+    spawn_exp_pack(&mut commands, position, xp_value, &art);
     runtime.sequence = runtime.sequence.saturating_add(1);
+}
+
+fn spawn_exp_packs_from_events(
+    mut commands: Commands,
+    data: Res<GameData>,
+    art: Res<ArtAssets>,
+    waves: Option<Res<WaveRuntime>>,
+    progression: Option<Res<Progression>>,
+    packs: Query<Entity, With<ExpPack>>,
+    mut spawn_events: EventReader<SpawnExpPackEvent>,
+) {
+    if spawn_events.is_empty() {
+        return;
+    }
+    let wave_number = current_wave_number(waves.as_deref());
+    let commander_level = current_commander_level(progression.as_deref());
+    let max_active = data.drops.max_active_packs as usize;
+    let mut active_count = packs.iter().count();
+    for event in spawn_events.read() {
+        if active_count >= max_active {
+            break;
+        }
+        let base_xp = event.xp_value_override.unwrap_or(data.drops.xp_per_pack);
+        let xp_value = scaled_pack_xp(base_xp, wave_number, commander_level);
+        spawn_exp_pack(&mut commands, event.world_position, xp_value, &art);
+        active_count = active_count.saturating_add(1);
+    }
 }
 
 fn pickup_exp_packs(
@@ -130,6 +176,23 @@ fn spawn_exp_pack(commands: &mut Commands, position: Vec2, xp_value: f32, art: &
     ));
 }
 
+fn current_wave_number(waves: Option<&WaveRuntime>) -> u32 {
+    let Some(runtime) = waves else {
+        return 1;
+    };
+    (runtime.next_wave_index as u32 + runtime.infinite_wave_index).max(1)
+}
+
+fn current_commander_level(progression: Option<&Progression>) -> u32 {
+    progression.map(|value| value.level.max(1)).unwrap_or(1)
+}
+
+pub fn scaled_pack_xp(base_xp: f32, wave_number: u32, commander_level: u32) -> f32 {
+    let wave_scale = 1.0 + wave_number.saturating_sub(1) as f32 * 0.06;
+    let level_scale = 1.0 + commander_level.saturating_sub(1) as f32 * 0.04;
+    (base_xp * wave_scale * level_scale).max(1.0)
+}
+
 fn drop_spawn_position(sequence: u32, bounds: Option<MapBounds>) -> Vec2 {
     let max_radius = bounds
         .map(|b| b.half_width.min(b.half_height) * 0.86)
@@ -156,7 +219,7 @@ pub fn any_friendly_in_pickup_radius(
 mod tests {
     use bevy::prelude::Vec2;
 
-    use crate::drops::{any_friendly_in_pickup_radius, drop_spawn_position};
+    use crate::drops::{any_friendly_in_pickup_radius, drop_spawn_position, scaled_pack_xp};
     use crate::map::MapBounds;
 
     #[test]
@@ -184,5 +247,19 @@ mod tests {
             &friendly_positions,
             10.0
         ));
+    }
+
+    #[test]
+    fn xp_pack_scaling_increases_with_wave_and_level() {
+        let base = 6.0;
+        let early = scaled_pack_xp(base, 1, 1);
+        let later_wave = scaled_pack_xp(base, 5, 1);
+        let later_level = scaled_pack_xp(base, 1, 6);
+        let both = scaled_pack_xp(base, 5, 6);
+
+        assert!(later_wave > early);
+        assert!(later_level > early);
+        assert!(both > later_wave);
+        assert!(both > later_level);
     }
 }

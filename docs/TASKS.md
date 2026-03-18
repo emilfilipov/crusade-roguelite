@@ -529,6 +529,38 @@
   - Any friendly unit can complete rescues by proximity.
   - HUD displays wave, level/XP, and time in required screen positions.
 
+## CRU-028 - Wave/XP/Collision Progression Pass (10-Point Gameplay Update)
+- Status: `DONE`
+- Type: `Gameplay/Balance/UI`
+- Priority: `P0`
+- Depends on: `CRU-025`, `CRU-026`, `CRU-027`
+- Goal: Implement the full 10-point gameplay update for XP drops, wave pressure, collision behavior, commander level passives, and rescue HUD visibility.
+- Implementation:
+  1. Replace direct enemy-kill XP grant with enemy-spawned XP pack drops.
+  2. Reduce wave cadence to 30 seconds and double baseline scripted wave counts.
+  3. Enable enemy-enemy collision so raiders cannot stack into one sprite blob.
+  4. Add commander level passive scaling: +1% damage and +1% attack speed per level.
+  5. Add commander level passive HP scaling: +1 max HP per level to commander and retinue.
+  6. On level-up, fully heal commander and all current friendlies.
+  7. Add rescue progress bars below the XP bar for active rescue channels only.
+  8. Use coin-stack art for XP packs instead of flat debug-shape rendering.
+  9. Scale XP pack value by current wave and commander level.
+  10. Increase max active XP packs to 5000 for long-run stress scenarios.
+- Unit Tests Required:
+  - Enemy wave interval/count progression tests.
+  - Collision gating tests (enemy/enemy and inner-retinue/enemy behavior).
+  - Commander passive scaling tests (damage, attack speed, HP caps).
+  - XP pack scaling tests (wave + commander-level multipliers).
+  - Rescue bar ratio/visibility helper tests.
+- Acceptance Criteria:
+  - Enemy kills produce collectible XP drops.
+  - Wave pressure ramps faster and denser from early minutes onward.
+  - Collision behavior matches enemy stack prevention and inner-ring block rules.
+  - Commander level passives visibly increase power and trigger full-heal level-ups.
+  - Rescue progress is readable from HUD center during channeling.
+  - XP economy scales by encounter depth (wave + level) without direct kill XP.
+  - Runtime remains build/test/package clean on Windows target.
+
 ---
 
 ## Recommended Implementation Order
@@ -559,3 +591,4 @@
 25. `CRU-025`
 26. `CRU-026`
 27. `CRU-027`
+28. `CRU-028`

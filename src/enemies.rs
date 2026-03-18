@@ -3,8 +3,8 @@ use bevy::prelude::*;
 use crate::data::GameData;
 use crate::map::MapBounds;
 use crate::model::{
-    Armor, AttackCooldown, AttackProfile, CommanderUnit, EnemyUnit, FriendlyUnit, GameState,
-    Health, MoveSpeed, StartRunEvent, Team, Unit, UnitKind,
+    Armor, AttackCooldown, AttackProfile, ColliderRadius, CommanderUnit, EnemyUnit, FriendlyUnit,
+    GameState, Health, MoveSpeed, StartRunEvent, Team, Unit, UnitKind,
 };
 use crate::visuals::ArtAssets;
 
@@ -32,7 +32,7 @@ pub struct BanditVisualRuntime {
 }
 
 const ENEMY_BASE_SPEED_MULTIPLIER: f32 = 0.72;
-const WAVE_DURATION_SECS: f32 = 60.0;
+const WAVE_DURATION_SECS: f32 = 30.0;
 
 pub struct EnemyPlugin;
 
@@ -168,6 +168,7 @@ fn spawn_enemy_wave(
                 TimerMode::Repeating,
             )),
             MoveSpeed(move_speed),
+            ColliderRadius(12.0),
             SpriteBundle {
                 texture: art.enemy_bandit_raider_idle.clone(),
                 sprite: Sprite {
@@ -190,7 +191,7 @@ pub fn enemy_move_speed(base_speed: f32) -> f32 {
 }
 
 pub fn infinite_wave_enemy_count(base_count: u32, procedural_wave_index: u32) -> u32 {
-    base_count.saturating_add((procedural_wave_index.saturating_add(1)) * 2)
+    base_count.saturating_add((procedural_wave_index.saturating_add(1)) * 4)
 }
 
 pub fn infinite_wave_stat_multiplier(procedural_wave_index: u32) -> f32 {
@@ -385,9 +386,9 @@ mod tests {
 
     #[test]
     fn infinite_wave_progression_scales_count_and_stats() {
-        assert_eq!(infinite_wave_enemy_count(6, 0), 8);
-        assert_eq!(infinite_wave_enemy_count(6, 4), 16);
-        assert_eq!(infinite_wave_interval_secs(), 60.0);
+        assert_eq!(infinite_wave_enemy_count(6, 0), 10);
+        assert_eq!(infinite_wave_enemy_count(6, 4), 26);
+        assert_eq!(infinite_wave_interval_secs(), 30.0);
         assert!((infinite_wave_stat_multiplier(0) - 1.08).abs() < 0.001);
         assert!(infinite_wave_stat_multiplier(5) > infinite_wave_stat_multiplier(2));
         assert!(enemy_move_speed(100.0) < 100.0);

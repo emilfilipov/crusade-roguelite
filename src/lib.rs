@@ -30,7 +30,8 @@ use image::imageops::FilterType;
 use tracing_appender::non_blocking::WorkerGuard;
 
 use crate::model::{
-    DamageEvent, GainXpEvent, GameState, RecruitEvent, RunSession, StartRunEvent, UnitDiedEvent,
+    DamageEvent, GainXpEvent, GameState, RecruitEvent, RunSession, SpawnExpPackEvent,
+    StartRunEvent, UnitDiedEvent,
 };
 
 #[derive(Resource)]
@@ -88,6 +89,7 @@ pub fn configure_game_app(app: &mut App) {
         .add_event::<DamageEvent>()
         .add_event::<UnitDiedEvent>()
         .add_event::<GainXpEvent>()
+        .add_event::<SpawnExpPackEvent>()
         .add_systems(Update, apply_window_icon_once)
         .add_plugins((
             data::DataPlugin,
