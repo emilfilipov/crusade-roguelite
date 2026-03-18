@@ -13,6 +13,7 @@ Use this to inspect any entity, component, resource, event, or gameplay system w
   - Top-left: wave number
   - Top-center: commander level + XP bar
   - Top-right: elapsed run time (`MM:SS`)
+- Updated wave pacing to 60-second cadence (`assets/data/waves.json`) and aligned infinite wave interval to 60 seconds.
 
 ## Runtime Architecture
 
@@ -90,11 +91,11 @@ Loaded by `GameData::load_from_dir("assets/data")` (`src/data.rs`).
 
 ### `assets/data/waves.json`
 - Wave schedule:
-  1. `t=6s`, `count=4`
-  2. `t=19s`, `count=6`
-  3. `t=35s`, `count=8`
-  4. `t=52s`, `count=10`
-  5. `t=72s`, `count=12`
+  1. `t=0s`, `count=4`
+  2. `t=60s`, `count=6`
+  3. `t=120s`, `count=8`
+  4. `t=180s`, `count=10`
+  5. `t=240s`, `count=12`
 
 ### `assets/data/upgrades.json`
 - `add_units` (`add_units`, `1.0`)

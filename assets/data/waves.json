@@ -1,9 +1,9 @@
 {
   "waves": [
-    { "time_secs": 6.0, "count": 4 },
-    { "time_secs": 19.0, "count": 6 },
-    { "time_secs": 35.0, "count": 8 },
-    { "time_secs": 52.0, "count": 10 },
-    { "time_secs": 72.0, "count": 12 }
+    { "time_secs": 0.0, "count": 4 },
+    { "time_secs": 60.0, "count": 6 },
+    { "time_secs": 120.0, "count": 8 },
+    { "time_secs": 180.0, "count": 10 },
+    { "time_secs": 240.0, "count": 12 }
   ]
 }

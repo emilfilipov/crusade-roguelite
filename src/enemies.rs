@@ -32,6 +32,7 @@ pub struct BanditVisualRuntime {
 }
 
 const ENEMY_BASE_SPEED_MULTIPLIER: f32 = 0.72;
+const WAVE_DURATION_SECS: f32 = 60.0;
 
 pub struct EnemyPlugin;
 
@@ -181,7 +182,7 @@ fn spawn_enemy_wave(
 }
 
 fn infinite_wave_interval_secs() -> f32 {
-    10.0
+    WAVE_DURATION_SECS
 }
 
 pub fn enemy_move_speed(base_speed: f32) -> f32 {
@@ -337,7 +338,8 @@ mod tests {
 
     use crate::enemies::{
         BanditVisualState, chase_target_positions, choose_nearest, decide_bandit_visual_state,
-        enemy_move_speed, infinite_wave_enemy_count, infinite_wave_stat_multiplier,
+        enemy_move_speed, infinite_wave_enemy_count, infinite_wave_interval_secs,
+        infinite_wave_stat_multiplier,
     };
 
     #[test]
@@ -385,6 +387,7 @@ mod tests {
     fn infinite_wave_progression_scales_count_and_stats() {
         assert_eq!(infinite_wave_enemy_count(6, 0), 8);
         assert_eq!(infinite_wave_enemy_count(6, 4), 16);
+        assert_eq!(infinite_wave_interval_secs(), 60.0);
         assert!((infinite_wave_stat_multiplier(0) - 1.08).abs() < 0.001);
         assert!(infinite_wave_stat_multiplier(5) > infinite_wave_stat_multiplier(2));
         assert!(enemy_move_speed(100.0) < 100.0);
