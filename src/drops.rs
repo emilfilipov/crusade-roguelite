@@ -3,6 +3,7 @@ use bevy::prelude::*;
 use crate::data::GameData;
 use crate::map::MapBounds;
 use crate::model::{FriendlyUnit, GainXpEvent, GameState, StartRunEvent};
+use crate::visuals::ArtAssets;
 
 #[derive(Component, Clone, Copy, Debug)]
 pub struct ExpPack {
@@ -41,6 +42,7 @@ fn spawn_exp_packs_on_run_start(
     mut commands: Commands,
     mut start_events: EventReader<StartRunEvent>,
     data: Res<GameData>,
+    art: Res<ArtAssets>,
     bounds: Option<Res<MapBounds>>,
     existing_packs: Query<Entity, With<ExpPack>>,
     mut runtime: ResMut<DropSpawnRuntime>,
@@ -57,7 +59,7 @@ fn spawn_exp_packs_on_run_start(
     let initial_count = data.drops.initial_spawn_count.max(1);
     for sequence in 0..initial_count {
         let position = drop_spawn_position(sequence, bounds.as_deref().copied());
-        spawn_exp_pack(&mut commands, position, data.drops.xp_per_pack);
+        spawn_exp_pack(&mut commands, position, data.drops.xp_per_pack, &art);
     }
 
     runtime.sequence = initial_count;
@@ -68,6 +70,7 @@ fn spawn_exp_packs_over_time(
     mut commands: Commands,
     time: Res<Time>,
     data: Res<GameData>,
+    art: Res<ArtAssets>,
     bounds: Option<Res<MapBounds>>,
     packs: Query<Entity, With<ExpPack>>,
     mut runtime: ResMut<DropSpawnRuntime>,
@@ -83,7 +86,7 @@ fn spawn_exp_packs_over_time(
     }
 
     let position = drop_spawn_position(runtime.sequence, bounds.as_deref().copied());
-    spawn_exp_pack(&mut commands, position, data.drops.xp_per_pack);
+    spawn_exp_pack(&mut commands, position, data.drops.xp_per_pack, &art);
     runtime.sequence = runtime.sequence.saturating_add(1);
 }
 
@@ -112,13 +115,13 @@ fn pickup_exp_packs(
     }
 }
 
-fn spawn_exp_pack(commands: &mut Commands, position: Vec2, xp_value: f32) {
+fn spawn_exp_pack(commands: &mut Commands, position: Vec2, xp_value: f32, art: &ArtAssets) {
     commands.spawn((
         ExpPack { xp_value },
         SpriteBundle {
+            texture: art.exp_pack_coin_stack.clone(),
             sprite: Sprite {
-                color: Color::srgb(0.95, 0.81, 0.3),
-                custom_size: Some(Vec2::new(14.0, 14.0)),
+                custom_size: Some(Vec2::new(18.0, 18.0)),
                 ..default()
             },
             transform: Transform::from_xyz(position.x, position.y, 4.0),

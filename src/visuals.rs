@@ -14,6 +14,7 @@ pub struct ArtAssets {
     pub banner_dropped: Handle<Image>,
     pub oasis_water_core: Handle<Image>,
     pub terrain_desert_base_tile_a: Handle<Image>,
+    pub exp_pack_coin_stack: Handle<Image>,
 }
 
 pub struct VisualPlugin;
@@ -54,4 +55,5 @@ fn load_art_assets(mut assets: ResMut<ArtAssets>, asset_server: Option<Res<Asset
         asset_server.load("third_party/kenney_sketch-desert_1.0/Tiles/water_center_N.png");
     assets.terrain_desert_base_tile_a = asset_server
         .load("third_party/kenney_desert-shooter-pack_1.0/PNG/Tiles/Tiles/tile_0000.png");
+    assets.exp_pack_coin_stack = asset_server.load("sprites/pickups/xp_coin_stack.png");
 }
