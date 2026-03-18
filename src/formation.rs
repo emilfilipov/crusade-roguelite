@@ -1,5 +1,6 @@
 use bevy::prelude::*;
 
+use crate::banner::BannerMovementPenalty;
 use crate::data::GameData;
 use crate::model::{CommanderUnit, FriendlyUnit, GameState};
 
@@ -50,6 +51,7 @@ fn apply_square_formation(
     time: Res<Time>,
     data: Res<GameData>,
     formation: Res<ActiveFormation>,
+    banner_penalty: Option<Res<BannerMovementPenalty>>,
     commanders: Query<&Transform, With<CommanderUnit>>,
     mut friendlies: Query<(Entity, &mut Transform), (With<FriendlyUnit>, Without<CommanderUnit>)>,
 ) {
@@ -64,11 +66,15 @@ fn apply_square_formation(
     let mut members: Vec<(Entity, Mut<Transform>)> = friendlies.iter_mut().collect();
     members.sort_by_key(|(entity, _)| entity.index());
     let offsets = square_offsets_excluding_commander_slot(members.len(), spacing);
+    let speed_multiplier = banner_penalty
+        .as_ref()
+        .map(|penalty| penalty.friendly_speed_multiplier)
+        .unwrap_or(1.0);
 
     for ((_, mut transform), offset) in members.into_iter().zip(offsets.into_iter()) {
         let target = commander_transform.translation.truncate() + offset;
         let current = transform.translation.truncate();
-        let smooth = (time.delta_seconds() * 10.0).clamp(0.0, 1.0);
+        let smooth = (time.delta_seconds() * 10.0 * speed_multiplier).clamp(0.0, 1.0);
         let next = current.lerp(target, smooth);
         transform.translation.x = next.x;
         transform.translation.y = next.y;

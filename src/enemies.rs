@@ -4,7 +4,7 @@ use crate::data::GameData;
 use crate::map::MapBounds;
 use crate::model::{
     Armor, AttackCooldown, AttackProfile, ColliderRadius, CommanderUnit, EnemyUnit, FriendlyUnit,
-    GameState, Health, MoveSpeed, StartRunEvent, Team, Unit, UnitKind,
+    GameState, Health, Morale, MoveSpeed, StartRunEvent, Team, Unit, UnitKind,
 };
 use crate::visuals::ArtAssets;
 
@@ -149,7 +149,6 @@ fn spawn_enemy_wave(
                 team: Team::Enemy,
                 kind: UnitKind::EnemyBanditRaider,
                 level: 1,
-                morale_weight: 1.0,
             },
             EnemyUnit,
             BanditVisualRuntime {
@@ -157,6 +156,7 @@ fn spawn_enemy_wave(
                 state: BanditVisualState::Idle,
             },
             Health::new(hp),
+            Morale::new(cfg.morale),
             Armor(armor),
             AttackProfile {
                 damage,

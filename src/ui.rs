@@ -1,13 +1,14 @@
 use bevy::app::AppExit;
 use bevy::prelude::*;
 
-use crate::banner::BannerState;
+use crate::banner::{BannerState, banner_pickup_progress_ratio};
 use crate::data::GameData;
 use crate::enemies::WaveRuntime;
 use crate::model::{
-    FrameRateCap, GameState, Health, RescuableUnit, RunSession, StartRunEvent, Team, Unit,
+    FrameRateCap, FriendlyUnit, GameState, Health, Morale, RescuableUnit, RunSession,
+    StartRunEvent, Team, Unit,
 };
-use crate::morale::Cohesion;
+use crate::morale::{Cohesion, average_morale_ratio};
 use crate::rescue::RescueProgress;
 use crate::squad::SquadRoster;
 use crate::upgrades::Progression;
@@ -23,6 +24,7 @@ pub struct HudSnapshot {
     pub wave_index: usize,
     pub current_wave: u32,
     pub elapsed_seconds: f32,
+    pub average_morale_ratio: f32,
 }
 
 impl Default for HudSnapshot {
@@ -37,6 +39,7 @@ impl Default for HudSnapshot {
             wave_index: 0,
             current_wave: 1,
             elapsed_seconds: 0.0,
+            average_morale_ratio: 1.0,
         }
     }
 }
@@ -83,6 +86,12 @@ struct XpBarFill;
 #[derive(Component, Clone, Copy, Debug)]
 struct RescueProgressBarsRoot;
 
+#[derive(Component, Clone, Copy, Debug)]
+struct MoraleBarFill;
+
+#[derive(Component, Clone, Copy, Debug)]
+struct CohesionBarFill;
+
 const MENU_BACKGROUND: Color = Color::srgb(0.12, 0.1, 0.08);
 const MENU_BUTTON_TEXT_NORMAL: Color = Color::srgb(0.92, 0.88, 0.8);
 const MENU_BUTTON_TEXT_HOVERED: Color = Color::srgb(0.98, 0.96, 0.88);
@@ -91,6 +100,7 @@ const MENU_FPS_BOX_BORDER: Color = Color::srgba(0.86, 0.78, 0.62, 0.7);
 const HUD_TEXT_COLOR: Color = Color::srgb(0.97, 0.95, 0.9);
 const HUD_BAR_BG: Color = Color::srgba(0.12, 0.1, 0.08, 0.8);
 const HUD_BAR_FILL: Color = Color::srgb(0.88, 0.72, 0.28);
+const HUD_VERTICAL_BAR_BG: Color = Color::srgba(0.08, 0.07, 0.06, 0.85);
 
 pub struct UiPlugin;
 
@@ -419,6 +429,33 @@ fn spawn_in_run_hud(mut commands: Commands, existing: Query<Entity, With<InRunHu
                     ),
                 ));
             });
+
+            root.spawn(NodeBundle {
+                style: Style {
+                    position_type: PositionType::Absolute,
+                    left: Val::Px(12.0),
+                    bottom: Val::Px(12.0),
+                    flex_direction: FlexDirection::Row,
+                    column_gap: Val::Px(12.0),
+                    ..default()
+                },
+                background_color: BackgroundColor(Color::NONE),
+                ..default()
+            })
+            .with_children(|bottom_left| {
+                spawn_vertical_meter(
+                    bottom_left,
+                    "MORALE",
+                    MoraleBarFill,
+                    Color::srgb(0.83, 0.63, 0.27),
+                );
+                spawn_vertical_meter(
+                    bottom_left,
+                    "COHESION",
+                    CohesionBarFill,
+                    Color::srgb(0.38, 0.69, 0.9),
+                );
+            });
         });
 }
 
@@ -426,6 +463,63 @@ fn despawn_in_run_hud(mut commands: Commands, roots: Query<Entity, With<InRunHud
     for entity in &roots {
         commands.entity(entity).despawn_recursive();
     }
+}
+
+fn spawn_vertical_meter<T: Component + Clone>(
+    parent: &mut ChildBuilder,
+    label: &str,
+    fill_component: T,
+    fill_color: Color,
+) {
+    parent
+        .spawn(NodeBundle {
+            style: Style {
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                row_gap: Val::Px(4.0),
+                ..default()
+            },
+            background_color: BackgroundColor(Color::NONE),
+            ..default()
+        })
+        .with_children(|meter| {
+            meter.spawn(TextBundle::from_section(
+                label,
+                TextStyle {
+                    font_size: 13.0,
+                    color: HUD_TEXT_COLOR,
+                    ..default()
+                },
+            ));
+            meter
+                .spawn(NodeBundle {
+                    style: Style {
+                        width: Val::Px(18.0),
+                        height: Val::Px(108.0),
+                        border: UiRect::all(Val::Px(1.0)),
+                        justify_content: JustifyContent::FlexEnd,
+                        align_items: AlignItems::Stretch,
+                        ..default()
+                    },
+                    background_color: BackgroundColor(HUD_VERTICAL_BAR_BG),
+                    border_color: BorderColor(HUD_TEXT_COLOR),
+                    ..default()
+                })
+                .with_children(|bar| {
+                    bar.spawn((
+                        fill_component,
+                        NodeBundle {
+                            style: Style {
+                                width: Val::Percent(100.0),
+                                height: Val::Percent(100.0),
+                                ..default()
+                            },
+                            background_color: BackgroundColor(fill_color),
+                            ..default()
+                        },
+                    ));
+                });
+        });
 }
 
 #[allow(clippy::type_complexity)]
@@ -543,6 +637,7 @@ pub fn frame_cap_label(cap: FrameRateCap) -> &'static str {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn refresh_hud_snapshot(
     cohesion: Res<Cohesion>,
     banner_state: Res<BannerState>,
@@ -550,8 +645,10 @@ fn refresh_hud_snapshot(
     progression: Res<Progression>,
     waves: Res<WaveRuntime>,
     run_session: Res<RunSession>,
+    friendlies: Query<&Morale, With<FriendlyUnit>>,
     mut hud: ResMut<HudSnapshot>,
 ) {
+    let morale_ratios: Vec<f32> = friendlies.iter().map(|morale| morale.ratio()).collect();
     *hud = HudSnapshot {
         cohesion: cohesion.value,
         banner_dropped: banner_state.is_dropped,
@@ -562,6 +659,7 @@ fn refresh_hud_snapshot(
         wave_index: waves.next_wave_index,
         current_wave: displayed_wave_number(&waves),
         elapsed_seconds: run_session.survived_seconds,
+        average_morale_ratio: average_morale_ratio(&morale_ratios),
     };
 }
 
@@ -573,7 +671,11 @@ fn update_in_run_hud(
         Query<&mut Text, With<TimeHudText>>,
         Query<&mut Text, With<CommanderLevelHudText>>,
     )>,
-    mut xp_fill_styles: Query<&mut Style, With<XpBarFill>>,
+    mut bar_styles: ParamSet<(
+        Query<&mut Style, With<XpBarFill>>,
+        Query<&mut Style, With<MoraleBarFill>>,
+        Query<&mut Style, With<CohesionBarFill>>,
+    )>,
 ) {
     if let Ok(mut text) = texts.p0().get_single_mut() {
         text.sections[0].value = format!("Wave {}", hud.current_wave);
@@ -589,14 +691,21 @@ fn update_in_run_hud(
     } else {
         (hud.xp / hud.next_level_xp).clamp(0.0, 1.0)
     };
-    if let Ok(mut style) = xp_fill_styles.get_single_mut() {
+    if let Ok(mut style) = bar_styles.p0().get_single_mut() {
         style.width = Val::Percent(xp_ratio * 100.0);
+    }
+    if let Ok(mut style) = bar_styles.p1().get_single_mut() {
+        style.height = Val::Percent(hud.average_morale_ratio.clamp(0.0, 1.0) * 100.0);
+    }
+    if let Ok(mut style) = bar_styles.p2().get_single_mut() {
+        style.height = Val::Percent((hud.cohesion / 100.0).clamp(0.0, 1.0) * 100.0);
     }
 }
 
 fn update_rescue_progress_hud(
     mut commands: Commands,
     data: Res<GameData>,
+    banner_state: Res<BannerState>,
     rescue_bars_root: Query<Entity, With<RescueProgressBarsRoot>>,
     rescuables: Query<&RescueProgress, With<RescuableUnit>>,
 ) {
@@ -606,17 +715,23 @@ fn update_rescue_progress_hud(
     commands.entity(root_entity).despawn_descendants();
 
     let duration = data.rescue.rescue_duration_secs;
-    let mut ratios: Vec<f32> = rescuables
-        .iter()
-        .filter_map(|progress| rescue_progress_ratio(progress.elapsed, duration))
-        .collect();
-    if ratios.is_empty() {
+    let mut bars: Vec<(f32, Color)> = Vec::new();
+    if let Some(progress_ratio) = banner_pickup_progress_ratio(&banner_state) {
+        bars.push((progress_ratio, Color::srgb(0.94, 0.68, 0.32)));
+    }
+    bars.extend(
+        rescuables
+            .iter()
+            .filter_map(|progress| rescue_progress_ratio(progress.elapsed, duration))
+            .map(|ratio| (ratio, Color::srgb(0.56, 0.78, 0.95))),
+    );
+    if bars.is_empty() {
         return;
     }
-    ratios.sort_by(|a: &f32, b: &f32| b.total_cmp(a));
+    bars.sort_by(|a, b| b.0.total_cmp(&a.0));
 
     commands.entity(root_entity).with_children(|parent| {
-        for ratio in ratios {
+        for (ratio, color) in bars {
             parent
                 .spawn(NodeBundle {
                     style: Style {
@@ -636,7 +751,7 @@ fn update_rescue_progress_hud(
                             height: Val::Percent(100.0),
                             ..default()
                         },
-                        background_color: BackgroundColor(Color::srgb(0.56, 0.78, 0.95)),
+                        background_color: BackgroundColor(color),
                         ..default()
                     });
                 });
@@ -751,6 +866,7 @@ mod tests {
             wave_index: 2,
             current_wave: 2,
             elapsed_seconds: 61.0,
+            average_morale_ratio: 0.74,
         };
         assert!(snapshot.banner_dropped);
         assert_eq!(snapshot.squad_size, 5);

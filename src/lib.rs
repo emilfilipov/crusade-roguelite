@@ -31,7 +31,7 @@ use tracing_appender::non_blocking::WorkerGuard;
 
 use crate::model::{
     DamageEvent, GainXpEvent, GameState, RecruitEvent, RunSession, SpawnExpPackEvent,
-    StartRunEvent, UnitDiedEvent,
+    StartRunEvent, UnitDamagedEvent, UnitDiedEvent,
 };
 
 #[derive(Resource)]
@@ -87,6 +87,7 @@ pub fn configure_game_app(app: &mut App) {
         .add_event::<StartRunEvent>()
         .add_event::<RecruitEvent>()
         .add_event::<DamageEvent>()
+        .add_event::<UnitDamagedEvent>()
         .add_event::<UnitDiedEvent>()
         .add_event::<GainXpEvent>()
         .add_event::<SpawnExpPackEvent>()

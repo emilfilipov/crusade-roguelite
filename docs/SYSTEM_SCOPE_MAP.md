@@ -25,16 +25,16 @@ It prevents scope creep and makes expansion decisions explicit.
 | Enemy Visual States | 1 state set for `bandit_raider`: idle/move/attack/hit/dead sprite swaps | Multi-frame animation sets and per-faction visual variants | State mapping remains readable and stable under combat load |
 | Weapon Types | 1 weapon class: melee | Bows, spears, anti-armor, weapon traits | Melee combat formula validated by tests |
 | Armor Model | 1 armor stat (flat mitigation) | Armor slots, resist types, durability | Damage model stable and readable |
-| Skill System | Minimal per-unit fields only | Per-unit skill trees and triggered abilities | Unit lifecycle and leveling stable |
+| Skill System | Core per-unit morale implemented; aura hooks still placeholder | Per-unit skill trees, triggered abilities, active aura skills | Base morale/aura interactions stable and test-covered |
 | Unit Progression | 1 progression track (simple level/veterancy) | Multi-stat growth profiles and role specialization | Level-up logic deterministic and test-covered |
 | Rescue System | 1 rescue interaction: any friendly unit in radius for fixed time | Escort rescues, contested rescues, rescue events | Base rescue flow has no stuck/interruption bugs |
 | Upgrade Draft | Small pool (6-10 options) | Wider pools, synergies, rarity tiers | Starter upgrade set balanced and test-covered |
-| Morale/Cohesion | 1 cohesion meter with 2 thresholds | More morale states, event modifiers, trait interactions | Current thresholds produce clear tactical outcomes |
-| Banner | 2 states: `Up` / `Dropped`, 1 recovery interaction | Banner traits, relocation rules, enemy banner threats | Drop/recover flow stable in combat stress |
+| Morale/Cohesion | Per-unit morale + event-driven cohesion with 5 tiers and low-morale retinue pressure | Richer morale events, panic/rout behavior, faction morale traits | Current morale/cohesion loop remains recoverable and readable |
+| Banner | Auto-drop at low cohesion with timed recovery channel and cohesion restore on pickup | Banner traits, relocation rules, enemy banner threats | Auto-drop/recovery loop stable and not abusable |
 | Map Set | 1 map: desert battlefield | Additional biomes/maps and tactical terrain variants | First map supports full run loop cleanly |
 | Points of Interest | No active POI in runtime (oasis is deferred/config-only) | Oasis return, shrines, supply carts, event zones | Core loop stable before reintroducing POI interactions |
-| Resource Economy | 1 run currency: XP via collectible XP packs (ambient + enemy drop spawns) | Gold/supplies/reputation meta layers | XP and upgrade cadence balanced |
-| UI | Minimal tactical HUD only | Advanced overlays, breakdown panels, analytics | Core HUD readable during heavy combat |
+| Resource Economy | 1 run currency: XP via collectible XP packs (ambient + enemy drop spawns); effect applies on commander contact | Gold/supplies/reputation meta layers | XP and upgrade cadence balanced |
+| UI | Tactical HUD with wave/level/time, rescue+banner progress strips, and bottom-left morale/cohesion meters | Advanced overlays, breakdown panels, analytics | Core HUD readable during heavy combat |
 | Audio/FX | Placeholder-first minimal effects | Layered soundscape and richer combat FX | Gameplay readability preserved with effects enabled |
 
 ## Retinue Size Policy

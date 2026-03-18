@@ -1,66 +1,40 @@
 # ASSET_SOURCES.md
 
 ## Purpose
-Track externally sourced art used by the project, including source URLs, local paths, license notes, and current runtime mapping.
+Track external art sources, licenses, and current runtime mapping.
 
-## Active Asset Packs
+## Active Runtime Sources
 
 ### Kenney - Tiny Dungeon
 - URL: https://kenney.nl/assets/tiny-dungeon
 - Local path: `assets/third_party/kenney_tiny-dungeon_1.0`
-- License: Creative Commons CC0 (as listed on source page and pack metadata)
+- License: CC0 (per source page/pack metadata)
 - Runtime usage:
   - Commander sprite
   - Friendly knight sprite
   - Rescuable variant sprite
-  - `bandit_raider` idle/move/attack/hit/dead states
+  - `bandit_raider` state sprites (idle/move/attack/hit/dead)
 
 ### Kenney - Desert Shooter Pack
 - URL: https://kenney.nl/assets/desert-shooter-pack
 - Local path: `assets/third_party/kenney_desert-shooter-pack_1.0`
-- License: Kenney License (CC0/public-domain style usage as provided in pack `License.txt`)
+- License: Kenney License (`License.txt` in pack)
 - Runtime usage:
   - Banner upright/dropped sprites
-  - Desert ground tile
+  - Desert terrain base tile
 
-### Kenney - Sketch Desert
-- URL: https://kenney.nl/assets/sketch-desert
-- Local path: `assets/third_party/kenney_sketch-desert_1.0`
-- License: Creative Commons CC0 (as listed on source page and pack metadata)
-- Runtime usage:
-  - Oasis placeholder tile handle (`oasis_water_core`) is loaded, but oasis gameplay is currently disabled.
-
-### Kenney - Roguelike/RPG Pack
-- URL: https://kenney.nl/assets/roguelike-rpg-pack
-- Local path: `assets/third_party/kenney_roguelike-rpg-pack`
-- License: Kenney License (CC0/public-domain style usage as provided in pack `License.txt`)
-- Runtime usage:
-  - Source pack for pickup icon extraction.
-
-## Local Curated Sprites
+### Local Curated Sprite
 - `assets/sprites/pickups/xp_coin_stack.png`
-  - Used as runtime XP pack sprite.
-  - Curated local sprite based on the Kenney roguelike/RPG asset set.
+- Runtime usage: XP pack pickup sprite (`exp_pack_coin_stack`)
 
-## Downloaded Candidate Packs (Not Wired in Runtime)
+## Installed Candidate Packs (Not Active in Runtime)
+- Kenney Roguelike/RPG Pack: `assets/third_party/kenney_roguelike-rpg-pack`
+- Kenney Sketch Desert: `assets/third_party/kenney_sketch-desert_1.0`
+- OGA Top-Down Asset Pack 1.0: `assets/third_party/oga_ishtar_top-down-pack_1.1`
+- OGA Pixel FX Pack: `assets/third_party/oga_pixel_fx_pack`
+- OGA Top Down Asset Pack 1 (CTATZ): `assets/third_party/oga_ctatz_top-down-pack_1`
 
-### OpenGameArt - Top-Down Asset Pack 1.0
-- URL: https://opengameart.org/content/top-down-asset-pack-10
-- Local path: `assets/third_party/oga_ishtar_top-down-pack_1.1`
-- License: CC0 (per source page)
-
-### OpenGameArt - Pixel FX Pack
-- URL: https://opengameart.org/content/pixel-fx-pack
-- Local path: `assets/third_party/oga_pixel_fx_pack`
-- License: CC0 (per source page)
-
-### OpenGameArt - Top Down Asset Pack 1 (CTATZ)
-- URL: https://opengameart.org/content/top-down-asset-pack-1-ctatz
-- Local path: `assets/third_party/oga_ctatz_top-down-pack_1`
-- License: CC0 (per source page)
-
-## Runtime Mapping (Current)
-Configured in `src/visuals.rs`:
+## Runtime Mapping (`src/visuals.rs`)
 - `commander_idle` -> `third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0097.png`
 - `friendly_knight_idle` -> `third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0096.png`
 - `friendly_knight_rescuable_variant` -> `third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0096.png`
@@ -72,9 +46,8 @@ Configured in `src/visuals.rs`:
 - `banner_upright` -> `third_party/kenney_desert-shooter-pack_1.0/PNG/Weapons/Tiles/tile_0018.png`
 - `banner_dropped` -> `third_party/kenney_desert-shooter-pack_1.0/PNG/Weapons/Tiles/tile_0003.png`
 - `terrain_desert_base_tile_a` -> `third_party/kenney_desert-shooter-pack_1.0/PNG/Tiles/Tiles/tile_0000.png`
-- `oasis_water_core` -> `third_party/kenney_sketch-desert_1.0/Tiles/water_center_N.png`
 - `exp_pack_coin_stack` -> `sprites/pickups/xp_coin_stack.png`
 
 ## Notes
-- Keep original pack `License.txt` files in the repository whenever assets from that pack are used.
-- Update this file in the same commit whenever runtime mappings or source packs change.
+- Keep source pack license files in-repo for any active runtime pack.
+- Update this file in the same commit as runtime asset mapping changes.

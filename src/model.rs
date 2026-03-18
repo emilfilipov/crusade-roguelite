@@ -61,7 +61,6 @@ pub struct Unit {
     pub team: Team,
     pub kind: UnitKind,
     pub level: u32,
-    pub morale_weight: f32,
 }
 
 #[derive(Component, Clone, Copy, Debug)]
@@ -78,6 +77,26 @@ impl Health {
 
 #[derive(Component, Clone, Copy, Debug)]
 pub struct BaseMaxHealth(pub f32);
+
+#[derive(Component, Clone, Copy, Debug)]
+pub struct Morale {
+    pub current: f32,
+    pub max: f32,
+}
+
+impl Morale {
+    pub fn new(max: f32) -> Self {
+        Self { current: max, max }
+    }
+
+    pub fn ratio(self) -> f32 {
+        if self.max <= 0.0 {
+            0.0
+        } else {
+            (self.current / self.max).clamp(0.0, 1.0)
+        }
+    }
+}
 
 #[derive(Component, Clone, Copy, Debug)]
 pub struct Armor(pub f32);
@@ -146,6 +165,13 @@ pub struct RecruitEvent {
 pub struct DamageEvent {
     pub target: Entity,
     pub source_team: Team,
+    pub amount: f32,
+}
+
+#[derive(Event, Clone, Copy, Debug)]
+pub struct UnitDamagedEvent {
+    pub target: Entity,
+    pub team: Team,
     pub amount: f32,
 }
 

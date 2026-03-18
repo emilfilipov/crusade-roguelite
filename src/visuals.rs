@@ -12,7 +12,6 @@ pub struct ArtAssets {
     pub enemy_bandit_raider_dead: Handle<Image>,
     pub banner_upright: Handle<Image>,
     pub banner_dropped: Handle<Image>,
-    pub oasis_water_core: Handle<Image>,
     pub terrain_desert_base_tile_a: Handle<Image>,
     pub exp_pack_coin_stack: Handle<Image>,
 }
@@ -51,8 +50,6 @@ fn load_art_assets(mut assets: ResMut<ArtAssets>, asset_server: Option<Res<Asset
         .load("third_party/kenney_desert-shooter-pack_1.0/PNG/Weapons/Tiles/tile_0018.png");
     assets.banner_dropped = asset_server
         .load("third_party/kenney_desert-shooter-pack_1.0/PNG/Weapons/Tiles/tile_0003.png");
-    assets.oasis_water_core =
-        asset_server.load("third_party/kenney_sketch-desert_1.0/Tiles/water_center_N.png");
     assets.terrain_desert_base_tile_a = asset_server
         .load("third_party/kenney_desert-shooter-pack_1.0/PNG/Tiles/Tiles/tile_0000.png");
     assets.exp_pack_coin_stack = asset_server.load("sprites/pickups/xp_coin_stack.png");

@@ -16,7 +16,7 @@ pub struct UnitStatsConfig {
     pub attack_cooldown_secs: f32,
     pub attack_range: f32,
     pub move_speed: f32,
-    pub morale_weight: f32,
+    pub morale: f32,
     #[serde(default)]
     pub aura_radius: f32,
 }
@@ -36,6 +36,7 @@ pub struct EnemyStatsConfig {
     pub attack_cooldown_secs: f32,
     pub attack_range: f32,
     pub move_speed: f32,
+    pub morale: f32,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -84,9 +85,6 @@ pub struct UpgradesConfigFile {
 pub struct MapConfig {
     pub width: f32,
     pub height: f32,
-    pub oasis_center: [f32; 2],
-    pub oasis_radius: f32,
-    pub oasis_heal_per_second: f32,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -173,6 +171,9 @@ fn validate_unit_stats(unit: &UnitStatsConfig, label: &str) -> Result<()> {
     if unit.move_speed <= 0.0 {
         bail!("{label} move_speed must be > 0");
     }
+    if unit.morale <= 0.0 {
+        bail!("{label} morale must be > 0");
+    }
     Ok(())
 }
 
@@ -196,6 +197,9 @@ fn validate_enemies(config: &EnemiesConfigFile) -> Result<()> {
     }
     if config.bandit_raider.move_speed <= 0.0 {
         bail!("enemy bandit_raider move_speed must be > 0");
+    }
+    if config.bandit_raider.morale <= 0.0 {
+        bail!("enemy bandit_raider morale must be > 0");
     }
     Ok(())
 }
@@ -245,9 +249,6 @@ fn validate_upgrades(config: &UpgradesConfigFile) -> Result<()> {
 fn validate_map(config: &MapConfig) -> Result<()> {
     if config.width <= 0.0 || config.height <= 0.0 {
         bail!("map width and height must be > 0");
-    }
-    if config.oasis_radius <= 0.0 {
-        bail!("oasis_radius must be > 0");
     }
     Ok(())
 }
@@ -313,14 +314,14 @@ mod tests {
             dir,
             "units.json",
             r#"{
-              "commander":{"id":"c","max_hp":10.0,"armor":1.0,"damage":2.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":100.0,"morale_weight":2.0,"aura_radius":10.0},
-              "recruit_infantry_knight":{"id":"r","max_hp":9.0,"armor":1.0,"damage":2.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":90.0,"morale_weight":1.0}
+              "commander":{"id":"c","max_hp":10.0,"armor":1.0,"damage":2.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":100.0,"morale":100.0,"aura_radius":10.0},
+              "recruit_infantry_knight":{"id":"r","max_hp":9.0,"armor":1.0,"damage":2.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":90.0,"morale":90.0}
             }"#,
         );
         write_config(
             dir,
             "enemies.json",
-            r#"{"bandit_raider":{"id":"e","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0}}"#,
+            r#"{"bandit_raider":{"id":"e","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0}}"#,
         );
         write_config(
             dir,
@@ -337,11 +338,7 @@ mod tests {
             "upgrades.json",
             r#"{"upgrades":[{"id":"u","kind":"damage","value":1.0}]}"#,
         );
-        write_config(
-            dir,
-            "map.json",
-            r#"{"width":1000.0,"height":1000.0,"oasis_center":[0.0,0.0],"oasis_radius":20.0,"oasis_heal_per_second":1.0}"#,
-        );
+        write_config(dir, "map.json", r#"{"width":1000.0,"height":1000.0}"#);
         write_config(
             dir,
             "rescue.json",
@@ -371,8 +368,8 @@ mod tests {
             tmp.path(),
             "units.json",
             r#"{
-              "commander":{"id":"c","max_hp":10.0,"armor":1.0,"damage":2.0,"attack_cooldown_secs":-1.0,"attack_range":20.0,"move_speed":100.0,"morale_weight":2.0,"aura_radius":10.0},
-              "recruit_infantry_knight":{"id":"r","max_hp":9.0,"armor":1.0,"damage":2.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":90.0,"morale_weight":1.0}
+              "commander":{"id":"c","max_hp":10.0,"armor":1.0,"damage":2.0,"attack_cooldown_secs":-1.0,"attack_range":20.0,"move_speed":100.0,"morale":100.0,"aura_radius":10.0},
+              "recruit_infantry_knight":{"id":"r","max_hp":9.0,"armor":1.0,"damage":2.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":90.0,"morale":90.0}
             }"#,
         );
 

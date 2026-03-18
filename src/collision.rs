@@ -169,7 +169,6 @@ mod tests {
             team,
             kind,
             level: 1,
-            morale_weight: 1.0,
         }
     }
 

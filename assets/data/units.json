@@ -7,7 +7,7 @@
     "attack_cooldown_secs": 0.9,
     "attack_range": 34.0,
     "move_speed": 170.0,
-    "morale_weight": 2.0,
+    "morale": 120.0,
     "aura_radius": 180.0
   },
   "recruit_infantry_knight": {
@@ -18,6 +18,6 @@
     "attack_cooldown_secs": 1.1,
     "attack_range": 32.0,
     "move_speed": 150.0,
-    "morale_weight": 1.0
+    "morale": 100.0
   }
 }

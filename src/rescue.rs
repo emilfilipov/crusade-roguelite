@@ -151,7 +151,6 @@ fn spawn_rescuable(commands: &mut Commands, position: Vec2, art: &ArtAssets) {
             team: Team::Neutral,
             kind: UnitKind::RescuableInfantry,
             level: 1,
-            morale_weight: 1.0,
         },
         RescuableUnit,
         RescueProgress { elapsed: 0.0 },

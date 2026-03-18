@@ -3,14 +3,22 @@ use bevy::prelude::*;
 use crate::data::GameData;
 use crate::enemies::WaveRuntime;
 use crate::map::MapBounds;
-use crate::model::{FriendlyUnit, GainXpEvent, GameState, SpawnExpPackEvent, StartRunEvent};
+use crate::model::{
+    CommanderUnit, FriendlyUnit, GainXpEvent, GameState, SpawnExpPackEvent, StartRunEvent,
+};
 use crate::upgrades::Progression;
 use crate::visuals::ArtAssets;
+
+const DROP_HOMING_SPEED: f32 = 340.0;
+const DROP_CONSUME_RADIUS: f32 = 16.0;
 
 #[derive(Component, Clone, Copy, Debug)]
 pub struct ExpPack {
     pub xp_value: f32,
 }
+
+#[derive(Component, Clone, Copy, Debug)]
+struct DropInTransitToCommander;
 
 #[derive(Resource, Clone, Debug)]
 struct DropSpawnRuntime {
@@ -39,6 +47,7 @@ impl Plugin for DropsPlugin {
                     spawn_exp_packs_over_time,
                     spawn_exp_packs_from_events,
                     pickup_exp_packs,
+                    transit_drops_to_commander,
                 )
                     .run_if(in_state(GameState::InRun)),
             );
@@ -136,12 +145,12 @@ fn spawn_exp_packs_from_events(
     }
 }
 
+#[allow(clippy::type_complexity)]
 fn pickup_exp_packs(
     mut commands: Commands,
     data: Res<GameData>,
     friendlies: Query<&Transform, With<FriendlyUnit>>,
-    packs: Query<(Entity, &Transform, &ExpPack)>,
-    mut xp_events: EventWriter<GainXpEvent>,
+    packs: Query<(Entity, &Transform), (With<ExpPack>, Without<DropInTransitToCommander>)>,
 ) {
     let friendly_positions: Vec<Vec2> = friendlies
         .iter()
@@ -152,9 +161,38 @@ fn pickup_exp_packs(
     }
 
     let pickup_radius = data.drops.pickup_radius;
-    for (entity, transform, pack) in &packs {
+    for (entity, transform) in &packs {
         let pack_position = transform.translation.truncate();
         if any_friendly_in_pickup_radius(pack_position, &friendly_positions, pickup_radius) {
+            commands.entity(entity).insert(DropInTransitToCommander);
+        }
+    }
+}
+
+#[allow(clippy::type_complexity)]
+fn transit_drops_to_commander(
+    mut commands: Commands,
+    time: Res<Time>,
+    commanders: Query<&Transform, With<CommanderUnit>>,
+    mut packs: Query<
+        (Entity, &ExpPack, &mut Transform),
+        (With<DropInTransitToCommander>, Without<CommanderUnit>),
+    >,
+    mut xp_events: EventWriter<GainXpEvent>,
+) {
+    let Ok(commander_transform) = commanders.get_single() else {
+        return;
+    };
+    let target = commander_transform.translation.truncate();
+    let max_step = DROP_HOMING_SPEED * time.delta_seconds();
+
+    for (entity, pack, mut transform) in &mut packs {
+        let current = transform.translation.truncate();
+        let next = step_towards_target(current, target, max_step);
+        transform.translation.x = next.x;
+        transform.translation.y = next.y;
+
+        if reached_target(next, target, DROP_CONSUME_RADIUS) {
             xp_events.send(GainXpEvent(pack.xp_value));
             commands.entity(entity).despawn_recursive();
         }
@@ -215,11 +253,28 @@ pub fn any_friendly_in_pickup_radius(
         .any(|position| position.distance_squared(drop_position) <= pickup_radius_sq)
 }
 
+pub fn step_towards_target(current: Vec2, target: Vec2, max_step: f32) -> Vec2 {
+    let delta = target - current;
+    let distance = delta.length();
+    if distance <= max_step || distance <= 0.0001 {
+        target
+    } else {
+        current + delta / distance * max_step
+    }
+}
+
+pub fn reached_target(position: Vec2, target: Vec2, radius: f32) -> bool {
+    position.distance_squared(target) <= radius * radius
+}
+
 #[cfg(test)]
 mod tests {
     use bevy::prelude::Vec2;
 
-    use crate::drops::{any_friendly_in_pickup_radius, drop_spawn_position, scaled_pack_xp};
+    use crate::drops::{
+        any_friendly_in_pickup_radius, drop_spawn_position, reached_target, scaled_pack_xp,
+        step_towards_target,
+    };
     use crate::map::MapBounds;
 
     #[test]
@@ -261,5 +316,20 @@ mod tests {
         assert!(later_level > early);
         assert!(both > later_wave);
         assert!(both > later_level);
+    }
+
+    #[test]
+    fn step_towards_target_never_overshoots() {
+        let next = step_towards_target(Vec2::ZERO, Vec2::new(10.0, 0.0), 3.0);
+        assert!((next.x - 3.0).abs() < 0.001);
+
+        let arrive = step_towards_target(Vec2::new(9.0, 0.0), Vec2::new(10.0, 0.0), 3.0);
+        assert_eq!(arrive, Vec2::new(10.0, 0.0));
+    }
+
+    #[test]
+    fn reached_target_uses_radius() {
+        assert!(reached_target(Vec2::new(1.0, 1.0), Vec2::ZERO, 2.0));
+        assert!(!reached_target(Vec2::new(3.0, 0.0), Vec2::ZERO, 2.0));
     }
 }

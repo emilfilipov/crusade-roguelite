@@ -1,11 +1,12 @@
 use bevy::prelude::*;
 
+use crate::banner::BannerMovementPenalty;
 use crate::data::GameData;
 use crate::map::MapBounds;
 use crate::model::{
     Armor, AttackCooldown, AttackProfile, BaseMaxHealth, ColliderRadius, CommanderUnit, EnemyUnit,
-    FriendlyUnit, GameState, Health, MoveSpeed, PlayerControlled, RecruitEvent, RescuableUnit,
-    StartRunEvent, Team, Unit, UnitDiedEvent, UnitKind,
+    FriendlyUnit, GameState, Health, Morale, MoveSpeed, PlayerControlled, RecruitEvent,
+    RescuableUnit, StartRunEvent, Team, Unit, UnitDiedEvent, UnitKind,
 };
 use crate::visuals::ArtAssets;
 
@@ -67,13 +68,13 @@ fn spawn_commander(commands: &mut Commands, data: &GameData, art: &ArtAssets) ->
                 team: Team::Friendly,
                 kind: UnitKind::Commander,
                 level: 1,
-                morale_weight: cfg.morale_weight,
             },
             CommanderUnit,
             FriendlyUnit,
             PlayerControlled,
             Health::new(cfg.max_hp),
             BaseMaxHealth(cfg.max_hp),
+            Morale::new(cfg.morale),
             Armor(cfg.armor),
             ColliderRadius(14.0),
             AttackProfile {
@@ -113,11 +114,11 @@ fn spawn_recruit(
                 team: Team::Friendly,
                 kind: UnitKind::InfantryKnight,
                 level: 1,
-                morale_weight: cfg.morale_weight,
             },
             FriendlyUnit,
             Health::new(cfg.max_hp),
             BaseMaxHealth(cfg.max_hp),
+            Morale::new(cfg.morale),
             Armor(cfg.armor),
             ColliderRadius(12.0),
             AttackProfile {
@@ -148,6 +149,7 @@ fn commander_movement(
     time: Res<Time>,
     keyboard: Option<Res<ButtonInput<KeyCode>>>,
     bounds: Option<Res<MapBounds>>,
+    banner_penalty: Option<Res<BannerMovementPenalty>>,
     mut commanders: Query<
         (&MoveSpeed, &mut Transform),
         (With<PlayerControlled>, With<CommanderUnit>),
@@ -175,8 +177,12 @@ fn commander_movement(
     }
 
     let direction = axis.normalize();
+    let speed_multiplier = banner_penalty
+        .as_ref()
+        .map(|penalty| penalty.friendly_speed_multiplier)
+        .unwrap_or(1.0);
     for (move_speed, mut transform) in &mut commanders {
-        let delta = direction * move_speed.0 * time.delta_seconds();
+        let delta = direction * move_speed.0 * speed_multiplier * time.delta_seconds();
         transform.translation.x += delta.x;
         transform.translation.y += delta.y;
         if let Some(map_bounds) = &bounds {

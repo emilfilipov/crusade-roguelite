@@ -1,13 +1,16 @@
 use bevy::prelude::*;
 
-use crate::banner::BannerCombatModifiers;
 use crate::formation::FormationModifiers;
 use crate::model::{
-    AttackCooldown, AttackProfile, DamageEvent, EnemyUnit, GameState, GlobalBuffs, Health,
-    SpawnExpPackEvent, Team, Unit, UnitDiedEvent, UnitKind,
+    AttackCooldown, AttackProfile, DamageEvent, EnemyUnit, GameState, GlobalBuffs, Health, Morale,
+    SpawnExpPackEvent, Team, Unit, UnitDamagedEvent, UnitDiedEvent, UnitKind,
 };
 use crate::morale::CohesionCombatModifiers;
 use crate::upgrades::Progression;
+
+pub const MIN_FRIENDLY_COMBAT_MULTIPLIER: f32 = 0.55;
+const LOW_MORALE_THRESHOLD: f32 = 0.5;
+const LOW_MORALE_MIN_MULTIPLIER: f32 = 0.75;
 
 pub struct CombatPlugin;
 
@@ -31,21 +34,28 @@ fn tick_attack_timers(
     cohesion_mods: Res<CohesionCombatModifiers>,
     progression: Option<Res<Progression>>,
     global_buffs: Option<Res<GlobalBuffs>>,
-    mut attackers: Query<(&Unit, &mut AttackCooldown)>,
+    mut attackers: Query<(&Unit, Option<&Morale>, &mut AttackCooldown)>,
 ) {
     let level_multiplier = progression
         .as_ref()
         .map(|value| commander_level_combat_multiplier(value.level))
         .unwrap_or(1.0);
-    for (unit, mut cooldown) in &mut attackers {
-        let mut speed_scale = 1.0;
-        if unit.team == Team::Friendly {
-            speed_scale *= cohesion_mods.attack_speed_multiplier;
-            speed_scale *= level_multiplier;
+    for (unit, morale, mut cooldown) in &mut attackers {
+        let morale_scale = morale
+            .copied()
+            .map(|value| morale_effect_multiplier(value.ratio()))
+            .unwrap_or(1.0);
+
+        let speed_scale = if unit.team == Team::Friendly {
+            let mut value = cohesion_mods.attack_speed_multiplier * morale_scale * level_multiplier;
             if let Some(buff) = &global_buffs {
-                speed_scale *= buff.attack_speed_multiplier;
+                value *= buff.attack_speed_multiplier;
             }
-        }
+            value.max(MIN_FRIENDLY_COMBAT_MULTIPLIER)
+        } else {
+            morale_scale
+        };
+
         cooldown.0.tick(std::time::Duration::from_secs_f32(
             time.delta_seconds() * speed_scale,
         ));
@@ -53,16 +63,17 @@ fn tick_attack_timers(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::type_complexity)]
 fn emit_damage_events(
     mut damage_events: EventWriter<DamageEvent>,
     formation_mods: Res<FormationModifiers>,
     cohesion_mods: Res<CohesionCombatModifiers>,
-    banner_mods: Res<BannerCombatModifiers>,
     progression: Option<Res<Progression>>,
     global_buffs: Option<Res<GlobalBuffs>>,
     mut attackers: Query<(
         Entity,
         &Unit,
+        Option<&Morale>,
         &Transform,
         &AttackProfile,
         &mut AttackCooldown,
@@ -95,7 +106,9 @@ fn emit_damage_events(
         unit.team == Team::Friendly && unit.kind != UnitKind::Commander && *health > 0.0
     });
 
-    for (_, attacker_unit, attacker_transform, attack_profile, mut attack_cd) in &mut attackers {
+    for (_, attacker_unit, attacker_morale, attacker_transform, attack_profile, mut attack_cd) in
+        &mut attackers
+    {
         if !attack_cd.0.finished() {
             continue;
         }
@@ -133,20 +146,26 @@ fn emit_damage_events(
 
         if let Some((target_entity, _, armor)) = closest_target {
             attack_cd.0.reset();
-            let base_damage = attack_profile.damage;
-            let damage = compute_damage(
-                base_damage,
-                armor,
-                attacker_unit.team,
-                formation_mods.offense_multiplier,
-                cohesion_mods.damage_multiplier,
-                banner_mods.attack_multiplier,
-                global_buffs
-                    .as_ref()
-                    .map(|buff| buff.damage_multiplier)
-                    .unwrap_or(1.0)
-                    * level_multiplier,
-            );
+            let morale_multiplier = attacker_morale
+                .copied()
+                .map(|value| morale_effect_multiplier(value.ratio()))
+                .unwrap_or(1.0);
+            let outgoing_multiplier = if attacker_unit.team == Team::Friendly {
+                friendly_outgoing_multiplier(
+                    formation_mods.offense_multiplier,
+                    cohesion_mods.damage_multiplier,
+                    global_buffs
+                        .as_ref()
+                        .map(|buff| buff.damage_multiplier)
+                        .unwrap_or(1.0),
+                    level_multiplier,
+                    morale_multiplier,
+                )
+            } else {
+                morale_multiplier
+            };
+
+            let damage = compute_damage(attack_profile.damage, armor, outgoing_multiplier);
 
             damage_events.send(DamageEvent {
                 target: target_entity,
@@ -175,32 +194,46 @@ pub fn commander_level_combat_multiplier(level: u32) -> f32 {
     1.0 + level.saturating_sub(1) as f32 * 0.01
 }
 
-pub fn compute_damage(
-    base_damage: f32,
-    armor: f32,
-    source_team: Team,
+pub fn morale_effect_multiplier(morale_ratio: f32) -> f32 {
+    if morale_ratio >= LOW_MORALE_THRESHOLD {
+        return 1.0;
+    }
+    let normalized = (morale_ratio / LOW_MORALE_THRESHOLD).clamp(0.0, 1.0);
+    LOW_MORALE_MIN_MULTIPLIER + normalized * (1.0 - LOW_MORALE_MIN_MULTIPLIER)
+}
+
+pub fn friendly_outgoing_multiplier(
     formation_offense: f32,
     cohesion_damage_multiplier: f32,
-    banner_attack_multiplier: f32,
     global_damage_multiplier: f32,
+    commander_level_multiplier: f32,
+    morale_multiplier: f32,
 ) -> f32 {
-    let mut scaled = base_damage;
-    if source_team == Team::Friendly {
-        scaled *= formation_offense
-            * cohesion_damage_multiplier
-            * banner_attack_multiplier
-            * global_damage_multiplier;
-    }
-    (scaled - armor).max(1.0)
+    (formation_offense
+        * cohesion_damage_multiplier
+        * global_damage_multiplier
+        * commander_level_multiplier
+        * morale_multiplier)
+        .max(MIN_FRIENDLY_COMBAT_MULTIPLIER)
+}
+
+pub fn compute_damage(base_damage: f32, armor: f32, outgoing_multiplier: f32) -> f32 {
+    (base_damage * outgoing_multiplier - armor).max(1.0)
 }
 
 fn apply_damage_events(
     mut damage_events: EventReader<DamageEvent>,
-    mut health_query: Query<&mut Health>,
+    mut damaged_events: EventWriter<UnitDamagedEvent>,
+    mut health_query: Query<(&mut Health, &Unit)>,
 ) {
     for event in damage_events.read() {
-        if let Ok(mut health) = health_query.get_mut(event.target) {
+        if let Ok((mut health, unit)) = health_query.get_mut(event.target) {
             health.current -= event.amount;
+            damaged_events.send(UnitDamagedEvent {
+                target: event.target,
+                team: unit.team,
+                amount: event.amount,
+            });
         }
     }
 }
@@ -234,19 +267,30 @@ fn _satisfy_marker(_enemy: Option<EnemyUnit>) {}
 
 #[cfg(test)]
 mod tests {
-    use crate::combat::{commander_level_combat_multiplier, compute_damage, enemy_target_allowed};
+    use crate::combat::{
+        commander_level_combat_multiplier, compute_damage, enemy_target_allowed,
+        friendly_outgoing_multiplier, morale_effect_multiplier,
+    };
     use crate::model::{Team, UnitKind};
 
     #[test]
     fn damage_formula_respects_armor_floor() {
-        let damage = compute_damage(3.0, 10.0, Team::Friendly, 1.0, 1.0, 1.0, 1.0);
+        let damage = compute_damage(3.0, 10.0, 1.0);
         assert_eq!(damage, 1.0);
     }
 
     #[test]
-    fn damage_formula_applies_multipliers_for_friendlies() {
-        let damage = compute_damage(10.0, 0.0, Team::Friendly, 1.1, 0.9, 0.8, 1.2);
-        assert!((damage - 9.504).abs() < 0.01);
+    fn low_morale_scales_down_to_minimum_multiplier() {
+        assert!((morale_effect_multiplier(1.0) - 1.0).abs() < 0.0001);
+        assert!((morale_effect_multiplier(0.5) - 1.0).abs() < 0.0001);
+        assert!((morale_effect_multiplier(0.25) - 0.875).abs() < 0.0001);
+        assert!((morale_effect_multiplier(0.0) - 0.75).abs() < 0.0001);
+    }
+
+    #[test]
+    fn friendly_multiplier_has_floor() {
+        let multiplier = friendly_outgoing_multiplier(0.6, 0.7, 0.8, 0.9, 0.75);
+        assert!((multiplier - 0.55).abs() < 0.0001);
     }
 
     #[test]
