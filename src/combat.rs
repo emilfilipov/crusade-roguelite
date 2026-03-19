@@ -1,5 +1,6 @@
 use bevy::prelude::*;
 
+use crate::data::GameData;
 use crate::formation::FormationModifiers;
 use crate::model::{
     AttackCooldown, AttackProfile, DamageEvent, EnemyUnit, GameState, GlobalBuffs, Health, Morale,
@@ -12,6 +13,8 @@ pub const MIN_FRIENDLY_COMBAT_MULTIPLIER: f32 = 0.55;
 const LOW_MORALE_THRESHOLD: f32 = 0.5;
 const LOW_MORALE_MIN_MULTIPLIER: f32 = 0.75;
 const ENEMY_DROP_PICKUP_DELAY_SECS: f32 = 0.9;
+const INSIDE_FORMATION_DAMAGE_MULTIPLIER: f32 = 1.2;
+const FORMATION_BOUNDS_PADDING_SLOTS: f32 = 0.35;
 
 pub struct CombatPlugin;
 
@@ -67,6 +70,7 @@ fn tick_attack_timers(
 #[allow(clippy::type_complexity)]
 fn emit_damage_events(
     mut damage_events: EventWriter<DamageEvent>,
+    data: Res<GameData>,
     formation_mods: Res<FormationModifiers>,
     cohesion_mods: Res<CohesionCombatModifiers>,
     progression: Option<Res<Progression>>,
@@ -106,6 +110,7 @@ fn emit_damage_events(
     let has_non_commander_friendlies = target_snapshot.iter().any(|(_, unit, _, health, _)| {
         unit.team == Team::Friendly && unit.kind != UnitKind::Commander && *health > 0.0
     });
+    let formation_context = friendly_formation_context(&target_snapshot);
 
     for (_, attacker_unit, attacker_morale, attacker_transform, attack_profile, mut attack_cd) in
         &mut attackers
@@ -121,7 +126,7 @@ fn emit_damage_events(
             Team::Neutral => continue,
         };
 
-        let mut closest_target: Option<(Entity, f32, f32)> = None;
+        let mut closest_target: Option<(Entity, f32, f32, Vec2, UnitKind)> = None;
         for (target_entity, target_unit, target_pos, target_health, target_armor) in
             &target_snapshot
         {
@@ -137,22 +142,28 @@ fn emit_damage_events(
             }
             let dist_sq = attacker_position.distance_squared(*target_pos);
             if dist_sq <= attack_profile.range * attack_profile.range {
-                let candidate = (*target_entity, dist_sq, *target_armor);
+                let candidate = (
+                    *target_entity,
+                    dist_sq,
+                    *target_armor,
+                    *target_pos,
+                    target_unit.kind,
+                );
                 match closest_target {
-                    Some((_, best_dist, _)) if dist_sq >= best_dist => {}
+                    Some((_, best_dist, _, _, _)) if dist_sq >= best_dist => {}
                     _ => closest_target = Some(candidate),
                 }
             }
         }
 
-        if let Some((target_entity, _, armor)) = closest_target {
+        if let Some((target_entity, _, armor, target_position, target_kind)) = closest_target {
             attack_cd.0.reset();
             let morale_multiplier = attacker_morale
                 .copied()
                 .map(|value| morale_effect_multiplier(value.ratio()))
                 .unwrap_or(1.0);
             let outgoing_multiplier = if attacker_unit.team == Team::Friendly {
-                friendly_outgoing_multiplier(
+                let base = friendly_outgoing_multiplier(
                     formation_mods.offense_multiplier,
                     cohesion_mods.damage_multiplier,
                     global_buffs
@@ -161,7 +172,14 @@ fn emit_damage_events(
                         .unwrap_or(1.0),
                     level_multiplier,
                     morale_multiplier,
-                )
+                );
+                let inside_multiplier = inside_formation_damage_multiplier(
+                    &formation_context,
+                    target_position,
+                    target_kind,
+                    data.formations.square.slot_spacing,
+                );
+                base * inside_multiplier
             } else {
                 morale_multiplier
             };
@@ -222,6 +240,73 @@ pub fn compute_damage(base_damage: f32, armor: f32, outgoing_multiplier: f32) ->
     (base_damage * outgoing_multiplier - armor).max(1.0)
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct FriendlyFormationContext {
+    pub commander_position: Vec2,
+    pub recruit_count: usize,
+}
+
+pub fn friendly_formation_context(
+    targets: &[(Entity, Unit, Vec2, f32, f32)],
+) -> Option<FriendlyFormationContext> {
+    let commander_position = targets.iter().find_map(|(_, unit, position, health, _)| {
+        if unit.team == Team::Friendly && unit.kind == UnitKind::Commander && *health > 0.0 {
+            Some(*position)
+        } else {
+            None
+        }
+    })?;
+    let recruit_count = targets
+        .iter()
+        .filter(|(_, unit, _, health, _)| {
+            unit.team == Team::Friendly && unit.kind != UnitKind::Commander && *health > 0.0
+        })
+        .count();
+    Some(FriendlyFormationContext {
+        commander_position,
+        recruit_count,
+    })
+}
+
+pub fn inside_formation_damage_multiplier(
+    formation_context: &Option<FriendlyFormationContext>,
+    target_position: Vec2,
+    target_kind: UnitKind,
+    slot_spacing: f32,
+) -> f32 {
+    let Some(context) = formation_context else {
+        return 1.0;
+    };
+    if context.recruit_count == 0 || target_kind != UnitKind::EnemyBanditRaider {
+        return 1.0;
+    }
+    if inside_square_formation_bounds(
+        context.commander_position,
+        target_position,
+        context.recruit_count,
+        slot_spacing,
+    ) {
+        INSIDE_FORMATION_DAMAGE_MULTIPLIER
+    } else {
+        1.0
+    }
+}
+
+pub fn inside_square_formation_bounds(
+    commander_position: Vec2,
+    target_position: Vec2,
+    recruit_count: usize,
+    slot_spacing: f32,
+) -> bool {
+    if recruit_count == 0 || slot_spacing <= 0.0 {
+        return false;
+    }
+    let side = ((recruit_count + 1) as f32).sqrt().ceil();
+    let half_extent = ((side - 1.0) * 0.5 + FORMATION_BOUNDS_PADDING_SLOTS) * slot_spacing;
+    let delta = target_position - commander_position;
+    delta.x.abs() <= half_extent && delta.y.abs() <= half_extent
+}
+
 fn apply_damage_events(
     mut damage_events: EventReader<DamageEvent>,
     mut damaged_events: EventWriter<UnitDamagedEvent>,
@@ -270,9 +355,13 @@ fn _satisfy_marker(_enemy: Option<EnemyUnit>) {}
 
 #[cfg(test)]
 mod tests {
+    use bevy::prelude::{Entity, Vec2};
+
     use crate::combat::{
-        commander_level_combat_multiplier, compute_damage, enemy_target_allowed,
-        friendly_outgoing_multiplier, morale_effect_multiplier,
+        FriendlyFormationContext, commander_level_combat_multiplier, compute_damage,
+        enemy_target_allowed, friendly_formation_context, friendly_outgoing_multiplier,
+        inside_formation_damage_multiplier, inside_square_formation_bounds,
+        morale_effect_multiplier,
     };
     use crate::model::{Team, UnitKind};
 
@@ -319,5 +408,79 @@ mod tests {
     fn commander_level_multiplier_gains_one_percent_per_level() {
         assert!((commander_level_combat_multiplier(1) - 1.0).abs() < 0.0001);
         assert!((commander_level_combat_multiplier(8) - 1.07).abs() < 0.0001);
+    }
+
+    #[test]
+    fn enemy_inside_formation_gets_damage_bonus_multiplier() {
+        let context = Some(FriendlyFormationContext {
+            commander_position: Vec2::ZERO,
+            recruit_count: 9,
+        });
+        let inside = inside_formation_damage_multiplier(
+            &context,
+            Vec2::new(20.0, 15.0),
+            UnitKind::EnemyBanditRaider,
+            30.0,
+        );
+        let outside = inside_formation_damage_multiplier(
+            &context,
+            Vec2::new(220.0, 0.0),
+            UnitKind::EnemyBanditRaider,
+            30.0,
+        );
+        assert!((inside - 1.2).abs() < 0.0001);
+        assert!((outside - 1.0).abs() < 0.0001);
+    }
+
+    #[test]
+    fn formation_bounds_check_requires_recruits() {
+        assert!(!inside_square_formation_bounds(
+            Vec2::ZERO,
+            Vec2::new(1.0, 1.0),
+            0,
+            30.0
+        ));
+    }
+
+    #[test]
+    fn formation_context_extracts_commander_and_recruit_count() {
+        let targets = vec![
+            (
+                Entity::from_raw(1),
+                crate::model::Unit {
+                    team: Team::Friendly,
+                    kind: UnitKind::Commander,
+                    level: 1,
+                },
+                Vec2::new(10.0, 20.0),
+                100.0,
+                0.0,
+            ),
+            (
+                Entity::from_raw(2),
+                crate::model::Unit {
+                    team: Team::Friendly,
+                    kind: UnitKind::InfantryKnight,
+                    level: 1,
+                },
+                Vec2::new(40.0, 20.0),
+                80.0,
+                0.0,
+            ),
+            (
+                Entity::from_raw(3),
+                crate::model::Unit {
+                    team: Team::Enemy,
+                    kind: UnitKind::EnemyBanditRaider,
+                    level: 1,
+                },
+                Vec2::new(90.0, 20.0),
+                60.0,
+                0.0,
+            ),
+        ];
+        let context = friendly_formation_context(&targets).expect("formation context");
+        assert_eq!(context.commander_position, Vec2::new(10.0, 20.0));
+        assert_eq!(context.recruit_count, 1);
     }
 }

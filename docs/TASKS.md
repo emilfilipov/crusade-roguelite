@@ -315,6 +315,27 @@
   - Escape has effect only during `InRun`.
   - Pausing shows centered menu with required button order and behavior.
 
+## CRU-044 - Enemy-In-Formation Damage Vulnerability
+- Status: `DONE`
+- Type: `Gameplay/Combat`
+- Priority: `P1`
+- Depends on: none
+- Goal: Increase friendly damage against enemies that are inside the current player formation footprint.
+- Context:
+  - Intended to reward aggressive melee positioning and tighter formation play.
+  - Must be deterministic and testable, with no effect when commander is alone.
+- Implementation:
+  1. Added formation-context extraction (commander position + active recruit count) in combat target snapshot flow.
+  2. Added square-formation bounds helper and inside-bounds check.
+  3. Applied `1.2x` multiplier to friendly outgoing damage when enemy target is inside those bounds.
+- Unit Tests Required:
+  - Formation context extraction test.
+  - Inside-formation multiplier test (`1.2` inside / `1.0` outside).
+  - Bounds helper behavior test for zero-recruit case.
+- Acceptance Criteria:
+  - Enemies inside formation take 20% increased incoming friendly damage.
+  - Commander-only state does not receive this bonus.
+
 ---
 
 ## Task Card Template

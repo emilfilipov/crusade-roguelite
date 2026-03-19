@@ -5,6 +5,7 @@ Single-file technical reference for current MVP runtime behavior.
 Use this for entity/component/system lookup without scanning all source files.
 
 ## Latest Update (2026-03-19)
+- Added melee-composition incentive: enemies inside the friendly formation footprint take `+20%` damage.
 - Removed decorative floor foliage overlay; battlefield floor now renders as pure sand tiles only.
 - Switched foliage overlay to transparent detail tile to remove opaque square artifacts on the floor.
 - Enemy waves now spawn as staggered batches at pseudo-random positions across the playable map (not border ring-only).
@@ -192,6 +193,14 @@ Applied to:
 Friendly combined outgoing multiplier has lower clamp:
 - minimum `0.55`
 
+### Enemy-In-Formation Vulnerability Bonus (`src/combat.rs`)
+- If an enemy is inside the friendly square-formation footprint, friendly outgoing damage gets multiplier `1.2`.
+- Formation footprint is approximated from:
+  - commander position
+  - current recruit count
+  - square slot spacing (`formations.square.slot_spacing`)
+- If commander has no recruits, bonus does not apply.
+
 ### Commander XP Requirement (`src/upgrades.rs`)
 - Bracketed exponential scaling:
   - `base = 30`
@@ -278,6 +287,7 @@ Friendly combined outgoing multiplier has lower clamp:
 ### `combat.rs`
 - attack cooldown tick
 - in-range targeting + damage emit
+- enemy-in-formation vulnerability check (`+20%` friendly damage when inside formation bounds)
 - damage apply + `UnitDamagedEvent`
 - death resolve + drop spawn events
 
