@@ -184,6 +184,7 @@ pub struct UnitDamagedEvent {
 pub struct UnitDiedEvent {
     pub team: Team,
     pub kind: UnitKind,
+    pub max_health: f32,
     pub world_position: Vec2,
 }
 

@@ -40,6 +40,8 @@ const ENEMY_BASE_SPEED_MULTIPLIER: f32 = 0.72;
 const WAVE_DURATION_SECS: f32 = 30.0;
 const STOP_FACTOR: f32 = 0.82;
 const RESUME_FACTOR: f32 = 0.98;
+const SCRIPTED_WAVE_COUNT_GROWTH: f32 = 1.18;
+const INFINITE_WAVE_COUNT_GROWTH: f32 = 1.22;
 
 pub struct EnemyPlugin;
 
@@ -84,9 +86,11 @@ fn spawn_waves(
         if wave_runtime.elapsed < next_wave.time_secs {
             break;
         }
+        let scripted_index = wave_runtime.next_wave_index as u32;
+        let count = scripted_wave_enemy_count(next_wave.count, scripted_index);
         spawn_enemy_wave(
             &mut commands,
-            next_wave.count,
+            count,
             &data,
             &art,
             bounds.as_deref().copied(),
@@ -199,7 +203,15 @@ pub fn enemy_move_speed(base_speed: f32) -> f32 {
 }
 
 pub fn infinite_wave_enemy_count(base_count: u32, procedural_wave_index: u32) -> u32 {
-    base_count.saturating_add((procedural_wave_index.saturating_add(1)) * 4)
+    let exponent = (procedural_wave_index.saturating_add(1)) as f32;
+    let scaled = base_count as f32 * INFINITE_WAVE_COUNT_GROWTH.powf(exponent);
+    scaled.round().max(base_count as f32 + 1.0) as u32
+}
+
+pub fn scripted_wave_enemy_count(configured_count: u32, scripted_wave_index: u32) -> u32 {
+    let exponent = scripted_wave_index as f32;
+    let scaled = configured_count as f32 * SCRIPTED_WAVE_COUNT_GROWTH.powf(exponent);
+    scaled.round().max(configured_count as f32) as u32
 }
 
 pub fn infinite_wave_stat_multiplier(procedural_wave_index: u32) -> f32 {
@@ -373,7 +385,7 @@ mod tests {
     use crate::enemies::{
         BanditVisualState, chase_target_positions, choose_nearest, decide_bandit_visual_state,
         enemy_move_speed, infinite_wave_enemy_count, infinite_wave_interval_secs,
-        infinite_wave_stat_multiplier, should_move_towards_target,
+        infinite_wave_stat_multiplier, scripted_wave_enemy_count, should_move_towards_target,
     };
 
     #[test]
@@ -419,8 +431,10 @@ mod tests {
 
     #[test]
     fn infinite_wave_progression_scales_count_and_stats() {
-        assert_eq!(infinite_wave_enemy_count(6, 0), 10);
-        assert_eq!(infinite_wave_enemy_count(6, 4), 26);
+        assert_eq!(infinite_wave_enemy_count(6, 0), 7);
+        assert_eq!(infinite_wave_enemy_count(6, 4), 16);
+        assert_eq!(scripted_wave_enemy_count(8, 0), 8);
+        assert!(scripted_wave_enemy_count(12, 4) > scripted_wave_enemy_count(12, 1));
         assert_eq!(infinite_wave_interval_secs(), 30.0);
         assert!((infinite_wave_stat_multiplier(0) - 1.08).abs() < 0.001);
         assert!(infinite_wave_stat_multiplier(5) > infinite_wave_stat_multiplier(2));

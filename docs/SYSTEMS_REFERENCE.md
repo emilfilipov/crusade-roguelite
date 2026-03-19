@@ -6,9 +6,10 @@ Use this for entity/component/system lookup without scanning all source files.
 
 ## Latest Update (2026-03-19)
 - Added enemy chase hysteresis and removed unit position snapping to reduce movement jitter.
-- Added delayed enemy XP drops (`0.45s` pickup lock) before homing can start.
+- Added delayed enemy XP drops (`0.9s` pickup lock) before homing can start.
 - Ambient XP packs now spawn around commander position for better visibility.
 - XP homing speed now scales from commander base speed and stays slightly faster.
+- Fixed Windows installer asset coverage for runtime-loaded art (`assets/sprites` + `oga_ishtar` pack).
 - Enabled `CollisionPlugin` in app wiring (enemy collision now active).
 - Added `GameOver` overlay flow with `Restart` and `Main Menu` actions.
 - Rebuilt map floor rendering into tiled desert ground + sparse foliage overlay.
@@ -89,9 +90,12 @@ Scripted waves:
 4. `t=90`, `count=20`
 5. `t=120`, `count=24`
 
+Runtime scripted count scaling:
+- Effective count per scripted wave: `round(configured_count * 1.18^wave_index)`
+
 Procedural continuation:
 - Interval: 30s
-- Count: `base + (index+1)*4`
+- Count: `round(base * 1.22^(index+1))`
 - Stat scale: `1.0 + (index+1)*0.08`
 
 ### `drops.json`
@@ -179,6 +183,15 @@ Applied to:
 Friendly combined outgoing multiplier has lower clamp:
 - minimum `0.55`
 
+### Commander XP Requirement (`src/upgrades.rs`)
+- Bracketed exponential scaling:
+  - `base = 30`
+  - bracket size: `10 levels`
+  - bracket multiplier: `5.5^bracket_index`
+  - intra-bracket multiplier: `1.18^within_bracket_index`
+- Formula:
+  - `xp_required(level) = 30 * 5.5^bracket * 1.18^within_bracket`
+
 ### Cohesion Tier Table (`src/morale.rs`)
 - `>=80`: damage `1.08`, attack speed `1.08`, defense `1.05`
 - `60-79`: neutral `1.0`
@@ -187,12 +200,12 @@ Friendly combined outgoing multiplier has lower clamp:
 - `<20`: damage/attack speed `0.7`, defense `0.8`, `collapse_risk=true`
 
 ### Cohesion Event Tuning
-- Friendly hit: small cohesion loss
-- Enemy kill: small cohesion gain
-- Friendly retinue death: small cohesion loss
+- Friendly damage taken: cohesion and army morale loss scale with post-mitigation damage.
+- Enemy kill rewards (friendly morale/cohesion gains) trigger on every 3rd enemy death only.
+- Friendly death: larger cohesion/morale loss scaled by fallen unit max HP (commander death penalty multiplier).
 - Low-morale retinue pressure:
-  - if `>=50%` of retinue below 50% morale: cohesion drains over time
-  - else cohesion slowly recovers
+  - if `>=50%` of retinue below 50% morale: cohesion drains at `3.0/s`
+  - else cohesion recovers at `0.25/s`
 
 ## Banner Loop (`src/banner.rs`)
 - Auto-drop trigger: cohesion `<20` (with anti-redrop grace check)
@@ -209,7 +222,7 @@ Friendly combined outgoing multiplier has lower clamp:
 
 ## Drop Flow (`src/drops.rs`)
 1. Spawn ambient packs + event packs (enemy death events).
-2. Enemy-death drops spawn with short pickup delay before any homing can start.
+2. Enemy-death drops spawn with `0.9s` pickup delay before any homing can start.
 3. Any friendly within pickup radius marks pack as `DropInTransitToCommander` (after delay).
 4. Transit pack homes to commander each frame at speed slightly above commander base speed.
 5. On commander contact radius, pack is consumed and effect is applied (`GainXpEvent`).
@@ -287,4 +300,3 @@ Friendly combined outgoing multiplier has lower clamp:
 ## Current Hooks / Known Gaps
 - Commander aura fields/upgrades are still hooks only (`aura_radius`, `commander_aura_bonus` not yet driving active aura effects).
 - `FormationModifiers.defense_multiplier` and anti-cavalry values are still not fully wired into incoming damage resolution.
-- Collision plugin remains unregistered in app wiring.

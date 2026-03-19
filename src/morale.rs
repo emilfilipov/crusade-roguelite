@@ -7,14 +7,28 @@ use crate::model::{
 
 const STARTING_COHESION: f32 = 100.0;
 const LOW_MORALE_RATIO_THRESHOLD: f32 = 0.5;
-const LOW_MORALE_COHESION_DRAIN_PER_SEC: f32 = 2.0;
-const STABLE_COHESION_RECOVERY_PER_SEC: f32 = 0.7;
-const DAMAGE_TO_MORALE_FACTOR: f32 = 0.18;
-const FRIENDLY_DAMAGE_COHESION_LOSS: f32 = 0.04;
-const ENEMY_KILL_COHESION_GAIN: f32 = 0.45;
-const RETINUE_DEATH_COHESION_LOSS: f32 = 0.3;
-const ENEMY_KILL_MORALE_GAIN: f32 = 1.2;
-const ALLY_DEATH_MORALE_LOSS: f32 = 0.8;
+const LOW_MORALE_COHESION_DRAIN_PER_SEC: f32 = 3.0;
+const STABLE_COHESION_RECOVERY_PER_SEC: f32 = 0.25;
+const DAMAGE_TO_UNIT_MORALE_FACTOR: f32 = 0.32;
+const DAMAGE_TO_UNIT_MORALE_MIN: f32 = 0.35;
+const FRIENDLY_DAMAGE_COHESION_FACTOR: f32 = 0.12;
+const FRIENDLY_DAMAGE_ARMY_MORALE_FACTOR: f32 = 0.06;
+const FRIENDLY_DAMAGE_ARMY_MORALE_MIN: f32 = 0.12;
+const FRIENDLY_DEATH_COHESION_FACTOR: f32 = 0.04;
+const FRIENDLY_DEATH_COHESION_MIN: f32 = 2.5;
+const FRIENDLY_DEATH_ARMY_MORALE_FACTOR: f32 = 0.05;
+const FRIENDLY_DEATH_ARMY_MORALE_MIN: f32 = 3.0;
+const COMMANDER_DEATH_PENALTY_MULTIPLIER: f32 = 1.6;
+const ENEMY_KILL_REWARD_EVERY_N: u32 = 3;
+const ENEMY_KILL_COHESION_GAIN: f32 = 1.0;
+const ENEMY_KILL_MORALE_GAIN: f32 = 2.0;
+const ENEMY_DEATH_MORALE_LOSS: f32 = 0.8;
+const ENEMY_MORALE_GAIN_ON_FRIENDLY_DEATH: f32 = 1.2;
+
+#[derive(Resource, Clone, Copy, Debug, Default)]
+struct EnemyKillRewardCounter {
+    enemy_deaths: u32,
+}
 
 #[derive(Resource, Clone, Copy, Debug)]
 pub struct Cohesion {
@@ -54,6 +68,7 @@ impl Plugin for MoralePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Cohesion>()
             .init_resource::<CohesionCombatModifiers>()
+            .init_resource::<EnemyKillRewardCounter>()
             .add_systems(Update, reset_morale_state_on_run_start)
             .add_systems(
                 Update,
@@ -72,6 +87,7 @@ fn reset_morale_state_on_run_start(
     mut start_events: EventReader<StartRunEvent>,
     mut cohesion: ResMut<Cohesion>,
     mut modifiers: ResMut<CohesionCombatModifiers>,
+    mut kill_counter: ResMut<EnemyKillRewardCounter>,
 ) {
     if start_events.is_empty() {
         return;
@@ -79,6 +95,7 @@ fn reset_morale_state_on_run_start(
     for _ in start_events.read() {}
     cohesion.value = STARTING_COHESION;
     *modifiers = cohesion_modifiers(cohesion.value);
+    kill_counter.enemy_deaths = 0;
 }
 
 #[allow(clippy::type_complexity)]
@@ -86,49 +103,61 @@ fn apply_morale_and_cohesion_events(
     mut damaged_events: EventReader<UnitDamagedEvent>,
     mut death_events: EventReader<UnitDiedEvent>,
     mut cohesion: ResMut<Cohesion>,
+    mut kill_counter: ResMut<EnemyKillRewardCounter>,
     mut morale_sets: ParamSet<(
         Query<&mut Morale>,
         Query<&mut Morale, With<FriendlyUnit>>,
         Query<&mut Morale, With<EnemyUnit>>,
     )>,
 ) {
+    let mut friendly_morale_gain = 0.0;
+    let mut friendly_morale_loss = 0.0;
+    let mut enemy_morale_gain = 0.0;
+    let mut enemy_morale_loss = 0.0;
+
     for event in damaged_events.read() {
         if let Ok(mut morale) = morale_sets.p0().get_mut(event.target) {
-            let morale_loss = (event.amount * DAMAGE_TO_MORALE_FACTOR).max(0.2);
+            let morale_loss = unit_morale_loss_from_damage(event.amount);
             morale.current = (morale.current - morale_loss).clamp(0.0, morale.max);
         }
         if event.team == Team::Friendly {
-            cohesion.value -= FRIENDLY_DAMAGE_COHESION_LOSS;
+            cohesion.value -= friendly_cohesion_loss_from_damage(event.amount);
+            friendly_morale_loss += friendly_army_morale_loss_from_damage(event.amount);
         }
     }
 
     for event in death_events.read() {
         match event.team {
             Team::Enemy => {
-                cohesion.value += ENEMY_KILL_COHESION_GAIN;
-                for mut morale in &mut morale_sets.p1() {
-                    morale.current =
-                        (morale.current + ENEMY_KILL_MORALE_GAIN).clamp(0.0, morale.max);
+                kill_counter.enemy_deaths = kill_counter.enemy_deaths.saturating_add(1);
+                if should_apply_enemy_kill_reward(
+                    kill_counter.enemy_deaths,
+                    ENEMY_KILL_REWARD_EVERY_N,
+                ) {
+                    cohesion.value += ENEMY_KILL_COHESION_GAIN;
+                    friendly_morale_gain += ENEMY_KILL_MORALE_GAIN;
                 }
-                for mut morale in &mut morale_sets.p2() {
-                    morale.current =
-                        (morale.current - ALLY_DEATH_MORALE_LOSS).clamp(0.0, morale.max);
-                }
+                enemy_morale_loss += ENEMY_DEATH_MORALE_LOSS;
             }
             Team::Friendly => {
-                if event.kind != UnitKind::Commander {
-                    cohesion.value -= RETINUE_DEATH_COHESION_LOSS;
-                }
-                for mut morale in &mut morale_sets.p1() {
-                    morale.current =
-                        (morale.current - ALLY_DEATH_MORALE_LOSS).clamp(0.0, morale.max);
-                }
-                for mut morale in &mut morale_sets.p2() {
-                    morale.current =
-                        (morale.current + ENEMY_KILL_MORALE_GAIN).clamp(0.0, morale.max);
-                }
+                cohesion.value -= friendly_death_cohesion_loss(event.max_health, event.kind);
+                friendly_morale_loss += friendly_death_morale_loss(event.max_health, event.kind);
+                enemy_morale_gain += ENEMY_MORALE_GAIN_ON_FRIENDLY_DEATH;
             }
             Team::Neutral => {}
+        }
+    }
+
+    if (friendly_morale_gain - friendly_morale_loss).abs() > 0.0001 {
+        for mut morale in &mut morale_sets.p1() {
+            morale.current = (morale.current + friendly_morale_gain - friendly_morale_loss)
+                .clamp(0.0, morale.max);
+        }
+    }
+    if (enemy_morale_gain - enemy_morale_loss).abs() > 0.0001 {
+        for mut morale in &mut morale_sets.p2() {
+            morale.current =
+                (morale.current + enemy_morale_gain - enemy_morale_loss).clamp(0.0, morale.max);
         }
     }
 
@@ -171,6 +200,42 @@ pub fn low_morale_ratio(morale_ratios: &[f32], threshold: f32) -> f32 {
         .filter(|ratio| **ratio < threshold)
         .count();
     low_count as f32 / morale_ratios.len() as f32
+}
+
+pub fn unit_morale_loss_from_damage(damage: f32) -> f32 {
+    (damage.max(0.0) * DAMAGE_TO_UNIT_MORALE_FACTOR).max(DAMAGE_TO_UNIT_MORALE_MIN)
+}
+
+pub fn friendly_cohesion_loss_from_damage(damage: f32) -> f32 {
+    damage.max(0.0) * FRIENDLY_DAMAGE_COHESION_FACTOR
+}
+
+pub fn friendly_army_morale_loss_from_damage(damage: f32) -> f32 {
+    (damage.max(0.0) * FRIENDLY_DAMAGE_ARMY_MORALE_FACTOR).max(FRIENDLY_DAMAGE_ARMY_MORALE_MIN)
+}
+
+pub fn friendly_death_cohesion_loss(max_health: f32, kind: UnitKind) -> f32 {
+    let base =
+        (max_health.max(1.0) * FRIENDLY_DEATH_COHESION_FACTOR).max(FRIENDLY_DEATH_COHESION_MIN);
+    if kind == UnitKind::Commander {
+        base * COMMANDER_DEATH_PENALTY_MULTIPLIER
+    } else {
+        base
+    }
+}
+
+pub fn friendly_death_morale_loss(max_health: f32, kind: UnitKind) -> f32 {
+    let base = (max_health.max(1.0) * FRIENDLY_DEATH_ARMY_MORALE_FACTOR)
+        .max(FRIENDLY_DEATH_ARMY_MORALE_MIN);
+    if kind == UnitKind::Commander {
+        base * COMMANDER_DEATH_PENALTY_MULTIPLIER
+    } else {
+        base
+    }
+}
+
+pub fn should_apply_enemy_kill_reward(enemy_death_count: u32, reward_every_n: u32) -> bool {
+    reward_every_n > 0 && enemy_death_count > 0 && enemy_death_count.is_multiple_of(reward_every_n)
 }
 
 pub fn average_morale_ratio(morale_ratios: &[f32]) -> f32 {
@@ -221,7 +286,13 @@ pub fn cohesion_modifiers(value: f32) -> CohesionCombatModifiers {
 
 #[cfg(test)]
 mod tests {
-    use crate::morale::{Cohesion, average_morale_ratio, cohesion_modifiers, low_morale_ratio};
+    use crate::model::UnitKind;
+    use crate::morale::{
+        Cohesion, average_morale_ratio, cohesion_modifiers, friendly_army_morale_loss_from_damage,
+        friendly_cohesion_loss_from_damage, friendly_death_cohesion_loss,
+        friendly_death_morale_loss, low_morale_ratio, should_apply_enemy_kill_reward,
+        unit_morale_loss_from_damage,
+    };
 
     #[test]
     fn cohesion_starts_full() {
@@ -254,5 +325,35 @@ mod tests {
         let morale = [0.8, 0.6, 0.4];
         assert!((average_morale_ratio(&morale) - 0.6).abs() < 0.0001);
         assert!((average_morale_ratio(&[]) - 1.0).abs() < 0.0001);
+    }
+
+    #[test]
+    fn damage_losses_scale_with_damage_amount() {
+        assert!(unit_morale_loss_from_damage(12.0) > unit_morale_loss_from_damage(3.0));
+        assert!(friendly_cohesion_loss_from_damage(12.0) > friendly_cohesion_loss_from_damage(3.0));
+        assert!(
+            friendly_army_morale_loss_from_damage(12.0)
+                > friendly_army_morale_loss_from_damage(3.0)
+        );
+    }
+
+    #[test]
+    fn friendly_death_penalty_scales_with_health_and_commander_kind() {
+        let recruit_cohesion = friendly_death_cohesion_loss(95.0, UnitKind::InfantryKnight);
+        let commander_cohesion = friendly_death_cohesion_loss(120.0, UnitKind::Commander);
+        let recruit_morale = friendly_death_morale_loss(95.0, UnitKind::InfantryKnight);
+        let commander_morale = friendly_death_morale_loss(120.0, UnitKind::Commander);
+
+        assert!(commander_cohesion > recruit_cohesion);
+        assert!(commander_morale > recruit_morale);
+    }
+
+    #[test]
+    fn enemy_kill_rewards_apply_every_third_kill() {
+        assert!(!should_apply_enemy_kill_reward(1, 3));
+        assert!(!should_apply_enemy_kill_reward(2, 3));
+        assert!(should_apply_enemy_kill_reward(3, 3));
+        assert!(!should_apply_enemy_kill_reward(4, 3));
+        assert!(should_apply_enemy_kill_reward(6, 3));
     }
 }

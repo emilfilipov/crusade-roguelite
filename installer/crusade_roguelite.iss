@@ -35,9 +35,11 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 [Files]
 Source: "..\target\x86_64-pc-windows-msvc\release\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\assets\data\*"; DestDir: "{app}\assets\data"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\assets\sprites\*"; DestDir: "{app}\assets\sprites"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\assets\third_party\kenney_desert-shooter-pack_1.0\*"; DestDir: "{app}\assets\third_party\kenney_desert-shooter-pack_1.0"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\assets\third_party\kenney_tiny-dungeon_1.0\*"; DestDir: "{app}\assets\third_party\kenney_tiny-dungeon_1.0"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\assets\third_party\kenney_sketch-desert_1.0\*"; DestDir: "{app}\assets\third_party\kenney_sketch-desert_1.0"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\assets\third_party\oga_ishtar_top-down-pack_1.1\*"; DestDir: "{app}\assets\third_party\oga_ishtar_top-down-pack_1.1"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"

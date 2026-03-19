@@ -112,12 +112,19 @@ fn open_draft_on_level_up(
 }
 
 pub fn xp_required_for_level(level: u32) -> f32 {
+    const BASE_REQUIREMENT: f32 = 30.0;
+    const BRACKET_SIZE: u32 = 10;
+    const BRACKET_GROWTH: f32 = 5.5;
+    const INTRA_BRACKET_GROWTH: f32 = 1.18;
+
     let safe_level = level.max(1);
-    let mut requirement = 30.0;
-    for _ in 1..safe_level {
-        requirement *= 1.25;
-    }
-    requirement
+    let index = safe_level - 1;
+    let bracket = index / BRACKET_SIZE;
+    let within_bracket = index % BRACKET_SIZE;
+
+    BASE_REQUIREMENT
+        * BRACKET_GROWTH.powf(bracket as f32)
+        * INTRA_BRACKET_GROWTH.powf(within_bracket as f32)
 }
 
 pub fn commander_level_hp_bonus(level: u32) -> f32 {
@@ -281,6 +288,8 @@ mod tests {
         assert!((xp_required_for_level(1) - 30.0).abs() < 0.001);
         assert!(xp_required_for_level(2) > xp_required_for_level(1));
         assert!(xp_required_for_level(5) > xp_required_for_level(4));
+        assert!(xp_required_for_level(11) > xp_required_for_level(10));
+        assert!(xp_required_for_level(21) > xp_required_for_level(20));
     }
 
     #[test]

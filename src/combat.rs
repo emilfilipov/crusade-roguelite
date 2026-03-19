@@ -11,6 +11,7 @@ use crate::upgrades::Progression;
 pub const MIN_FRIENDLY_COMBAT_MULTIPLIER: f32 = 0.55;
 const LOW_MORALE_THRESHOLD: f32 = 0.5;
 const LOW_MORALE_MIN_MULTIPLIER: f32 = 0.75;
+const ENEMY_DROP_PICKUP_DELAY_SECS: f32 = 0.9;
 
 pub struct CombatPlugin;
 
@@ -249,13 +250,14 @@ fn resolve_deaths(
             death_events.send(UnitDiedEvent {
                 team: unit.team,
                 kind: unit.kind,
+                max_health: health.max,
                 world_position: transform.translation.truncate(),
             });
             if unit.team == Team::Enemy {
                 exp_pack_events.send(SpawnExpPackEvent {
                     world_position: transform.translation.truncate(),
                     xp_value_override: None,
-                    pickup_delay_secs: Some(0.45),
+                    pickup_delay_secs: Some(ENEMY_DROP_PICKUP_DELAY_SECS),
                 });
             }
             commands.entity(entity).despawn_recursive();
