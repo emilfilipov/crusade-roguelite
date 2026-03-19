@@ -1,10 +1,12 @@
 use bevy::prelude::*;
+use serde::{Deserialize, Serialize};
 
 #[derive(States, Clone, Copy, Debug, Default, Eq, PartialEq, Hash)]
 pub enum GameState {
     #[default]
     Boot,
     MainMenu,
+    Settings,
     InRun,
     Paused,
     GameOver,
@@ -15,11 +17,14 @@ pub struct RunSession {
     pub survived_seconds: f32,
 }
 
-#[derive(Resource, Clone, Copy, Debug, Eq, PartialEq, Hash, Default)]
+#[derive(Resource, Clone, Copy, Debug, Eq, PartialEq, Hash, Default, Serialize, Deserialize)]
 pub enum FrameRateCap {
     #[default]
+    #[serde(rename = "60")]
     Fps60,
+    #[serde(rename = "90")]
     Fps90,
+    #[serde(rename = "120")]
     Fps120,
 }
 

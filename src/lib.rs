@@ -12,6 +12,7 @@ pub mod morale;
 pub mod performance;
 pub mod projectiles;
 pub mod rescue;
+pub mod settings;
 pub mod squad;
 pub mod steam;
 pub mod ui;
@@ -95,6 +96,7 @@ pub fn configure_game_app(app: &mut App) {
         .add_plugins((
             data::DataPlugin,
             core::CorePlugin,
+            settings::SettingsPlugin,
             performance::PerformancePlugin,
             visuals::VisualPlugin,
             map::MapPlugin,

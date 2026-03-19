@@ -10,6 +10,7 @@ use crate::model::{
 };
 use crate::morale::{Cohesion, average_morale_ratio};
 use crate::rescue::RescueProgress;
+use crate::settings::AppSettings;
 use crate::squad::SquadRoster;
 use crate::upgrades::Progression;
 
@@ -60,7 +61,16 @@ struct MainMenuRoot;
 #[derive(Component, Clone, Copy, Debug, Eq, PartialEq)]
 enum MainMenuAction {
     Start,
+    Settings,
     Exit,
+}
+
+#[derive(Component, Clone, Copy, Debug)]
+struct SettingsMenuRoot;
+
+#[derive(Component, Clone, Copy, Debug, Eq, PartialEq)]
+enum SettingsMenuAction {
+    Back,
 }
 
 #[derive(Component, Clone, Copy, Debug, Eq, PartialEq)]
@@ -109,17 +119,24 @@ impl Plugin for UiPlugin {
         app.init_resource::<HudSnapshot>()
             .add_systems(OnEnter(GameState::MainMenu), spawn_main_menu)
             .add_systems(OnExit(GameState::MainMenu), despawn_main_menu)
+            .add_systems(OnEnter(GameState::Settings), spawn_settings_menu)
+            .add_systems(OnExit(GameState::Settings), despawn_settings_menu)
             .add_systems(OnEnter(GameState::MainMenu), despawn_in_run_hud)
+            .add_systems(OnEnter(GameState::Settings), despawn_in_run_hud)
             .add_systems(OnEnter(GameState::InRun), spawn_in_run_hud)
             .add_systems(
                 Update,
+                handle_main_menu_buttons.run_if(in_state(GameState::MainMenu)),
+            )
+            .add_systems(
+                Update,
                 (
-                    handle_main_menu_buttons,
+                    handle_settings_menu_buttons,
                     handle_fps_cap_buttons,
                     refresh_fps_cap_button_visuals,
                 )
                     .chain()
-                    .run_if(in_state(GameState::MainMenu)),
+                    .run_if(in_state(GameState::Settings)),
             )
             .add_systems(
                 Update,
@@ -138,7 +155,7 @@ impl Plugin for UiPlugin {
     }
 }
 
-fn spawn_main_menu(mut commands: Commands, frame_cap: Res<FrameRateCap>) {
+fn spawn_main_menu(mut commands: Commands) {
     commands
         .spawn((
             MainMenuRoot,
@@ -172,22 +189,8 @@ fn spawn_main_menu(mut commands: Commands, frame_cap: Res<FrameRateCap>) {
                 })
                 .with_children(|menu_buttons| {
                     spawn_menu_button(menu_buttons, MainMenuAction::Start, "START");
+                    spawn_menu_button(menu_buttons, MainMenuAction::Settings, "SETTINGS");
                     spawn_menu_button(menu_buttons, MainMenuAction::Exit, "EXIT");
-                });
-
-            parent
-                .spawn(NodeBundle {
-                    style: Style {
-                        position_type: PositionType::Absolute,
-                        right: Val::Px(16.0),
-                        bottom: Val::Px(16.0),
-                        ..default()
-                    },
-                    background_color: BackgroundColor(Color::NONE),
-                    ..default()
-                })
-                .with_children(|fps_anchor| {
-                    spawn_fps_selector(fps_anchor, *frame_cap);
                 });
         });
 }
@@ -293,6 +296,110 @@ fn spawn_fps_button(parent: &mut ChildBuilder, cap: FrameRateCap, selected: bool
 
 fn despawn_main_menu(mut commands: Commands, menu_roots: Query<Entity, With<MainMenuRoot>>) {
     for entity in &menu_roots {
+        commands.entity(entity).despawn_recursive();
+    }
+}
+
+fn spawn_settings_menu(mut commands: Commands, frame_cap: Res<FrameRateCap>) {
+    commands
+        .spawn((
+            SettingsMenuRoot,
+            NodeBundle {
+                style: Style {
+                    width: Val::Percent(100.0),
+                    height: Val::Percent(100.0),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px(22.0),
+                    ..default()
+                },
+                background_color: BackgroundColor(MENU_BACKGROUND),
+                z_index: ZIndex::Global(100),
+                ..default()
+            },
+        ))
+        .with_children(|parent| {
+            parent.spawn(TextBundle::from_section(
+                "SETTINGS",
+                TextStyle {
+                    font_size: 42.0,
+                    color: MENU_BUTTON_TEXT_NORMAL,
+                    ..default()
+                },
+            ));
+
+            parent
+                .spawn(NodeBundle {
+                    style: Style {
+                        flex_direction: FlexDirection::Column,
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        row_gap: Val::Px(10.0),
+                        ..default()
+                    },
+                    background_color: BackgroundColor(Color::NONE),
+                    ..default()
+                })
+                .with_children(|settings| {
+                    settings.spawn(TextBundle::from_section(
+                        "Frame Rate Cap",
+                        TextStyle {
+                            font_size: 22.0,
+                            color: MENU_BUTTON_TEXT_NORMAL,
+                            ..default()
+                        },
+                    ));
+                    spawn_fps_selector(settings, *frame_cap);
+                });
+
+            parent
+                .spawn(NodeBundle {
+                    style: Style {
+                        margin: UiRect::top(Val::Px(12.0)),
+                        ..default()
+                    },
+                    background_color: BackgroundColor(Color::NONE),
+                    ..default()
+                })
+                .with_children(|actions| {
+                    spawn_settings_button(actions, SettingsMenuAction::Back, "BACK");
+                });
+        });
+}
+
+fn spawn_settings_button(parent: &mut ChildBuilder, action: SettingsMenuAction, label: &str) {
+    parent
+        .spawn((
+            ButtonBundle {
+                style: Style {
+                    width: Val::Px(220.0),
+                    height: Val::Px(56.0),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    border: UiRect::all(Val::Px(1.0)),
+                    ..default()
+                },
+                background_color: BackgroundColor(Color::NONE),
+                border_color: BorderColor(Color::NONE),
+                ..default()
+            },
+            action,
+        ))
+        .with_children(|button| {
+            button.spawn(TextBundle::from_section(
+                label,
+                TextStyle {
+                    font_size: 28.0,
+                    color: MENU_BUTTON_TEXT_NORMAL,
+                    ..default()
+                },
+            ));
+        });
+}
+
+fn despawn_settings_menu(mut commands: Commands, roots: Query<Entity, With<SettingsMenuRoot>>) {
+    for entity in &roots {
         commands.entity(entity).despawn_recursive();
     }
 }
@@ -560,6 +667,10 @@ fn handle_main_menu_buttons(
                         next_state.set(GameState::InRun);
                         start_run_events.send(StartRunEvent);
                     }
+                    MainMenuAction::Settings => {
+                        info!("Opening Settings screen from MainMenu.");
+                        next_state.set(GameState::Settings);
+                    }
                     MainMenuAction::Exit => {
                         info!("Exit requested from MainMenu button.");
                         app_exit_events.send(AppExit::Success);
@@ -579,13 +690,62 @@ fn handle_main_menu_buttons(
 }
 
 #[allow(clippy::type_complexity)]
+fn handle_settings_menu_buttons(
+    mut buttons: Query<
+        (
+            &Interaction,
+            &SettingsMenuAction,
+            &Children,
+            &mut BorderColor,
+            &mut BackgroundColor,
+        ),
+        (Changed<Interaction>, With<Button>),
+    >,
+    mut text_query: Query<&mut Text>,
+    mut next_state: ResMut<NextState<GameState>>,
+) {
+    for (interaction, action, children, mut border_color, mut background) in &mut buttons {
+        if let Some(&text_entity) = children.first()
+            && let Ok(mut text) = text_query.get_mut(text_entity)
+        {
+            text.sections[0].style.color = match *interaction {
+                Interaction::Hovered | Interaction::Pressed => MENU_BUTTON_TEXT_HOVERED,
+                Interaction::None => MENU_BUTTON_TEXT_NORMAL,
+            };
+        }
+        match *interaction {
+            Interaction::Pressed => {
+                *border_color = BorderColor(MENU_BUTTON_BORDER_HOVERED);
+                *background = BackgroundColor(Color::NONE);
+                match action {
+                    SettingsMenuAction::Back => {
+                        info!("Returning from Settings to MainMenu.");
+                        next_state.set(GameState::MainMenu);
+                    }
+                }
+            }
+            Interaction::Hovered => {
+                *border_color = BorderColor(MENU_BUTTON_BORDER_HOVERED);
+                *background = BackgroundColor(Color::NONE);
+            }
+            Interaction::None => {
+                *border_color = BorderColor(Color::NONE);
+                *background = BackgroundColor(Color::NONE);
+            }
+        }
+    }
+}
+
+#[allow(clippy::type_complexity)]
 fn handle_fps_cap_buttons(
     mut buttons: Query<(&Interaction, &FpsCapButton), (Changed<Interaction>, With<Button>)>,
     mut frame_cap: ResMut<FrameRateCap>,
+    mut settings: ResMut<AppSettings>,
 ) {
     for (interaction, fps_button) in &mut buttons {
         if *interaction == Interaction::Pressed && *frame_cap != fps_button.cap {
             *frame_cap = fps_button.cap;
+            settings.frame_rate_cap = fps_button.cap;
             info!("Set frame rate cap to {} FPS.", fps_button.cap.as_u32());
         }
     }
