@@ -248,7 +248,7 @@
   - Enemy kill drops should not instantly home in the same frame.
 - Implementation:
   1. Added per-pack pickup delay timer.
-  2. Enemy death drop events now spawn packs with delay (`0.45s`) before pickup/homing.
+  2. Enemy death drop events now spawn packs with delay (`0.9s`) before pickup/homing.
   3. Ambient pack spawn now centers around commander position for better visibility.
   4. Homing speed now derives from commander base move speed and stays slightly faster.
 - Unit Tests Required:
@@ -389,11 +389,11 @@
   - Prior flow allowed Escape-to-resume without menu and lacked explicit in-match pause actions.
   - Request requires centered pause menu similar to defeat menu.
 - Implementation:
-  1. Added `Paused` overlay with buttons: `Resume`, `Restart`, `Main Menu / Quit`.
+  1. Added `Paused` overlay with buttons: `Resume`, `Restart`, `Main Menu`.
   2. Added pause-menu action handler:
      - `Resume` -> `InRun`
      - `Restart` -> resets run + sends `StartRunEvent`
-     - `Main Menu / Quit` -> `MainMenu`
+     - `Main Menu` -> `MainMenu`
   3. Removed Escape resume toggle from `Paused`; Escape now only opens pause from `InRun`.
 - Unit Tests Required:
   - Existing core state tests remain valid.
@@ -412,7 +412,7 @@
   - Must be deterministic and testable, with no effect when commander is alone.
 - Implementation:
   1. Added formation-context extraction (commander position + active recruit count) in combat target snapshot flow.
-  2. Added square-formation bounds helper and inside-bounds check.
+  2. Added active-formation bounds helper and inside-bounds check.
   3. Applied `1.2x` multiplier to friendly outgoing damage when enemy target is inside those bounds.
 - Unit Tests Required:
   - Formation context extraction test.
@@ -473,7 +473,7 @@
   - Requested tradeoff: aggressive formation charges should carry mobility risk.
   - Slowdown must be capped so movement never fully locks.
 - Implementation:
-  1. Added enemy-inside-square-footprint detection helper in `src/squad.rs`.
+  1. Added enemy-inside-active-formation-footprint detection helper in `src/squad.rs`.
   2. Added per-enemy slowdown multiplier with clamp floor.
   3. Applied multiplier in commander movement pipeline alongside existing penalties.
 - Unit Tests Required:
@@ -503,7 +503,7 @@
 - Type: `Gameplay/UI`
 - Priority: `P0`
 - Depends on: none
-- Goal: Pause run on level-up until player picks one of five upgrade cards.
+- Goal: Pause run on level-up until player picks one of three upgrade cards.
 - Context:
   - Prior flow auto-resolved upgrades in-run.
   - New flow requires explicit player selection with no skip path.
@@ -514,7 +514,7 @@
   4. Added full-screen level-up overlay with tall cards (title + icon + description).
   5. Kept pause toggle constrained to `InRun`, so Escape is inactive in `LevelUp`.
 - Unit Tests Required:
-  - Upgrade option count test (`5` options).
+  - Upgrade option count test (`3` options).
   - Upgrade metadata mapping test for UI display text/icon routing.
 - Acceptance Criteria:
   - On level-up, gameplay pauses and level-up overlay appears.
@@ -541,6 +541,8 @@
 - Acceptance Criteria:
   - Each level-up offers random 3 upgrades from the 8-upgrade pool.
   - Rolled values stay within min/max and are weighted toward lower values.
+- Superseded Note:
+  - Later expanded by `CRU-054` with one-time skillbar-bound formation unlock entries layered on top of the repeatable pool.
 
 ## CRU-051 - Commander Aura Effects (Authority + Hospitalier)
 - Status: `DONE`
