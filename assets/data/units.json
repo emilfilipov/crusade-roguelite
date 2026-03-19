@@ -9,9 +9,9 @@
     "move_speed": 170.0,
     "morale": 120.0,
     "aura_radius": 180.0,
-    "ranged_attack_damage": 9.0,
+    "ranged_attack_damage": 6.0,
     "ranged_attack_cooldown_secs": 1.2,
-    "ranged_attack_range": 250.0,
+    "ranged_attack_range": 225.0,
     "ranged_projectile_speed": 420.0,
     "ranged_projectile_max_distance": 260.0
   },
@@ -34,9 +34,9 @@
     "attack_range": 26.0,
     "move_speed": 154.0,
     "morale": 92.0,
-    "ranged_attack_damage": 9.0,
+    "ranged_attack_damage": 14.0,
     "ranged_attack_cooldown_secs": 1.15,
-    "ranged_attack_range": 220.0,
+    "ranged_attack_range": 250.0,
     "ranged_projectile_speed": 460.0,
     "ranged_projectile_max_distance": 235.0
   }
