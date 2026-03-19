@@ -1,10 +1,17 @@
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use bevy::prelude::*;
 
 use crate::data::{GameData, UpgradeConfig};
 use crate::model::{
-    BaseMaxHealth, CommanderUnit, FriendlyUnit, GainXpEvent, GameState, GlobalBuffs, Health,
-    RecruitEvent, StartRunEvent,
+    BaseMaxHealth, FriendlyUnit, GainXpEvent, GameState, GlobalBuffs, Health, StartRunEvent,
 };
+
+const LEVEL_UP_OPTION_COUNT: usize = 3;
+const DEFAULT_UPGRADE_WEIGHT_EXPONENT: f32 = 2.0;
+const AUTHORITY_ENEMY_MORALE_DRAIN_SCALE: f32 = 6.0;
+const HOSPITALIER_COHESION_REGEN_SCALE: f32 = 0.35;
+const HOSPITALIER_MORALE_REGEN_SCALE: f32 = 0.18;
 
 #[derive(Resource, Clone, Debug)]
 pub struct Progression {
@@ -36,12 +43,14 @@ pub struct SelectUpgradeEvent {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UpgradeCardIcon {
-    Recruit,
-    Armor,
     Damage,
     AttackSpeed,
-    Cohesion,
-    Aura,
+    Armor,
+    PickupRadius,
+    AuraRadius,
+    AuthorityAura,
+    MoveSpeed,
+    HospitalierAura,
 }
 
 #[derive(Resource, Clone, Copy, Debug)]
@@ -55,6 +64,47 @@ impl Default for LevelPassiveRuntime {
     }
 }
 
+#[derive(Resource, Clone, Copy, Debug)]
+struct UpgradeRngState {
+    state: u64,
+}
+
+impl Default for UpgradeRngState {
+    fn default() -> Self {
+        Self {
+            state: 0xC57A_5EED_5EED_u64,
+        }
+    }
+}
+
+impl UpgradeRngState {
+    fn reseed_from_time(&mut self) {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_nanos() as u64)
+            .unwrap_or(0xBADC_0FFEE_u64);
+        let mixed = nanos ^ 0x9E37_79B9_7F4A_7C15_u64;
+        self.state = if mixed == 0 {
+            0xC57A_5EED_5EED_u64
+        } else {
+            mixed
+        };
+    }
+
+    fn next_u32(&mut self) -> u32 {
+        // LCG parameters from Numerical Recipes with 64-bit state.
+        self.state = self
+            .state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        (self.state >> 32) as u32
+    }
+
+    fn next_f32(&mut self) -> f32 {
+        self.next_u32() as f32 / u32::MAX as f32
+    }
+}
+
 pub struct UpgradePlugin;
 
 impl Plugin for UpgradePlugin {
@@ -62,6 +112,7 @@ impl Plugin for UpgradePlugin {
         app.init_resource::<Progression>()
             .init_resource::<UpgradeDraft>()
             .init_resource::<LevelPassiveRuntime>()
+            .init_resource::<UpgradeRngState>()
             .init_resource::<GlobalBuffs>()
             .add_event::<SelectUpgradeEvent>()
             .add_systems(Update, reset_progress_on_run_start)
@@ -93,6 +144,7 @@ fn reset_progress_on_run_start(
     mut draft: ResMut<UpgradeDraft>,
     mut passive_runtime: ResMut<LevelPassiveRuntime>,
     mut buffs: ResMut<GlobalBuffs>,
+    mut rng: ResMut<UpgradeRngState>,
 ) {
     if start_events.is_empty() {
         return;
@@ -102,6 +154,7 @@ fn reset_progress_on_run_start(
     *draft = UpgradeDraft::default();
     *passive_runtime = LevelPassiveRuntime::default();
     *buffs = GlobalBuffs::default();
+    rng.reseed_from_time();
 }
 
 fn gain_xp(mut progression: ResMut<Progression>, mut xp_events: EventReader<GainXpEvent>) {
@@ -114,6 +167,7 @@ fn open_draft_on_level_up(
     mut progression: ResMut<Progression>,
     mut draft: ResMut<UpgradeDraft>,
     data: Res<GameData>,
+    mut rng: ResMut<UpgradeRngState>,
     mut next_state: ResMut<NextState<GameState>>,
 ) {
     if draft.active {
@@ -124,9 +178,12 @@ fn open_draft_on_level_up(
         progression.level += 1;
         progression.xp -= progression.next_level_xp;
         progression.next_level_xp = xp_required_for_level(progression.level);
-        draft.options = roll_upgrade_options(&data.upgrades.upgrades, progression.level);
-        draft.active = true;
-        next_state.set(GameState::LevelUp);
+        draft.options =
+            roll_upgrade_options(&data.upgrades.upgrades, &mut rng, LEVEL_UP_OPTION_COUNT);
+        draft.active = !draft.options.is_empty();
+        if draft.active {
+            next_state.set(GameState::LevelUp);
+        }
     }
 }
 
@@ -192,10 +249,6 @@ fn queue_upgrade_selection_from_keyboard(
         selected_idx = Some(1);
     } else if keys.just_pressed(KeyCode::Digit3) {
         selected_idx = Some(2);
-    } else if keys.just_pressed(KeyCode::Digit4) {
-        selected_idx = Some(3);
-    } else if keys.just_pressed(KeyCode::Digit5) {
-        selected_idx = Some(4);
     }
     if let Some(option_index) = selected_idx {
         selection_events.send(SelectUpgradeEvent { option_index });
@@ -203,11 +256,9 @@ fn queue_upgrade_selection_from_keyboard(
 }
 
 fn resolve_upgrade_selection(
-    commanders: Query<&Transform, With<CommanderUnit>>,
     mut draft: ResMut<UpgradeDraft>,
     mut selection_events: EventReader<SelectUpgradeEvent>,
     mut buffs: ResMut<GlobalBuffs>,
-    mut recruit_events: EventWriter<RecruitEvent>,
     mut next_state: ResMut<NextState<GameState>>,
 ) {
     if !draft.active || draft.options.is_empty() {
@@ -219,93 +270,156 @@ fn resolve_upgrade_selection(
     };
     let index = selection.option_index.min(draft.options.len() - 1);
     let picked = draft.options[index].clone();
-    apply_upgrade(&picked, &mut buffs, &commanders, &mut recruit_events);
+    apply_upgrade(&picked, &mut buffs);
     draft.active = false;
     draft.options.clear();
     next_state.set(GameState::InRun);
 }
 
-pub fn roll_upgrade_options(pool: &[UpgradeConfig], level: u32) -> Vec<UpgradeConfig> {
-    if pool.is_empty() {
+fn roll_upgrade_options(
+    pool: &[UpgradeConfig],
+    rng: &mut UpgradeRngState,
+    count: usize,
+) -> Vec<UpgradeConfig> {
+    if pool.is_empty() || count == 0 {
         return Vec::new();
     }
-    let mut result = Vec::with_capacity(5);
-    let offset = (level as usize) % pool.len();
-    for idx in 0..5 {
-        result.push(pool[(offset + idx) % pool.len()].clone());
+    let pick_count = count.min(pool.len());
+    let indices = draw_unique_indices(pool.len(), pick_count, rng);
+    indices
+        .into_iter()
+        .map(|idx| {
+            let mut rolled = pool[idx].clone();
+            rolled.value = roll_upgrade_value(&rolled, rng);
+            rolled
+        })
+        .collect()
+}
+
+fn draw_unique_indices(pool_len: usize, count: usize, rng: &mut UpgradeRngState) -> Vec<usize> {
+    let mut indices: Vec<usize> = (0..pool_len).collect();
+    for i in 0..count {
+        let remaining = pool_len - i;
+        let offset = (rng.next_u32() as usize) % remaining;
+        let j = i + offset;
+        indices.swap(i, j);
     }
-    result
+    indices.truncate(count);
+    indices
+}
+
+fn roll_upgrade_value(config: &UpgradeConfig, rng: &mut UpgradeRngState) -> f32 {
+    let min_value = config.min_value.unwrap_or(config.value);
+    let max_value = config.max_value.unwrap_or(min_value);
+    if (max_value - min_value).abs() <= f32::EPSILON {
+        return min_value.max(0.0);
+    }
+
+    let exponent = config
+        .weight_exponent
+        .unwrap_or(DEFAULT_UPGRADE_WEIGHT_EXPONENT)
+        .max(0.01);
+    let roll = rng.next_f32().powf(exponent);
+    let value = min_value + (max_value - min_value) * roll;
+    quantize_to_step(value, min_value, max_value, config.value_step)
+}
+
+fn quantize_to_step(value: f32, min_value: f32, max_value: f32, step: Option<f32>) -> f32 {
+    let Some(step) = step else {
+        return value.clamp(min_value, max_value);
+    };
+    if step <= 0.0 {
+        return value.clamp(min_value, max_value);
+    }
+    let steps = ((value - min_value) / step).round();
+    (min_value + steps * step).clamp(min_value, max_value)
 }
 
 pub fn upgrade_card_icon(upgrade: &UpgradeConfig) -> UpgradeCardIcon {
     match upgrade.kind.as_str() {
-        "add_units" => UpgradeCardIcon::Recruit,
-        "armor" => UpgradeCardIcon::Armor,
         "damage" => UpgradeCardIcon::Damage,
         "attack_speed" => UpgradeCardIcon::AttackSpeed,
-        "cohesion" => UpgradeCardIcon::Cohesion,
-        "commander_aura" => UpgradeCardIcon::Aura,
-        _ => UpgradeCardIcon::Recruit,
+        "armor" => UpgradeCardIcon::Armor,
+        "pickup_radius" => UpgradeCardIcon::PickupRadius,
+        "aura_radius" => UpgradeCardIcon::AuraRadius,
+        "authority_aura" => UpgradeCardIcon::AuthorityAura,
+        "move_speed" => UpgradeCardIcon::MoveSpeed,
+        "hospitalier_aura" => UpgradeCardIcon::HospitalierAura,
+        _ => UpgradeCardIcon::Damage,
     }
 }
 
 pub fn upgrade_display_title(upgrade: &UpgradeConfig) -> &'static str {
     match upgrade.kind.as_str() {
-        "add_units" => "Reinforcements",
-        "armor" => "Hardened Armor",
         "damage" => "Sharpened Steel",
         "attack_speed" => "Rapid Drill",
-        "cohesion" => "Tight Formation",
-        "commander_aura" => "Command Presence",
+        "armor" => "Hardened Armor",
+        "pickup_radius" => "Supply Reach",
+        "aura_radius" => "Extended Command",
+        "authority_aura" => "Authority Aura",
+        "move_speed" => "Forced March",
+        "hospitalier_aura" => "Hospitalier Aura",
         _ => "Field Upgrade",
     }
 }
 
 pub fn upgrade_display_description(upgrade: &UpgradeConfig) -> String {
     match upgrade.kind.as_str() {
-        "add_units" => "Recruit 1 infantry knight into your retinue.".to_string(),
-        "armor" => format!("Add +{:.0} armor to the army.", upgrade.value),
         "damage" => format!("Increase army damage by +{:.1}%.", upgrade.value),
         "attack_speed" => format!(
             "Increase army attack speed by +{:.0}%.",
             upgrade.value * 100.0
         ),
-        "cohesion" => format!("Increase cohesion reserve by +{:.0}.", upgrade.value),
-        "commander_aura" => format!("Increase commander aura strength by +{:.0}.", upgrade.value),
+        "armor" => format!("Add +{:.1} armor to friendlies.", upgrade.value),
+        "pickup_radius" => format!("Increase pickup radius by +{:.0}.", upgrade.value),
+        "aura_radius" => format!("Increase commander aura radius by +{:.0}.", upgrade.value),
+        "authority_aura" => format!(
+            "Friendlies in aura lose {:.0}% less morale/cohesion; enemies in aura lose {:.2} morale/s.",
+            upgrade.value * 100.0,
+            upgrade.value * AUTHORITY_ENEMY_MORALE_DRAIN_SCALE
+        ),
+        "move_speed" => format!("Increase army movement speed by +{:.0}.", upgrade.value),
+        "hospitalier_aura" => format!(
+            "Friendlies in aura regen +{:.1} HP/s, +{:.2} cohesion/s, +{:.2} morale/s.",
+            upgrade.value,
+            upgrade.value * HOSPITALIER_COHESION_REGEN_SCALE,
+            upgrade.value * HOSPITALIER_MORALE_REGEN_SCALE
+        ),
         _ => "Apply a battlefield improvement.".to_string(),
     }
 }
 
-fn apply_upgrade(
-    upgrade: &UpgradeConfig,
-    buffs: &mut GlobalBuffs,
-    commanders: &Query<&Transform, With<CommanderUnit>>,
-    recruit_events: &mut EventWriter<RecruitEvent>,
-) {
+fn apply_upgrade(upgrade: &UpgradeConfig, buffs: &mut GlobalBuffs) {
     match upgrade.kind.as_str() {
-        "add_units" => {
-            let commander_pos = commanders
-                .get_single()
-                .map(|transform| transform.translation.truncate())
-                .unwrap_or(Vec2::ZERO);
-            recruit_events.send(RecruitEvent {
-                world_position: commander_pos + Vec2::new(30.0, 0.0),
-            });
-        }
-        "armor" => {
-            buffs.armor_bonus += upgrade.value;
-        }
         "damage" => {
             buffs.damage_multiplier += upgrade.value * 0.01;
         }
         "attack_speed" => {
             buffs.attack_speed_multiplier += upgrade.value;
         }
-        "cohesion" => {
-            buffs.cohesion_bonus += upgrade.value;
+        "armor" => {
+            buffs.armor_bonus += upgrade.value;
         }
-        "commander_aura" => {
-            buffs.commander_aura_bonus += upgrade.value;
+        "pickup_radius" => {
+            buffs.pickup_radius_bonus += upgrade.value;
+        }
+        "aura_radius" => {
+            buffs.commander_aura_radius_bonus += upgrade.value;
+        }
+        "authority_aura" => {
+            buffs.authority_friendly_loss_resistance += upgrade.value;
+            buffs.authority_enemy_morale_drain_per_sec +=
+                upgrade.value * AUTHORITY_ENEMY_MORALE_DRAIN_SCALE;
+        }
+        "move_speed" => {
+            buffs.move_speed_bonus += upgrade.value;
+        }
+        "hospitalier_aura" => {
+            buffs.hospitalier_hp_regen_per_sec += upgrade.value;
+            buffs.hospitalier_cohesion_regen_per_sec +=
+                upgrade.value * HOSPITALIER_COHESION_REGEN_SCALE;
+            buffs.hospitalier_morale_regen_per_sec +=
+                upgrade.value * HOSPITALIER_MORALE_REGEN_SCALE;
         }
         _ => {}
     }
@@ -313,39 +427,83 @@ fn apply_upgrade(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use crate::data::UpgradeConfig;
     use crate::model::GlobalBuffs;
     use crate::upgrades::{
-        UpgradeCardIcon, commander_level_hp_bonus, roll_upgrade_options, upgrade_card_icon,
-        upgrade_display_description, upgrade_display_title, xp_required_for_level,
+        UpgradeCardIcon, UpgradeRngState, commander_level_hp_bonus, roll_upgrade_options,
+        roll_upgrade_value, upgrade_card_icon, upgrade_display_description, upgrade_display_title,
+        xp_required_for_level,
     };
 
     #[test]
-    fn rolls_five_options() {
+    fn rolls_three_unique_options() {
         let pool = vec![
             UpgradeConfig {
                 id: "a".to_string(),
                 kind: "damage".to_string(),
                 value: 1.0,
+                min_value: Some(1.0),
+                max_value: Some(4.0),
+                value_step: Some(0.5),
+                weight_exponent: Some(2.0),
             },
             UpgradeConfig {
                 id: "b".to_string(),
                 kind: "armor".to_string(),
                 value: 1.0,
+                min_value: Some(1.0),
+                max_value: Some(4.0),
+                value_step: Some(0.5),
+                weight_exponent: Some(2.0),
             },
             UpgradeConfig {
                 id: "c".to_string(),
-                kind: "cohesion".to_string(),
-                value: 1.0,
+                kind: "attack_speed".to_string(),
+                value: 0.1,
+                min_value: Some(0.01),
+                max_value: Some(0.08),
+                value_step: Some(0.01),
+                weight_exponent: Some(2.0),
             },
             UpgradeConfig {
                 id: "d".to_string(),
-                kind: "attack_speed".to_string(),
-                value: 0.1,
+                kind: "pickup_radius".to_string(),
+                value: 3.0,
+                min_value: Some(2.0),
+                max_value: Some(8.0),
+                value_step: Some(1.0),
+                weight_exponent: Some(2.0),
             },
         ];
-        let picks = roll_upgrade_options(&pool, 2);
-        assert_eq!(picks.len(), 5);
+        let mut rng = UpgradeRngState {
+            state: 0x1234_5678_9ABC_DEF0,
+        };
+        let picks = roll_upgrade_options(&pool, &mut rng, 3);
+        assert_eq!(picks.len(), 3);
+        let ids: HashSet<String> = picks.iter().map(|upgrade| upgrade.id.clone()).collect();
+        assert_eq!(ids.len(), 3);
+    }
+
+    #[test]
+    fn weighted_roll_stays_in_min_max_bounds() {
+        let upgrade = UpgradeConfig {
+            id: "damage".to_string(),
+            kind: "damage".to_string(),
+            value: 1.0,
+            min_value: Some(1.0),
+            max_value: Some(4.0),
+            value_step: Some(0.5),
+            weight_exponent: Some(2.2),
+        };
+        let mut rng = UpgradeRngState {
+            state: 0xCAFE_BABE_0123_4567,
+        };
+        for _ in 0..50 {
+            let value = roll_upgrade_value(&upgrade, &mut rng);
+            assert!((1.0..=4.0).contains(&value));
+        }
     }
 
     #[test]
@@ -354,6 +512,10 @@ mod tests {
         buffs.damage_multiplier += 0.05;
         buffs.damage_multiplier += 0.05;
         assert!((buffs.damage_multiplier - 1.10).abs() < 0.001);
+
+        buffs.move_speed_bonus += 5.0;
+        buffs.move_speed_bonus += 3.0;
+        assert!((buffs.move_speed_bonus - 8.0).abs() < 0.001);
     }
 
     #[test]
@@ -377,6 +539,10 @@ mod tests {
             id: "damage_up".to_string(),
             kind: "damage".to_string(),
             value: 1.5,
+            min_value: Some(1.0),
+            max_value: Some(4.0),
+            value_step: Some(0.5),
+            weight_exponent: Some(2.0),
         };
         assert_eq!(upgrade_card_icon(&upgrade), UpgradeCardIcon::Damage);
         assert_eq!(upgrade_display_title(&upgrade), "Sharpened Steel");

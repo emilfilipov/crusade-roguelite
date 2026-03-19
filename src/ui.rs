@@ -709,7 +709,7 @@ fn spawn_level_up_menu(
                     ..default()
                 })
                 .with_children(|cards| {
-                    for (index, upgrade) in draft.options.iter().take(5).enumerate() {
+                    for (index, upgrade) in draft.options.iter().take(3).enumerate() {
                         spawn_level_up_card(
                             cards,
                             index,
@@ -781,12 +781,14 @@ fn spawn_level_up_card(
 
 fn upgrade_icon_for(icon_kind: UpgradeCardIcon, art: &crate::visuals::ArtAssets) -> Handle<Image> {
     match icon_kind {
-        UpgradeCardIcon::Recruit => art.friendly_knight_idle.clone(),
-        UpgradeCardIcon::Armor => art.friendly_knight_idle.clone(),
         UpgradeCardIcon::Damage => art.enemy_bandit_raider_attack.clone(),
         UpgradeCardIcon::AttackSpeed => art.enemy_bandit_raider_move.clone(),
-        UpgradeCardIcon::Cohesion => art.banner_upright.clone(),
-        UpgradeCardIcon::Aura => art.commander_idle.clone(),
+        UpgradeCardIcon::Armor => art.friendly_knight_idle.clone(),
+        UpgradeCardIcon::PickupRadius => art.exp_pack_coin_stack.clone(),
+        UpgradeCardIcon::AuraRadius => art.banner_upright.clone(),
+        UpgradeCardIcon::AuthorityAura => art.banner_upright.clone(),
+        UpgradeCardIcon::MoveSpeed => art.commander_idle.clone(),
+        UpgradeCardIcon::HospitalierAura => art.commander_idle.clone(),
     }
 }
 

@@ -18,17 +18,17 @@ It prevents scope creep and makes expansion decisions explicit.
 | System | MVP Limit (Now) | Planned Expansion (Later) | Expansion Gate |
 | --- | --- | --- | --- |
 | Formation Set | 1 formation: `Square` only | Add `Line`, `Wedge`, `Column` | Square formation stable across full runs with no slot/positioning bugs |
-| Commander Kit | 1 passive aura + 1 battle cry + basic auto-attack | Multiple aura trees, command actives, commander loadouts | Commander-only early game is reliable and balanced |
+| Commander Kit | Basic melee auto-attack + conditional ranged arrow attack; aura upgrades (`Authority`, `Hospitalier`) active via level-ups | Multiple aura trees, command actives, commander loadouts | Commander-only early game is reliable and balanced |
 | Recruit Roster | 1 recruit archetype/subtype: `Infantry/Knight` | Spearman, Archer, support units, faction variants | Rescue loop stable and roster growth bug-free |
 | Enemy Roster | 1 enemy type: `bandit_raider` (melee infantry profile) | Archers, cavalry, elites, event waves | Basic wave pacing and melee combat deterministic |
 | Enemy AI | 1 behavior profile: chase + melee | Ranged kiting, cavalry charge, coordinated groups | No AI deadlocks and target selection stable |
 | Enemy Visual States | 1 state set for `bandit_raider`: idle/move/attack/hit/dead sprite swaps | Multi-frame animation sets and per-faction visual variants | State mapping remains readable and stable under combat load |
-| Weapon Types | 1 weapon class: melee | Bows, spears, anti-armor, weapon traits | Melee combat formula validated by tests |
+| Weapon Types | 2 baseline classes in use: melee + commander-only arrows | Roster-wide ranged classes, spears, anti-armor traits | Current melee+ranged interaction remains stable and readable |
 | Armor Model | 1 armor stat (flat mitigation) | Armor slots, resist types, durability | Damage model stable and readable |
-| Skill System | Core per-unit morale implemented; aura hooks still placeholder | Per-unit skill trees, triggered abilities, active aura skills | Base morale/aura interactions stable and test-covered |
+| Skill System | Core per-unit morale + active commander aura effects (`Authority` mitigation/drain, `Hospitalier` regen) | Per-unit skill trees, triggered abilities, active aura skills | Base morale/aura interactions stable and test-covered |
 | Unit Progression | 1 progression track (simple level/veterancy) | Multi-stat growth profiles and role specialization | Level-up logic deterministic and test-covered |
 | Rescue System | 1 rescue interaction: any friendly unit in radius for fixed time | Escort rescues, contested rescues, rescue events | Base rescue flow has no stuck/interruption bugs |
-| Upgrade Draft | Small pool (6-10 options) | Wider pools, synergies, rarity tiers | Starter upgrade set balanced and test-covered |
+| Upgrade Draft | Fixed 8-upgrade pool; random 3 choices per level-up with weighted min/max value rolls | Wider pools, synergy bundles, rarity tiers | Starter upgrade set balanced and test-covered |
 | Morale/Cohesion | Per-unit morale + event-driven cohesion with 5 tiers and low-morale retinue pressure | Richer morale events, panic/rout behavior, faction morale traits | Current morale/cohesion loop remains recoverable and readable |
 | Banner | Auto-drop at low cohesion with timed recovery channel and cohesion restore on pickup | Banner traits, relocation rules, enemy banner threats | Auto-drop/recovery loop stable and not abusable |
 | Map Set | 1 map: desert battlefield | Additional biomes/maps and tactical terrain variants | First map supports full run loop cleanly |

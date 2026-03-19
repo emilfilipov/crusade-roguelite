@@ -5,10 +5,16 @@ Single-file technical reference for current MVP runtime behavior.
 Use this for entity/component/system lookup without scanning all source files.
 
 ## Latest Update (2026-03-19)
+- Replaced the level-up pool with 8 upgrades and random 3-option drafts.
+- Upgrade values now roll via weighted min/max sampling (higher values are rarer).
+- Activated commander aura mechanics:
+  - Authority aura: in-range friendly morale/cohesion-loss resistance + enemy morale drain.
+  - Hospitalier aura: in-range friendly HP/morale/cohesion regen.
+- Added commander ranged arrow attack (outside-melee targeting, projectile travel, despawn on hit/max distance).
 - Added XP pack minimap markers (yellow blips).
 - Added commander movement slowdown from enemy pressure inside formation bounds (capped at 50% minimum speed multiplier).
 - Pause menu button label now reads `Main Menu`.
-- Added mandatory `LevelUp` state with 5-card draft overlay (image + description) and no skip path.
+- Added mandatory `LevelUp` state with 3-card draft overlay (image + description) and no skip path.
 - Raised banner follow offset so it renders visibly behind/above the commander during movement.
 - Dropped banner now uses the standard upright banner sprite for stronger in-world readability.
 - Minimap now shows dropped-banner position and rescuable-retinue positions.
@@ -16,7 +22,7 @@ Use this for entity/component/system lookup without scanning all source files.
 - Removed decorative floor foliage overlay; battlefield floor now renders as pure sand tiles only.
 - Switched foliage overlay to transparent detail tile to remove opaque square artifacts on the floor.
 - Enemy waves now spawn as staggered batches at pseudo-random positions across the playable map (not border ring-only).
-- `Escape` now only triggers while in `InRun`, opening a centered pause overlay with `Resume`, `Restart`, and `Main Menu / Quit`.
+- `Escape` now only triggers while in `InRun`, opening a centered pause overlay with `Resume`, `Restart`, and `Main Menu`.
 - Added enemy chase hysteresis and removed unit position snapping to reduce movement jitter.
 - Added delayed enemy XP drops (`0.9s` pickup lock) before homing can start.
 - Ambient XP packs now spawn around commander position for better visibility.
@@ -91,6 +97,7 @@ Loaded from `assets/data` by `GameData::load_from_dir`.
 
 ### `units.json`
 - Commander (`baldiun`): `hp=120`, `armor=6`, `damage=12`, `cd=0.9`, `range=34`, `move=170`, `morale=120`, `aura_radius=180`
+  - Ranged profile: `damage=9`, `cd=1.2`, `range=250`, `projectile_speed=420`, `max_distance=260`
 - Recruit knight (`infantry_knight`): `hp=95`, `armor=4`, `damage=9`, `cd=1.1`, `range=36`, `move=150`, `morale=100`
 
 ### `enemies.json`
@@ -128,12 +135,20 @@ Procedural continuation:
 - `rescue_duration_secs=2.2`
 
 ### `upgrades.json`
-- `add_units`
-- `armor_up`
-- `damage_up`
-- `attack_speed_up`
-- `cohesion_up`
-- `commander_aura_up`
+- `damage`
+- `attack_speed`
+- `armor`
+- `pickup_radius`
+- `aura_radius`
+- `authority_aura`
+- `move_speed`
+- `hospitalier_aura`
+
+Roll fields:
+- `min_value`
+- `max_value`
+- `value_step`
+- `weight_exponent`
 
 ### `map.json`
 - `width=2400`
@@ -215,6 +230,11 @@ Friendly combined outgoing multiplier has lower clamp:
 - Formula:
   - `multiplier = clamp(1.0 - enemy_count * 0.04, 0.5, 1.0)`
 
+### Commander Ranged Arrow Attack (`src/combat.rs`, `src/projectiles.rs`)
+- Commander fires arrows only when targets are outside melee range and inside ranged range.
+- Arrow projectile is non-instant and travels via velocity each frame.
+- Arrow despawns on hit or when max travel distance is consumed.
+
 ### Commander XP Requirement (`src/upgrades.rs`)
 - Bracketed exponential scaling:
   - `base = 30`
@@ -223,6 +243,13 @@ Friendly combined outgoing multiplier has lower clamp:
   - intra-bracket multiplier: `1.18^within_bracket_index`
 - Formula:
   - `xp_required(level) = 30 * 5.5^bracket * 1.18^within_bracket`
+
+### Upgrade Roll Formula (`src/upgrades.rs`)
+- Draft picks `3` unique upgrades from the configured pool.
+- Rolled value uses:
+  - `roll = random(0..1)^weight_exponent`
+  - `value = min + (max - min) * roll`
+  - optional quantization by `value_step`.
 
 ### Cohesion Tier Table (`src/morale.rs`)
 - `>=80`: damage `1.08`, attack speed `1.08`, defense `1.05`
@@ -235,6 +262,11 @@ Friendly combined outgoing multiplier has lower clamp:
 - Friendly damage taken: cohesion and army morale loss scale with post-mitigation damage.
 - Enemy kill rewards (friendly morale/cohesion gains) trigger on every 3rd enemy death only.
 - Friendly death: larger cohesion/morale loss scaled by fallen unit max HP (commander death penalty multiplier).
+- Authority aura mitigates in-range friendly morale/cohesion losses from damage and death events.
+- Hospitalier aura provides in-range passive regen:
+  - HP regen (highest)
+  - cohesion regen (medium)
+  - morale regen (lowest)
 - Low-morale retinue pressure:
   - if `>=50%` of retinue below 50% morale: cohesion drains at `3.0/s`
   - else cohesion recovers at `0.25/s`
@@ -257,6 +289,7 @@ Friendly combined outgoing multiplier has lower clamp:
 1. Spawn ambient packs + event packs (enemy death events).
 2. Enemy-death drops spawn with `0.9s` pickup delay before any homing can start.
 3. Any friendly within pickup radius marks pack as `DropInTransitToCommander` (after delay).
+   - Effective pickup radius = `base pickup radius + stacked pickup-radius upgrades`.
 4. Transit pack homes to commander each frame at speed slightly above commander base speed.
 5. On commander contact radius, pack is consumed and effect is applied (`GainXpEvent`).
 
@@ -301,6 +334,7 @@ Friendly combined outgoing multiplier has lower clamp:
 
 ### `combat.rs`
 - attack cooldown tick
+- commander ranged arrow projectile emission
 - in-range targeting + damage emit
 - enemy-in-formation vulnerability check (`+20%` friendly damage when inside formation bounds)
 - damage apply + `UnitDamagedEvent`
@@ -309,6 +343,8 @@ Friendly combined outgoing multiplier has lower clamp:
 ### `morale.rs`
 - run-start cohesion reset
 - morale/cohesion updates from damage/death events
+- authority aura in-range mitigation + enemy morale drain
+- hospitalier aura in-range HP/morale/cohesion regen
 - low-morale retinue pressure on cohesion
 - cohesion modifier recalculation
 
@@ -322,7 +358,7 @@ Friendly combined outgoing multiplier has lower clamp:
 - main menu buttons (`Start`, `Settings`, `Exit`)
 - settings screen with FPS selector
 - pause overlay buttons (`Resume`, `Restart`, `Main Menu`)
-- level-up overlay (5 mandatory upgrade cards, icon + description, no skip)
+- level-up overlay (3 mandatory upgrade cards, icon + description, no skip)
 - game-over overlay buttons (`Restart`, `Main Menu`)
 - top HUD (wave/level/xp/time)
 - progress strips (rescue + banner pickup)
@@ -336,7 +372,9 @@ Friendly combined outgoing multiplier has lower clamp:
 
 ### `upgrades.rs`
 - XP thresholds and explicit level-up draft flow (`InRun -> LevelUp -> InRun`)
-- 5-option upgrade draft cards (keyboard `1..5` and mouse click selection)
+- 3-option upgrade draft cards (keyboard `1..3` and mouse click selection)
+- weighted random min/max upgrade value rolls
+- additive stacked upgrade effects
 - passive commander level scaling
 - level-up full-heal sync for friendlies
 
@@ -344,5 +382,4 @@ Friendly combined outgoing multiplier has lower clamp:
 - feature-gated platform runtime (`standalone`/`steam`)
 
 ## Current Hooks / Known Gaps
-- Commander aura fields/upgrades are still hooks only (`aura_radius`, `commander_aura_bonus` not yet driving active aura effects).
 - `FormationModifiers.defense_multiplier` and anti-cavalry values are still not fully wired into incoming damage resolution.

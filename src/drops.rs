@@ -4,7 +4,7 @@ use crate::data::GameData;
 use crate::enemies::WaveRuntime;
 use crate::map::MapBounds;
 use crate::model::{
-    CommanderUnit, FriendlyUnit, GainXpEvent, GameState, MoveSpeed, SpawnExpPackEvent,
+    CommanderUnit, FriendlyUnit, GainXpEvent, GameState, GlobalBuffs, MoveSpeed, SpawnExpPackEvent,
     StartRunEvent,
 };
 use crate::upgrades::Progression;
@@ -182,6 +182,7 @@ fn pickup_exp_packs(
     mut commands: Commands,
     time: Res<Time>,
     data: Res<GameData>,
+    buffs: Option<Res<GlobalBuffs>>,
     friendlies: Query<&Transform, With<FriendlyUnit>>,
     mut packs: Query<
         (Entity, &mut ExpPack, &Transform),
@@ -196,7 +197,12 @@ fn pickup_exp_packs(
         return;
     }
 
-    let pickup_radius = data.drops.pickup_radius;
+    let pickup_radius = (data.drops.pickup_radius
+        + buffs
+            .as_ref()
+            .map(|value| value.pickup_radius_bonus)
+            .unwrap_or(0.0))
+    .max(1.0);
     for (entity, mut pack, transform) in &mut packs {
         pack.pickup_delay_remaining =
             tick_pickup_delay(pack.pickup_delay_remaining, time.delta_seconds());

@@ -1,12 +1,13 @@
 use bevy::prelude::*;
 
 use crate::banner::BannerMovementPenalty;
+use crate::combat::{CommanderRangedAttackCooldown, CommanderRangedAttackProfile};
 use crate::data::GameData;
 use crate::map::{MapBounds, playable_bounds};
 use crate::model::{
     Armor, AttackCooldown, AttackProfile, BaseMaxHealth, ColliderRadius, CommanderUnit, EnemyUnit,
-    FriendlyUnit, GameState, Health, Morale, MoveSpeed, PlayerControlled, RecruitEvent,
-    RescuableUnit, StartRunEvent, Team, Unit, UnitDiedEvent, UnitKind,
+    FriendlyUnit, GameState, GlobalBuffs, Health, Morale, MoveSpeed, PlayerControlled,
+    RecruitEvent, RescuableUnit, StartRunEvent, Team, Unit, UnitDiedEvent, UnitKind,
 };
 use crate::visuals::ArtAssets;
 
@@ -90,6 +91,16 @@ fn spawn_commander(commands: &mut Commands, data: &GameData, art: &ArtAssets) ->
                 cfg.attack_cooldown_secs,
                 TimerMode::Repeating,
             )),
+            CommanderRangedAttackProfile {
+                damage: cfg.ranged_attack_damage,
+                range: cfg.ranged_attack_range,
+                projectile_speed: cfg.ranged_projectile_speed,
+                projectile_max_distance: cfg.ranged_projectile_max_distance,
+            },
+            CommanderRangedAttackCooldown(Timer::from_seconds(
+                cfg.ranged_attack_cooldown_secs,
+                TimerMode::Repeating,
+            )),
             MoveSpeed(cfg.move_speed),
             SpriteBundle {
                 texture: art.commander_idle.clone(),
@@ -153,6 +164,7 @@ fn spawn_recruit(
 fn commander_movement(
     time: Res<Time>,
     data: Res<GameData>,
+    buffs: Option<Res<GlobalBuffs>>,
     keyboard: Option<Res<ButtonInput<KeyCode>>>,
     bounds: Option<Res<MapBounds>>,
     banner_penalty: Option<Res<BannerMovementPenalty>>,
@@ -191,6 +203,10 @@ fn commander_movement(
         .unwrap_or(1.0);
     let recruit_count = friendlies.iter().count();
     let slot_spacing = data.formations.square.slot_spacing;
+    let movement_bonus = buffs
+        .as_ref()
+        .map(|value| value.move_speed_bonus)
+        .unwrap_or(0.0);
     for (move_speed, mut transform) in &mut commanders {
         let commander_position = transform.translation.truncate();
         let inside_enemy_count = enemies
@@ -206,7 +222,8 @@ fn commander_movement(
             .count();
         let formation_slowdown =
             movement_multiplier_from_inside_enemy_count(inside_enemy_count as u32);
-        let delta = direction * move_speed.0 * speed_multiplier * time.delta_seconds();
+        let effective_speed = (move_speed.0 + movement_bonus).max(1.0);
+        let delta = direction * effective_speed * speed_multiplier * time.delta_seconds();
         transform.translation.x += delta.x * formation_slowdown;
         transform.translation.y += delta.y * formation_slowdown;
         if let Some(map_bounds) = &bounds {

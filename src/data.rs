@@ -19,6 +19,16 @@ pub struct UnitStatsConfig {
     pub morale: f32,
     #[serde(default)]
     pub aura_radius: f32,
+    #[serde(default)]
+    pub ranged_attack_damage: f32,
+    #[serde(default)]
+    pub ranged_attack_cooldown_secs: f32,
+    #[serde(default)]
+    pub ranged_attack_range: f32,
+    #[serde(default)]
+    pub ranged_projectile_speed: f32,
+    #[serde(default)]
+    pub ranged_projectile_max_distance: f32,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -73,7 +83,16 @@ pub struct WavesConfigFile {
 pub struct UpgradeConfig {
     pub id: String,
     pub kind: String,
+    #[serde(default)]
     pub value: f32,
+    #[serde(default)]
+    pub min_value: Option<f32>,
+    #[serde(default)]
+    pub max_value: Option<f32>,
+    #[serde(default)]
+    pub value_step: Option<f32>,
+    #[serde(default)]
+    pub weight_exponent: Option<f32>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -174,6 +193,17 @@ fn validate_unit_stats(unit: &UnitStatsConfig, label: &str) -> Result<()> {
     if unit.morale <= 0.0 {
         bail!("{label} morale must be > 0");
     }
+    let ranged_fields = [
+        unit.ranged_attack_damage,
+        unit.ranged_attack_cooldown_secs,
+        unit.ranged_attack_range,
+        unit.ranged_projectile_speed,
+        unit.ranged_projectile_max_distance,
+    ];
+    let has_any_ranged = ranged_fields.iter().any(|value| *value > 0.0);
+    if has_any_ranged && ranged_fields.iter().any(|value| *value <= 0.0) {
+        bail!("{label} ranged fields must all be > 0 when any ranged field is set");
+    }
     Ok(())
 }
 
@@ -241,6 +271,26 @@ fn validate_upgrades(config: &UpgradesConfigFile) -> Result<()> {
     for (idx, upgrade) in config.upgrades.iter().enumerate() {
         if upgrade.id.trim().is_empty() || upgrade.kind.trim().is_empty() {
             bail!("upgrade[{idx}] id and kind must be non-empty");
+        }
+        if let (Some(min_value), Some(max_value)) = (upgrade.min_value, upgrade.max_value) {
+            if min_value <= 0.0 || max_value <= 0.0 {
+                bail!("upgrade[{idx}] min_value and max_value must be > 0");
+            }
+            if max_value < min_value {
+                bail!("upgrade[{idx}] max_value must be >= min_value");
+            }
+        } else if upgrade.value <= 0.0 {
+            bail!("upgrade[{idx}] value must be > 0 when min/max are omitted");
+        }
+        if let Some(step) = upgrade.value_step
+            && step <= 0.0
+        {
+            bail!("upgrade[{idx}] value_step must be > 0");
+        }
+        if let Some(exponent) = upgrade.weight_exponent
+            && exponent <= 0.0
+        {
+            bail!("upgrade[{idx}] weight_exponent must be > 0");
         }
     }
     Ok(())

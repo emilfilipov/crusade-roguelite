@@ -143,8 +143,14 @@ pub struct GlobalBuffs {
     pub damage_multiplier: f32,
     pub armor_bonus: f32,
     pub attack_speed_multiplier: f32,
-    pub cohesion_bonus: f32,
-    pub commander_aura_bonus: f32,
+    pub pickup_radius_bonus: f32,
+    pub move_speed_bonus: f32,
+    pub commander_aura_radius_bonus: f32,
+    pub authority_friendly_loss_resistance: f32,
+    pub authority_enemy_morale_drain_per_sec: f32,
+    pub hospitalier_hp_regen_per_sec: f32,
+    pub hospitalier_cohesion_regen_per_sec: f32,
+    pub hospitalier_morale_regen_per_sec: f32,
 }
 
 impl Default for GlobalBuffs {
@@ -153,8 +159,14 @@ impl Default for GlobalBuffs {
             damage_multiplier: 1.0,
             armor_bonus: 0.0,
             attack_speed_multiplier: 1.0,
-            cohesion_bonus: 0.0,
-            commander_aura_bonus: 0.0,
+            pickup_radius_bonus: 0.0,
+            move_speed_bonus: 0.0,
+            commander_aura_radius_bonus: 0.0,
+            authority_friendly_loss_resistance: 0.0,
+            authority_enemy_morale_drain_per_sec: 0.0,
+            hospitalier_hp_regen_per_sec: 0.0,
+            hospitalier_cohesion_regen_per_sec: 0.0,
+            hospitalier_morale_regen_per_sec: 0.0,
         }
     }
 }

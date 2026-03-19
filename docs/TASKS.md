@@ -412,7 +412,7 @@
 - Acceptance Criteria:
   - Pause menu third button displays `Main Menu`.
 
-## CRU-049 - Mandatory Level-Up Draft Screen (5 Cards)
+## CRU-049 - Mandatory Level-Up Draft Screen (3 Cards)
 - Status: `DONE`
 - Type: `Gameplay/UI`
 - Priority: `P0`
@@ -424,7 +424,7 @@
 - Implementation:
   1. Added `GameState::LevelUp`.
   2. Reworked upgrade flow to open draft state on level threshold and resume only after selection event.
-  3. Added 5-option draft roll, keyboard `1..5` support, and card-click selection.
+  3. Added 3-option draft roll, keyboard `1..3` support, and card-click selection.
   4. Added full-screen level-up overlay with tall cards (title + icon + description).
   5. Kept pause toggle constrained to `InRun`, so Escape is inactive in `LevelUp`.
 - Unit Tests Required:
@@ -434,6 +434,73 @@
   - On level-up, gameplay pauses and level-up overlay appears.
   - Player must select one card to continue.
   - Escape does not open pause menu while level-up overlay is active.
+
+## CRU-050 - Weighted 8-Upgrade Draft Overhaul (3 Choices)
+- Status: `DONE`
+- Type: `Gameplay/Progression`
+- Priority: `P0`
+- Depends on: none
+- Goal: Replace legacy upgrade pool with the agreed 8-upgrade set and random 3-choice drafts.
+- Context:
+  - Upgrade pool changed from mixed placeholder upgrades to a fixed tactical set.
+  - Value strength needs min/max weighted randomness (higher rolls rarer).
+- Implementation:
+  1. Extended upgrade schema with `min_value`, `max_value`, `value_step`, `weight_exponent`.
+  2. Replaced `assets/data/upgrades.json` with the new 8 upgrades.
+  3. Added deterministic run-seeded RNG for upgrade option/value rolling.
+  4. Updated level-up UI/input to 3 selections (`1..3`) and 3 cards on screen.
+- Unit Tests Required:
+  - Unique 3-option draft test.
+  - Weighted roll min/max bounds test.
+- Acceptance Criteria:
+  - Each level-up offers random 3 upgrades from the 8-upgrade pool.
+  - Rolled values stay within min/max and are weighted toward lower values.
+
+## CRU-051 - Commander Aura Effects (Authority + Hospitalier)
+- Status: `DONE`
+- Type: `Gameplay/Systems`
+- Priority: `P0`
+- Depends on: `CRU-050`
+- Goal: Activate commander aura upgrades as real runtime mechanics with in-range-only effects.
+- Context:
+  - Aura hooks existed but were mostly placeholder.
+  - Requested effects are range-gated and additive across level-ups.
+- Implementation:
+  1. Expanded `GlobalBuffs` for aura radius, authority mitigation/drain, and hospitalier regens.
+  2. Authority aura:
+     - reduces friendly morale/cohesion loss for damage/death events while in aura.
+     - applies passive morale drain to enemies in aura.
+  3. Hospitalier aura:
+     - applies passive HP/morale regen to friendlies in aura.
+     - applies cohesion regen scaled by friendly aura coverage.
+  4. Added aura-radius helper using commander base aura + upgrade bonus.
+- Unit Tests Required:
+  - Authority mitigation multiplier test.
+  - Commander aura radius bonus test.
+- Acceptance Criteria:
+  - Aura effects apply only to entities inside commander aura radius.
+  - Stacked upgrades increase aura strength additively.
+
+## CRU-052 - Commander Ranged Arrow Attack
+- Status: `DONE`
+- Type: `Gameplay/Combat`
+- Priority: `P0`
+- Depends on: none
+- Goal: Add commander ranged projectile attack used only when enemies are outside melee range.
+- Context:
+  - Commander needed non-instant ranged capability with physical arrows.
+  - Arrow must despawn on hit or max travel distance.
+- Implementation:
+  1. Added commander ranged config fields in `units.json` and data schema.
+  2. Added commander ranged attack profile + cooldown components.
+  3. Added ranged attack system that fires arrows only when target is outside melee range and inside ranged range.
+  4. Updated projectile runtime to despawn by remaining travel distance or collision.
+- Unit Tests Required:
+  - Projectile travel-distance depletion test.
+  - Existing combat/projectile tests.
+- Acceptance Criteria:
+  - Commander shoots arrows at valid ranged targets.
+  - Arrows disappear on hit or when max travel distance is consumed.
 
 ---
 
