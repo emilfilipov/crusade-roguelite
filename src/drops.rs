@@ -13,6 +13,8 @@ use crate::visuals::ArtAssets;
 const DROP_HOMING_SPEED_MULTIPLIER: f32 = 1.2;
 const DROP_CONSUME_RADIUS: f32 = 16.0;
 const AMBIENT_PICKUP_DELAY_SECS: f32 = 0.0;
+const DROP_RENDER_SIZE: f32 = 24.0;
+const DROP_RENDER_Z: f32 = 40.0;
 
 #[derive(Component, Clone, Copy, Debug)]
 pub struct ExpPack {
@@ -254,10 +256,11 @@ fn spawn_exp_pack(
         SpriteBundle {
             texture: art.exp_pack_coin_stack.clone(),
             sprite: Sprite {
-                custom_size: Some(Vec2::new(18.0, 18.0)),
+                custom_size: Some(Vec2::splat(DROP_RENDER_SIZE)),
+                color: Color::srgb(1.0, 0.97, 0.76),
                 ..default()
             },
-            transform: Transform::from_xyz(position.x, position.y, 4.0),
+            transform: Transform::from_xyz(position.x, position.y, DROP_RENDER_Z),
             ..default()
         },
     ));

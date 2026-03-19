@@ -5,7 +5,7 @@ use crate::model::{
     UnitDamagedEvent, UnitDiedEvent, UnitKind,
 };
 
-const STARTING_COHESION: f32 = 70.0;
+const STARTING_COHESION: f32 = 100.0;
 const LOW_MORALE_RATIO_THRESHOLD: f32 = 0.5;
 const LOW_MORALE_COHESION_DRAIN_PER_SEC: f32 = 2.0;
 const STABLE_COHESION_RECOVERY_PER_SEC: f32 = 0.7;
@@ -221,7 +221,12 @@ pub fn cohesion_modifiers(value: f32) -> CohesionCombatModifiers {
 
 #[cfg(test)]
 mod tests {
-    use crate::morale::{average_morale_ratio, cohesion_modifiers, low_morale_ratio};
+    use crate::morale::{Cohesion, average_morale_ratio, cohesion_modifiers, low_morale_ratio};
+
+    #[test]
+    fn cohesion_starts_full() {
+        assert!((Cohesion::default().value - 100.0).abs() < 0.0001);
+    }
 
     #[test]
     fn high_cohesion_has_positive_bonus() {
