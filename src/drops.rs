@@ -4,17 +4,20 @@ use crate::data::GameData;
 use crate::enemies::WaveRuntime;
 use crate::map::MapBounds;
 use crate::model::{
-    CommanderUnit, FriendlyUnit, GainXpEvent, GameState, SpawnExpPackEvent, StartRunEvent,
+    CommanderUnit, FriendlyUnit, GainXpEvent, GameState, MoveSpeed, SpawnExpPackEvent,
+    StartRunEvent,
 };
 use crate::upgrades::Progression;
 use crate::visuals::ArtAssets;
 
-const DROP_HOMING_SPEED: f32 = 340.0;
+const DROP_HOMING_SPEED_MULTIPLIER: f32 = 1.2;
 const DROP_CONSUME_RADIUS: f32 = 16.0;
+const AMBIENT_PICKUP_DELAY_SECS: f32 = 0.0;
 
 #[derive(Component, Clone, Copy, Debug)]
 pub struct ExpPack {
     pub xp_value: f32,
+    pub pickup_delay_remaining: f32,
 }
 
 #[derive(Component, Clone, Copy, Debug)]
@@ -49,6 +52,7 @@ impl Plugin for DropsPlugin {
                     pickup_exp_packs,
                     transit_drops_to_commander,
                 )
+                    .chain()
                     .run_if(in_state(GameState::InRun)),
             );
     }
@@ -63,6 +67,7 @@ fn spawn_exp_packs_on_run_start(
     waves: Option<Res<WaveRuntime>>,
     progression: Option<Res<Progression>>,
     bounds: Option<Res<MapBounds>>,
+    commanders: Query<&Transform, With<CommanderUnit>>,
     existing_packs: Query<Entity, With<ExpPack>>,
     mut runtime: ResMut<DropSpawnRuntime>,
 ) {
@@ -79,9 +84,16 @@ fn spawn_exp_packs_on_run_start(
     let wave_number = current_wave_number(waves.as_deref());
     let commander_level = current_commander_level(progression.as_deref());
     let xp_value = scaled_pack_xp(data.drops.xp_per_pack, wave_number, commander_level);
+    let center = commander_spawn_center(&commanders);
     for sequence in 0..initial_count {
-        let position = drop_spawn_position(sequence, bounds.as_deref().copied());
-        spawn_exp_pack(&mut commands, position, xp_value, &art);
+        let position = drop_spawn_position(sequence, bounds.as_deref().copied(), center);
+        spawn_exp_pack(
+            &mut commands,
+            position,
+            xp_value,
+            AMBIENT_PICKUP_DELAY_SECS,
+            &art,
+        );
     }
 
     runtime.sequence = initial_count;
@@ -97,6 +109,7 @@ fn spawn_exp_packs_over_time(
     waves: Option<Res<WaveRuntime>>,
     progression: Option<Res<Progression>>,
     bounds: Option<Res<MapBounds>>,
+    commanders: Query<&Transform, With<CommanderUnit>>,
     packs: Query<Entity, With<ExpPack>>,
     mut runtime: ResMut<DropSpawnRuntime>,
 ) {
@@ -110,11 +123,18 @@ fn spawn_exp_packs_over_time(
         return;
     }
 
-    let position = drop_spawn_position(runtime.sequence, bounds.as_deref().copied());
+    let center = commander_spawn_center(&commanders);
+    let position = drop_spawn_position(runtime.sequence, bounds.as_deref().copied(), center);
     let wave_number = current_wave_number(waves.as_deref());
     let commander_level = current_commander_level(progression.as_deref());
     let xp_value = scaled_pack_xp(data.drops.xp_per_pack, wave_number, commander_level);
-    spawn_exp_pack(&mut commands, position, xp_value, &art);
+    spawn_exp_pack(
+        &mut commands,
+        position,
+        xp_value,
+        AMBIENT_PICKUP_DELAY_SECS,
+        &art,
+    );
     runtime.sequence = runtime.sequence.saturating_add(1);
 }
 
@@ -140,7 +160,17 @@ fn spawn_exp_packs_from_events(
         }
         let base_xp = event.xp_value_override.unwrap_or(data.drops.xp_per_pack);
         let xp_value = scaled_pack_xp(base_xp, wave_number, commander_level);
-        spawn_exp_pack(&mut commands, event.world_position, xp_value, &art);
+        let pickup_delay = event
+            .pickup_delay_secs
+            .unwrap_or(AMBIENT_PICKUP_DELAY_SECS)
+            .max(0.0);
+        spawn_exp_pack(
+            &mut commands,
+            event.world_position,
+            xp_value,
+            pickup_delay,
+            &art,
+        );
         active_count = active_count.saturating_add(1);
     }
 }
@@ -148,9 +178,13 @@ fn spawn_exp_packs_from_events(
 #[allow(clippy::type_complexity)]
 fn pickup_exp_packs(
     mut commands: Commands,
+    time: Res<Time>,
     data: Res<GameData>,
     friendlies: Query<&Transform, With<FriendlyUnit>>,
-    packs: Query<(Entity, &Transform), (With<ExpPack>, Without<DropInTransitToCommander>)>,
+    mut packs: Query<
+        (Entity, &mut ExpPack, &Transform),
+        (Without<DropInTransitToCommander>, With<ExpPack>),
+    >,
 ) {
     let friendly_positions: Vec<Vec2> = friendlies
         .iter()
@@ -161,7 +195,12 @@ fn pickup_exp_packs(
     }
 
     let pickup_radius = data.drops.pickup_radius;
-    for (entity, transform) in &packs {
+    for (entity, mut pack, transform) in &mut packs {
+        pack.pickup_delay_remaining =
+            tick_pickup_delay(pack.pickup_delay_remaining, time.delta_seconds());
+        if pack.pickup_delay_remaining > 0.0 {
+            continue;
+        }
         let pack_position = transform.translation.truncate();
         if any_friendly_in_pickup_radius(pack_position, &friendly_positions, pickup_radius) {
             commands.entity(entity).insert(DropInTransitToCommander);
@@ -173,18 +212,19 @@ fn pickup_exp_packs(
 fn transit_drops_to_commander(
     mut commands: Commands,
     time: Res<Time>,
-    commanders: Query<&Transform, With<CommanderUnit>>,
+    commanders: Query<(&Transform, &MoveSpeed), With<CommanderUnit>>,
     mut packs: Query<
         (Entity, &ExpPack, &mut Transform),
         (With<DropInTransitToCommander>, Without<CommanderUnit>),
     >,
     mut xp_events: EventWriter<GainXpEvent>,
 ) {
-    let Ok(commander_transform) = commanders.get_single() else {
+    let Ok((commander_transform, commander_speed)) = commanders.get_single() else {
         return;
     };
     let target = commander_transform.translation.truncate();
-    let max_step = DROP_HOMING_SPEED * time.delta_seconds();
+    let homing_speed = homing_speed_from_commander_base(commander_speed.0);
+    let max_step = homing_speed * time.delta_seconds();
 
     for (entity, pack, mut transform) in &mut packs {
         let current = transform.translation.truncate();
@@ -199,9 +239,18 @@ fn transit_drops_to_commander(
     }
 }
 
-fn spawn_exp_pack(commands: &mut Commands, position: Vec2, xp_value: f32, art: &ArtAssets) {
+fn spawn_exp_pack(
+    commands: &mut Commands,
+    position: Vec2,
+    xp_value: f32,
+    pickup_delay_secs: f32,
+    art: &ArtAssets,
+) {
     commands.spawn((
-        ExpPack { xp_value },
+        ExpPack {
+            xp_value,
+            pickup_delay_remaining: pickup_delay_secs.max(0.0),
+        },
         SpriteBundle {
             texture: art.exp_pack_coin_stack.clone(),
             sprite: Sprite {
@@ -225,21 +274,46 @@ fn current_commander_level(progression: Option<&Progression>) -> u32 {
     progression.map(|value| value.level.max(1)).unwrap_or(1)
 }
 
+fn commander_spawn_center(commanders: &Query<&Transform, With<CommanderUnit>>) -> Vec2 {
+    commanders
+        .get_single()
+        .map(|transform| transform.translation.truncate())
+        .unwrap_or(Vec2::ZERO)
+}
+
 pub fn scaled_pack_xp(base_xp: f32, wave_number: u32, commander_level: u32) -> f32 {
     let wave_scale = 1.0 + wave_number.saturating_sub(1) as f32 * 0.06;
     let level_scale = 1.0 + commander_level.saturating_sub(1) as f32 * 0.04;
     (base_xp * wave_scale * level_scale).max(1.0)
 }
 
-fn drop_spawn_position(sequence: u32, bounds: Option<MapBounds>) -> Vec2 {
+fn drop_spawn_position(sequence: u32, bounds: Option<MapBounds>, center: Vec2) -> Vec2 {
     let max_radius = bounds
-        .map(|b| b.half_width.min(b.half_height) * 0.86)
-        .unwrap_or(820.0);
-    let min_radius = max_radius * 0.12;
+        .map(|b| b.half_width.min(b.half_height) * 0.48)
+        .unwrap_or(520.0);
+    let min_radius = max_radius * 0.16;
     let ring_fraction = 0.2 + (sequence % 9) as f32 * 0.08;
     let radius = min_radius + (max_radius - min_radius) * ring_fraction.clamp(0.2, 0.92);
     let angle = sequence as f32 * 2.399_963_1 + 0.75;
-    Vec2::new(radius * angle.cos(), radius * angle.sin())
+    let mut position = center + Vec2::new(radius * angle.cos(), radius * angle.sin());
+    if let Some(map_bounds) = bounds {
+        position.x = position
+            .x
+            .clamp(-map_bounds.half_width, map_bounds.half_width);
+        position.y = position
+            .y
+            .clamp(-map_bounds.half_height, map_bounds.half_height);
+    }
+    position
+}
+
+pub fn homing_speed_from_commander_base(commander_base_speed: f32) -> f32 {
+    let base = commander_base_speed.max(1.0);
+    (base * DROP_HOMING_SPEED_MULTIPLIER).max(base + 8.0)
+}
+
+pub fn tick_pickup_delay(remaining: f32, delta_seconds: f32) -> f32 {
+    (remaining - delta_seconds.max(0.0)).max(0.0)
 }
 
 pub fn any_friendly_in_pickup_radius(
@@ -272,8 +346,8 @@ mod tests {
     use bevy::prelude::Vec2;
 
     use crate::drops::{
-        any_friendly_in_pickup_radius, drop_spawn_position, reached_target, scaled_pack_xp,
-        step_towards_target,
+        any_friendly_in_pickup_radius, drop_spawn_position, homing_speed_from_commander_base,
+        reached_target, scaled_pack_xp, step_towards_target, tick_pickup_delay,
     };
     use crate::map::MapBounds;
 
@@ -284,8 +358,8 @@ mod tests {
             half_height: 900.0,
         };
         for sequence in 0..48 {
-            let point = drop_spawn_position(sequence, Some(bounds));
-            assert!(point.length() <= 900.0 * 0.86 + 0.01);
+            let point = drop_spawn_position(sequence, Some(bounds), Vec2::ZERO);
+            assert!(point.length() <= 900.0 * 0.48 + 0.01);
         }
     }
 
@@ -331,5 +405,17 @@ mod tests {
     fn reached_target_uses_radius() {
         assert!(reached_target(Vec2::new(1.0, 1.0), Vec2::ZERO, 2.0));
         assert!(!reached_target(Vec2::new(3.0, 0.0), Vec2::ZERO, 2.0));
+    }
+
+    #[test]
+    fn homing_speed_is_always_above_commander_base() {
+        assert!(homing_speed_from_commander_base(170.0) > 170.0);
+        assert!(homing_speed_from_commander_base(50.0) > 50.0);
+    }
+
+    #[test]
+    fn pickup_delay_ticks_down_to_zero() {
+        assert!((tick_pickup_delay(0.5, 0.2) - 0.3).abs() < 0.001);
+        assert_eq!(tick_pickup_delay(0.1, 1.0), 0.0);
     }
 }

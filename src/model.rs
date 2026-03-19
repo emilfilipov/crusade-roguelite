@@ -194,4 +194,5 @@ pub struct GainXpEvent(pub f32);
 pub struct SpawnExpPackEvent {
     pub world_position: Vec2,
     pub xp_value_override: Option<f32>,
+    pub pickup_delay_secs: Option<f32>,
 }

@@ -16,7 +16,7 @@
     "armor": 4.0,
     "damage": 9.0,
     "attack_cooldown_secs": 1.1,
-    "attack_range": 32.0,
+    "attack_range": 36.0,
     "move_speed": 150.0,
     "morale": 100.0
   }

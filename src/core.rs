@@ -110,8 +110,8 @@ fn detect_game_over(
     mut next_state: ResMut<NextState<GameState>>,
 ) {
     if commanders.is_empty() {
-        warn!("Commander defeated; returning to MainMenu.");
-        next_state.set(GameState::MainMenu);
+        warn!("Commander defeated; entering GameOver.");
+        next_state.set(GameState::GameOver);
     }
 }
 

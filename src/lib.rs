@@ -102,6 +102,7 @@ pub fn configure_game_app(app: &mut App) {
             map::MapPlugin,
             squad::SquadPlugin,
             formation::FormationPlugin,
+            collision::CollisionPlugin,
             rescue::RescuePlugin,
             drops::DropsPlugin,
         ))

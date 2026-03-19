@@ -5,6 +5,14 @@ Single-file technical reference for current MVP runtime behavior.
 Use this for entity/component/system lookup without scanning all source files.
 
 ## Latest Update (2026-03-19)
+- Added enemy chase hysteresis and removed unit position snapping to reduce movement jitter.
+- Added delayed enemy XP drops (`0.45s` pickup lock) before homing can start.
+- Ambient XP packs now spawn around commander position for better visibility.
+- XP homing speed now scales from commander base speed and stays slightly faster.
+- Enabled `CollisionPlugin` in app wiring (enemy collision now active).
+- Added `GameOver` overlay flow with `Restart` and `Main Menu` actions.
+- Rebuilt map floor rendering into tiled desert ground + sparse foliage overlay.
+- Increased knight attack range from `32` to `36`.
 - Added drop transit-to-commander flow: friendly pickup starts homing, drop effect triggers only on commander contact.
 - Replaced placeholder `morale_weight` usage with active per-unit `Morale` (friendlies and enemies).
 - Added morale-based combat debuff below 50% morale.
@@ -31,38 +39,41 @@ Use this for entity/component/system lookup without scanning all source files.
 ### Plugin Order (`configure_game_app`)
 1. `DataPlugin`
 2. `CorePlugin`
-3. `PerformancePlugin`
-4. `VisualPlugin`
-5. `MapPlugin`
-6. `SquadPlugin`
-7. `FormationPlugin`
-8. `RescuePlugin`
-9. `DropsPlugin`
-10. `EnemyPlugin`
-11. `CombatPlugin`
-12. `ProjectilePlugin`
-13. `MoralePlugin`
-14. `BannerPlugin`
-15. `UpgradePlugin`
-16. `UiPlugin`
-17. `PlatformPlugin`
+3. `SettingsPlugin`
+4. `PerformancePlugin`
+5. `VisualPlugin`
+6. `MapPlugin`
+7. `SquadPlugin`
+8. `FormationPlugin`
+9. `CollisionPlugin`
+10. `RescuePlugin`
+11. `DropsPlugin`
+12. `EnemyPlugin`
+13. `CombatPlugin`
+14. `ProjectilePlugin`
+15. `MoralePlugin`
+16. `BannerPlugin`
+17. `UpgradePlugin`
+18. `UiPlugin`
+19. `PlatformPlugin`
 
 ### Runtime Note
-- `src/collision.rs` has tested logic but `CollisionPlugin` is not currently registered in app setup.
+- `src/collision.rs` is now registered in app setup.
 
 ### Game States
 - `Boot`
 - `MainMenu`
+- `Settings`
 - `InRun`
 - `Paused`
-- `GameOver` (defined, current defeat flow returns directly to `MainMenu`)
+- `GameOver` (defeat pauses run and shows overlay actions)
 
 ## Data Files and Live Values
 Loaded from `assets/data` by `GameData::load_from_dir`.
 
 ### `units.json`
 - Commander (`baldiun`): `hp=120`, `armor=6`, `damage=12`, `cd=0.9`, `range=34`, `move=170`, `morale=120`, `aura_radius=180`
-- Recruit knight (`infantry_knight`): `hp=95`, `armor=4`, `damage=9`, `cd=1.1`, `range=32`, `move=150`, `morale=100`
+- Recruit knight (`infantry_knight`): `hp=95`, `armor=4`, `damage=9`, `cd=1.1`, `range=36`, `move=150`, `morale=100`
 
 ### `enemies.json`
 - `bandit_raider`: `hp=34`, `armor=1`, `damage=6`, `cd=1.3`, `range=30`, `move=118`, `morale=90`
@@ -198,9 +209,10 @@ Friendly combined outgoing multiplier has lower clamp:
 
 ## Drop Flow (`src/drops.rs`)
 1. Spawn ambient packs + event packs (enemy death events).
-2. Any friendly within pickup radius marks pack as `DropInTransitToCommander`.
-3. Transit pack homes to commander each frame.
-4. On commander contact radius, pack is consumed and effect is applied (`GainXpEvent`).
+2. Enemy-death drops spawn with short pickup delay before any homing can start.
+3. Any friendly within pickup radius marks pack as `DropInTransitToCommander` (after delay).
+4. Transit pack homes to commander each frame at speed slightly above commander base speed.
+5. On commander contact radius, pack is consumed and effect is applied (`GainXpEvent`).
 
 ## System Summary (By Module)
 
@@ -209,13 +221,13 @@ Friendly combined outgoing multiplier has lower clamp:
 - Main menu cleanup
 - pause/resume
 - survival timer
-- commander-loss return to menu
+- commander-loss transition to `GameOver`
 
 ### `map.rs`
 - camera spawn
 - map bounds init
-- background spawn
-- camera follow + pixel snap
+- tiled desert floor + sparse foliage spawn
+- camera follow + camera-only pixel snap
 
 ### `squad.rs`
 - run start commander spawn
@@ -256,7 +268,9 @@ Friendly combined outgoing multiplier has lower clamp:
 - movement penalty state updates
 
 ### `ui.rs`
-- main menu + FPS selector
+- main menu buttons (`Start`, `Settings`, `Exit`)
+- settings screen with FPS selector
+- game-over overlay buttons (`Restart`, `Main Menu`)
 - top HUD (wave/level/xp/time)
 - progress strips (rescue + banner pickup)
 - bottom-left vertical bars (average morale + cohesion)

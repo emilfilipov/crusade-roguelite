@@ -133,6 +133,127 @@
   - No active oasis fields are required by runtime config loader.
   - Documentation reflects oasis as deferred/not active.
 
+## CRU-034 - Enemy Movement Stabilization (Jitter Fix)
+- Status: `DONE`
+- Type: `Gameplay/AI`
+- Priority: `P0`
+- Depends on: none
+- Goal: Remove enemy micro-jitter while chasing/engaging targets.
+- Context:
+  - Enemy movement oscillated around melee range thresholds.
+  - Unit-level pixel snapping amplified visible jitter.
+- Implementation:
+  1. Added chase hysteresis (`stop`/`resume` distances) via per-enemy movement state.
+  2. Kept camera pixel snapping but removed unit transform snapping.
+  3. Added tests for hysteresis behavior.
+- Unit Tests Required:
+  - Hysteresis transition test.
+- Acceptance Criteria:
+  - Enemies hold stable melee standoff and no longer rapidly start/stop each frame.
+
+## CRU-035 - XP Drop Visibility and Pickup Delay
+- Status: `DONE`
+- Type: `Gameplay/Core`
+- Priority: `P0`
+- Depends on: none
+- Goal: Ensure XP packs are visible, enemy drops linger briefly, then home to commander.
+- Context:
+  - Players reported no visible ambient packs and no obvious enemy drop feedback.
+  - Enemy kill drops should not instantly home in the same frame.
+- Implementation:
+  1. Added per-pack pickup delay timer.
+  2. Enemy death drop events now spawn packs with delay (`0.45s`) before pickup/homing.
+  3. Ambient pack spawn now centers around commander position for better visibility.
+  4. Homing speed now derives from commander base move speed and stays slightly faster.
+- Unit Tests Required:
+  - Pickup delay tick-down test.
+  - Homing speed > commander base speed test.
+- Acceptance Criteria:
+  - Ambient packs are regularly visible in the play area.
+  - Enemy drops remain on ground briefly, then home after pickup trigger.
+
+## CRU-036 - Morale/Cohesion Vertical Meter Direction
+- Status: `DONE`
+- Type: `UI`
+- Priority: `P1`
+- Depends on: none
+- Goal: Ensure morale/cohesion bars deplete from top to bottom.
+- Context:
+  - Meter container axis settings were ambiguous for vertical anchoring.
+- Implementation:
+  1. Set bar container to column flow with bottom anchoring for fill.
+  2. Kept runtime fill ratio updates unchanged.
+- Unit Tests Required:
+  - Existing HUD ratio tests remain valid.
+- Acceptance Criteria:
+  - Lower values visually reduce fill from top downward.
+
+## CRU-037 - Desert Floor and Foliage Rendering Refresh
+- Status: `DONE`
+- Type: `Visual`
+- Priority: `P1`
+- Depends on: none
+- Goal: Restore readable desert battlefield floor using available asset packs.
+- Context:
+  - Background floor looked missing/placeholder after asset path changes.
+- Implementation:
+  1. Switched floor texture source to Ishtar dirt/sand-like tile.
+  2. Replaced single stretched floor sprite with tiled background grid.
+  3. Added sparse deterministic foliage/debris overlay tiles.
+- Unit Tests Required:
+  - Deterministic foliage placement helper test.
+- Acceptance Criteria:
+  - Battlefield has visible textured floor and sparse decorative variation.
+
+## CRU-038 - GameOver Overlay with Restart/Main Menu
+- Status: `DONE`
+- Type: `UI/Flow`
+- Priority: `P0`
+- Depends on: none
+- Goal: On defeat, pause gameplay and show `Restart` / `Main Menu`.
+- Context:
+  - Previous defeat flow returned directly to menu without player choice.
+- Implementation:
+  1. Defeat now transitions `InRun -> GameOver`.
+  2. Added `GameOver` overlay UI with two actions.
+  3. `Restart` sends `StartRunEvent` and returns to `InRun` with fresh run state.
+  4. `Main Menu` transitions to `MainMenu`.
+- Unit Tests Required:
+  - Existing core state tests still pass.
+- Acceptance Criteria:
+  - Player can restart immediately after defeat without re-entering main menu.
+
+## CRU-039 - Enemy Collision Activation
+- Status: `DONE`
+- Type: `Gameplay/Physics`
+- Priority: `P1`
+- Depends on: none
+- Goal: Activate collision behavior so enemies do not stack into one point.
+- Context:
+  - Collision module existed but plugin was not registered in app wiring.
+- Implementation:
+  1. Registered `CollisionPlugin` in runtime plugin setup.
+  2. Preserved existing rule set for enemy-enemy and inner-ring friendly interactions.
+- Unit Tests Required:
+  - Existing collision tests remain valid.
+- Acceptance Criteria:
+  - Enemy bodies maintain separation instead of collapsing into a single stack.
+
+## CRU-040 - Infantry Knight Range Balance Pass
+- Status: `DONE`
+- Type: `Balance`
+- Priority: `P2`
+- Depends on: none
+- Goal: Slightly increase infantry knight attack range.
+- Context:
+  - Requested micro-buff for frontline feel and contact consistency.
+- Implementation:
+  1. Increased `recruit_infantry_knight.attack_range` in `assets/data/units.json`.
+- Unit Tests Required:
+  - Config loader/validation tests.
+- Acceptance Criteria:
+  - Knight range increase is active in runtime and validated by config tests.
+
 ---
 
 ## Task Card Template

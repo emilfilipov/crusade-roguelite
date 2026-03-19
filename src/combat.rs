@@ -255,6 +255,7 @@ fn resolve_deaths(
                 exp_pack_events.send(SpawnExpPackEvent {
                     world_position: transform.translation.truncate(),
                     xp_value_override: None,
+                    pickup_delay_secs: Some(0.45),
                 });
             }
             commands.entity(entity).despawn_recursive();

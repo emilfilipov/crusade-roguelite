@@ -13,6 +13,7 @@ pub struct ArtAssets {
     pub banner_upright: Handle<Image>,
     pub banner_dropped: Handle<Image>,
     pub terrain_desert_base_tile_a: Handle<Image>,
+    pub terrain_desert_foliage_tile_a: Handle<Image>,
     pub exp_pack_coin_stack: Handle<Image>,
 }
 
@@ -51,6 +52,8 @@ fn load_art_assets(mut assets: ResMut<ArtAssets>, asset_server: Option<Res<Asset
     assets.banner_dropped = asset_server
         .load("third_party/oga_ishtar_top-down-pack_1.1/top-down-pack-1/tiles/Slice 16.png");
     assets.terrain_desert_base_tile_a = asset_server
-        .load("third_party/kenney_desert-shooter-pack_1.0/PNG/Tiles/Tiles/tile_0000.png");
+        .load("third_party/oga_ishtar_top-down-pack_1.1/top-down-pack-1/tiles/Slice 41.png");
+    assets.terrain_desert_foliage_tile_a = asset_server
+        .load("third_party/oga_ishtar_top-down-pack_1.1/top-down-pack-1/tiles/Slice 47.png");
     assets.exp_pack_coin_stack = asset_server.load("sprites/pickups/xp_coin_stack.png");
 }

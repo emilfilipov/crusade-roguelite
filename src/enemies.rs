@@ -31,8 +31,15 @@ pub struct BanditVisualRuntime {
     pub state: BanditVisualState,
 }
 
+#[derive(Component, Clone, Copy, Debug)]
+struct EnemyMovementState {
+    moving: bool,
+}
+
 const ENEMY_BASE_SPEED_MULTIPLIER: f32 = 0.72;
 const WAVE_DURATION_SECS: f32 = 30.0;
+const STOP_FACTOR: f32 = 0.82;
+const RESUME_FACTOR: f32 = 0.98;
 
 pub struct EnemyPlugin;
 
@@ -155,6 +162,7 @@ fn spawn_enemy_wave(
                 last_position: pos,
                 state: BanditVisualState::Idle,
             },
+            EnemyMovementState { moving: true },
             Health::new(hp),
             Morale::new(cfg.morale),
             Armor(armor),
@@ -202,7 +210,12 @@ pub fn infinite_wave_stat_multiplier(procedural_wave_index: u32) -> f32 {
 fn enemy_chase_targets(
     time: Res<Time>,
     mut enemies: Query<
-        (&MoveSpeed, &AttackProfile, &mut Transform),
+        (
+            &MoveSpeed,
+            &AttackProfile,
+            &mut EnemyMovementState,
+            &mut Transform,
+        ),
         (With<EnemyUnit>, Without<FriendlyUnit>),
     >,
     friendlies: Query<
@@ -219,19 +232,39 @@ fn enemy_chase_targets(
         return;
     }
 
-    for (move_speed, attack_profile, mut enemy_transform) in &mut enemies {
+    for (move_speed, attack_profile, mut movement_state, mut enemy_transform) in &mut enemies {
         let enemy_position = enemy_transform.translation.truncate();
         if let Some(target) = choose_nearest(enemy_position, &targets) {
             let delta = target - enemy_position;
-            let dist_sq = delta.length_squared();
-            let stop_distance = (attack_profile.range * 0.85).max(10.0);
-            if dist_sq > stop_distance * stop_distance {
+            let distance = delta.length();
+            let stop_distance = (attack_profile.range * STOP_FACTOR).max(10.0);
+            let resume_distance = (attack_profile.range * RESUME_FACTOR).max(stop_distance + 3.0);
+
+            movement_state.moving = should_move_towards_target(
+                movement_state.moving,
+                distance,
+                stop_distance,
+                resume_distance,
+            );
+            if movement_state.moving && distance > 0.001 {
                 let step = delta.normalize() * move_speed.0 * time.delta_seconds();
                 enemy_transform.translation.x += step.x;
                 enemy_transform.translation.y += step.y;
             }
         }
     }
+}
+
+pub fn should_move_towards_target(
+    was_moving: bool,
+    distance_to_target: f32,
+    stop_distance: f32,
+    resume_distance: f32,
+) -> bool {
+    if was_moving {
+        return distance_to_target > stop_distance;
+    }
+    distance_to_target > resume_distance
 }
 
 pub fn chase_target_positions(all_friendlies: &[(Vec2, bool)]) -> Vec<Vec2> {
@@ -340,7 +373,7 @@ mod tests {
     use crate::enemies::{
         BanditVisualState, chase_target_positions, choose_nearest, decide_bandit_visual_state,
         enemy_move_speed, infinite_wave_enemy_count, infinite_wave_interval_secs,
-        infinite_wave_stat_multiplier,
+        infinite_wave_stat_multiplier, should_move_towards_target,
     };
 
     #[test]
@@ -404,5 +437,12 @@ mod tests {
 
         let commander_only = chase_target_positions(&[commander]);
         assert_eq!(commander_only, vec![commander.0]);
+    }
+
+    #[test]
+    fn movement_hysteresis_prevents_stop_resume_jitter() {
+        assert!(!should_move_towards_target(true, 20.0, 22.0, 26.0));
+        assert!(!should_move_towards_target(false, 24.0, 22.0, 26.0));
+        assert!(should_move_towards_target(false, 30.0, 22.0, 26.0));
     }
 }
