@@ -10,6 +10,10 @@ use crate::model::{
 };
 use crate::visuals::ArtAssets;
 
+const ENEMY_INSIDE_FORMATION_SLOWDOWN_PER_UNIT: f32 = 0.04;
+const ENEMY_INSIDE_FORMATION_MIN_SPEED_MULTIPLIER: f32 = 0.5;
+const ENEMY_INSIDE_FORMATION_PADDING_SLOTS: f32 = 0.35;
+
 #[derive(Resource, Clone, Debug, Default)]
 pub struct SquadRoster {
     pub commander: Option<Entity>,
@@ -144,12 +148,16 @@ fn spawn_recruit(
         .id()
 }
 
+#[allow(clippy::too_many_arguments)]
 #[allow(clippy::type_complexity)]
 fn commander_movement(
     time: Res<Time>,
+    data: Res<GameData>,
     keyboard: Option<Res<ButtonInput<KeyCode>>>,
     bounds: Option<Res<MapBounds>>,
     banner_penalty: Option<Res<BannerMovementPenalty>>,
+    friendlies: Query<Entity, (With<FriendlyUnit>, Without<CommanderUnit>)>,
+    enemies: Query<&Transform, (With<EnemyUnit>, Without<CommanderUnit>)>,
     mut commanders: Query<
         (&MoveSpeed, &mut Transform),
         (With<PlayerControlled>, With<CommanderUnit>),
@@ -181,10 +189,26 @@ fn commander_movement(
         .as_ref()
         .map(|penalty| penalty.friendly_speed_multiplier)
         .unwrap_or(1.0);
+    let recruit_count = friendlies.iter().count();
+    let slot_spacing = data.formations.square.slot_spacing;
     for (move_speed, mut transform) in &mut commanders {
+        let commander_position = transform.translation.truncate();
+        let inside_enemy_count = enemies
+            .iter()
+            .filter(|enemy_transform| {
+                enemy_inside_square_formation(
+                    commander_position,
+                    enemy_transform.translation.truncate(),
+                    recruit_count,
+                    slot_spacing,
+                )
+            })
+            .count();
+        let formation_slowdown =
+            movement_multiplier_from_inside_enemy_count(inside_enemy_count as u32);
         let delta = direction * move_speed.0 * speed_multiplier * time.delta_seconds();
-        transform.translation.x += delta.x;
-        transform.translation.y += delta.y;
+        transform.translation.x += delta.x * formation_slowdown;
+        transform.translation.y += delta.y * formation_slowdown;
         if let Some(map_bounds) = &bounds {
             let playable = playable_bounds(**map_bounds);
             transform.translation.x = transform
@@ -197,6 +221,26 @@ fn commander_movement(
                 .clamp(-playable.half_height, playable.half_height);
         }
     }
+}
+
+pub fn enemy_inside_square_formation(
+    commander_position: Vec2,
+    enemy_position: Vec2,
+    recruit_count: usize,
+    slot_spacing: f32,
+) -> bool {
+    if recruit_count == 0 || slot_spacing <= 0.0 {
+        return false;
+    }
+    let side = ((recruit_count + 1) as f32).sqrt().ceil();
+    let half_extent = ((side - 1.0) * 0.5 + ENEMY_INSIDE_FORMATION_PADDING_SLOTS) * slot_spacing;
+    let delta = enemy_position - commander_position;
+    delta.x.abs() <= half_extent && delta.y.abs() <= half_extent
+}
+
+pub fn movement_multiplier_from_inside_enemy_count(inside_enemy_count: u32) -> f32 {
+    (1.0 - inside_enemy_count as f32 * ENEMY_INSIDE_FORMATION_SLOWDOWN_PER_UNIT)
+        .clamp(ENEMY_INSIDE_FORMATION_MIN_SPEED_MULTIPLIER, 1.0)
 }
 
 fn apply_recruit_events(
@@ -237,7 +281,9 @@ mod tests {
 
     use crate::data::GameData;
     use crate::model::{CommanderUnit, GameState, StartRunEvent};
-    use crate::squad::SquadPlugin;
+    use crate::squad::{
+        SquadPlugin, enemy_inside_square_formation, movement_multiplier_from_inside_enemy_count,
+    };
     use crate::visuals::ArtAssets;
 
     #[test]
@@ -261,5 +307,28 @@ mod tests {
             query.iter(world).count()
         };
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn formation_enemy_slowdown_caps_at_minimum_multiplier() {
+        assert!((movement_multiplier_from_inside_enemy_count(0) - 1.0).abs() < 0.001);
+        assert!(movement_multiplier_from_inside_enemy_count(4) < 1.0);
+        assert!((movement_multiplier_from_inside_enemy_count(40) - 0.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn enemy_inside_formation_check_requires_recruits() {
+        assert!(!enemy_inside_square_formation(
+            Vec2::ZERO,
+            Vec2::new(10.0, 5.0),
+            0,
+            30.0
+        ));
+        assert!(enemy_inside_square_formation(
+            Vec2::ZERO,
+            Vec2::new(8.0, 6.0),
+            9,
+            30.0
+        ));
     }
 }

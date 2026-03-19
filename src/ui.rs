@@ -3,6 +3,7 @@ use bevy::prelude::*;
 
 use crate::banner::{BannerState, banner_pickup_progress_ratio};
 use crate::data::GameData;
+use crate::drops::ExpPack;
 use crate::enemies::WaveRuntime;
 use crate::map::MapBounds;
 use crate::model::{
@@ -13,7 +14,10 @@ use crate::morale::{Cohesion, average_morale_ratio};
 use crate::rescue::RescueProgress;
 use crate::settings::AppSettings;
 use crate::squad::SquadRoster;
-use crate::upgrades::Progression;
+use crate::upgrades::{
+    Progression, SelectUpgradeEvent, UpgradeCardIcon, UpgradeDraft, upgrade_card_icon,
+    upgrade_display_description, upgrade_display_title,
+};
 
 #[derive(Resource, Clone, Debug)]
 pub struct HudSnapshot {
@@ -93,6 +97,14 @@ enum PauseMenuAction {
     MainMenuOrQuit,
 }
 
+#[derive(Component, Clone, Copy, Debug)]
+struct LevelUpMenuRoot;
+
+#[derive(Component, Clone, Copy, Debug, Eq, PartialEq)]
+struct LevelUpOptionAction {
+    index: usize,
+}
+
 #[derive(Component, Clone, Copy, Debug, Eq, PartialEq)]
 struct FpsCapButton {
     cap: FrameRateCap,
@@ -155,9 +167,11 @@ const MINIMAP_FRIENDLY_COLOR: Color = Color::srgb(0.38, 0.79, 0.36);
 const MINIMAP_ENEMY_COLOR: Color = Color::srgb(0.9, 0.28, 0.22);
 const MINIMAP_RESCUABLE_COLOR: Color = Color::srgb(0.45, 0.72, 0.94);
 const MINIMAP_DROPPED_BANNER_COLOR: Color = Color::srgb(0.95, 0.8, 0.32);
+const MINIMAP_EXP_COLOR: Color = Color::srgb(0.98, 0.87, 0.22);
 const MINIMAP_MAX_ENEMY_BLIPS: usize = 220;
 const MINIMAP_MAX_FRIENDLY_BLIPS: usize = 260;
 const MINIMAP_MAX_RESCUABLE_BLIPS: usize = 80;
+const MINIMAP_MAX_EXP_BLIPS: usize = 320;
 
 pub struct UiPlugin;
 
@@ -173,6 +187,8 @@ impl Plugin for UiPlugin {
             .add_systems(OnExit(GameState::GameOver), despawn_game_over_menu)
             .add_systems(OnEnter(GameState::Paused), spawn_pause_menu)
             .add_systems(OnExit(GameState::Paused), despawn_pause_menu)
+            .add_systems(OnEnter(GameState::LevelUp), spawn_level_up_menu)
+            .add_systems(OnExit(GameState::LevelUp), despawn_level_up_menu)
             .add_systems(OnEnter(GameState::MainMenu), despawn_in_run_hud)
             .add_systems(OnEnter(GameState::Settings), despawn_in_run_hud)
             .add_systems(OnEnter(GameState::GameOver), despawn_in_run_hud)
@@ -198,6 +214,10 @@ impl Plugin for UiPlugin {
             .add_systems(
                 Update,
                 handle_pause_menu_buttons.run_if(in_state(GameState::Paused)),
+            )
+            .add_systems(
+                Update,
+                handle_level_up_buttons.run_if(in_state(GameState::LevelUp)),
             )
             .add_systems(
                 Update,
@@ -593,11 +613,7 @@ fn spawn_pause_menu(mut commands: Commands) {
                 .with_children(|buttons| {
                     spawn_pause_menu_button(buttons, PauseMenuAction::Resume, "RESUME");
                     spawn_pause_menu_button(buttons, PauseMenuAction::Restart, "RESTART");
-                    spawn_pause_menu_button(
-                        buttons,
-                        PauseMenuAction::MainMenuOrQuit,
-                        "MAIN MENU / QUIT",
-                    );
+                    spawn_pause_menu_button(buttons, PauseMenuAction::MainMenuOrQuit, "MAIN MENU");
                 });
         });
 }
@@ -633,6 +649,148 @@ fn spawn_pause_menu_button(parent: &mut ChildBuilder, action: PauseMenuAction, l
 }
 
 fn despawn_pause_menu(mut commands: Commands, roots: Query<Entity, With<PauseMenuRoot>>) {
+    for entity in &roots {
+        commands.entity(entity).despawn_recursive();
+    }
+}
+
+fn spawn_level_up_menu(
+    mut commands: Commands,
+    draft: Res<UpgradeDraft>,
+    art: Res<crate::visuals::ArtAssets>,
+) {
+    commands
+        .spawn((
+            LevelUpMenuRoot,
+            NodeBundle {
+                style: Style {
+                    width: Val::Percent(100.0),
+                    height: Val::Percent(100.0),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px(18.0),
+                    padding: UiRect::all(Val::Px(16.0)),
+                    ..default()
+                },
+                background_color: BackgroundColor(Color::srgba(0.03, 0.03, 0.03, 0.64)),
+                z_index: ZIndex::Global(120),
+                ..default()
+            },
+        ))
+        .with_children(|parent| {
+            parent.spawn(TextBundle::from_section(
+                "LEVEL UP - CHOOSE ONE",
+                TextStyle {
+                    font_size: 40.0,
+                    color: MENU_BUTTON_TEXT_HOVERED,
+                    ..default()
+                },
+            ));
+            parent.spawn(TextBundle::from_section(
+                "Selection is required to continue.",
+                TextStyle {
+                    font_size: 18.0,
+                    color: HUD_TEXT_COLOR,
+                    ..default()
+                },
+            ));
+
+            parent
+                .spawn(NodeBundle {
+                    style: Style {
+                        width: Val::Percent(100.0),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Stretch,
+                        column_gap: Val::Px(14.0),
+                        ..default()
+                    },
+                    background_color: BackgroundColor(Color::NONE),
+                    ..default()
+                })
+                .with_children(|cards| {
+                    for (index, upgrade) in draft.options.iter().take(5).enumerate() {
+                        spawn_level_up_card(
+                            cards,
+                            index,
+                            upgrade_display_title(upgrade),
+                            &upgrade_display_description(upgrade),
+                            upgrade_icon_for(upgrade_card_icon(upgrade), &art),
+                        );
+                    }
+                });
+        });
+}
+
+fn spawn_level_up_card(
+    parent: &mut ChildBuilder,
+    index: usize,
+    title: &str,
+    description: &str,
+    icon: Handle<Image>,
+) {
+    parent
+        .spawn((
+            ButtonBundle {
+                style: Style {
+                    width: Val::Px(185.0),
+                    height: Val::Px(320.0),
+                    flex_direction: FlexDirection::Column,
+                    justify_content: JustifyContent::FlexStart,
+                    align_items: AlignItems::Center,
+                    row_gap: Val::Px(12.0),
+                    border: UiRect::all(Val::Px(1.0)),
+                    padding: UiRect::all(Val::Px(10.0)),
+                    ..default()
+                },
+                background_color: BackgroundColor(Color::srgba(0.08, 0.07, 0.06, 0.74)),
+                border_color: BorderColor(Color::srgba(0.82, 0.76, 0.64, 0.34)),
+                ..default()
+            },
+            LevelUpOptionAction { index },
+        ))
+        .with_children(|card| {
+            card.spawn(TextBundle::from_section(
+                title,
+                TextStyle {
+                    font_size: 22.0,
+                    color: MENU_BUTTON_TEXT_HOVERED,
+                    ..default()
+                },
+            ));
+            card.spawn(ImageBundle {
+                style: Style {
+                    width: Val::Px(96.0),
+                    height: Val::Px(96.0),
+                    ..default()
+                },
+                image: UiImage::new(icon),
+                background_color: BackgroundColor(Color::NONE),
+                ..default()
+            });
+            card.spawn(TextBundle::from_section(
+                description,
+                TextStyle {
+                    font_size: 16.0,
+                    color: HUD_TEXT_COLOR,
+                    ..default()
+                },
+            ));
+        });
+}
+
+fn upgrade_icon_for(icon_kind: UpgradeCardIcon, art: &crate::visuals::ArtAssets) -> Handle<Image> {
+    match icon_kind {
+        UpgradeCardIcon::Recruit => art.friendly_knight_idle.clone(),
+        UpgradeCardIcon::Armor => art.friendly_knight_idle.clone(),
+        UpgradeCardIcon::Damage => art.enemy_bandit_raider_attack.clone(),
+        UpgradeCardIcon::AttackSpeed => art.enemy_bandit_raider_move.clone(),
+        UpgradeCardIcon::Cohesion => art.banner_upright.clone(),
+        UpgradeCardIcon::Aura => art.commander_idle.clone(),
+    }
+}
+
+fn despawn_level_up_menu(mut commands: Commands, roots: Query<Entity, With<LevelUpMenuRoot>>) {
     for entity in &roots {
         commands.entity(entity).despawn_recursive();
     }
@@ -1124,6 +1282,40 @@ fn handle_pause_menu_buttons(
 }
 
 #[allow(clippy::type_complexity)]
+fn handle_level_up_buttons(
+    mut buttons: Query<
+        (
+            &Interaction,
+            &LevelUpOptionAction,
+            &mut BorderColor,
+            &mut BackgroundColor,
+        ),
+        (Changed<Interaction>, With<Button>),
+    >,
+    mut select_events: EventWriter<SelectUpgradeEvent>,
+) {
+    for (interaction, option, mut border_color, mut background) in &mut buttons {
+        match *interaction {
+            Interaction::Pressed => {
+                *border_color = BorderColor(MENU_BUTTON_BORDER_HOVERED);
+                *background = BackgroundColor(Color::srgba(0.14, 0.12, 0.09, 0.82));
+                select_events.send(SelectUpgradeEvent {
+                    option_index: option.index,
+                });
+            }
+            Interaction::Hovered => {
+                *border_color = BorderColor(MENU_BUTTON_BORDER_HOVERED);
+                *background = BackgroundColor(Color::srgba(0.11, 0.09, 0.08, 0.78));
+            }
+            Interaction::None => {
+                *border_color = BorderColor(Color::srgba(0.82, 0.76, 0.64, 0.34));
+                *background = BackgroundColor(Color::srgba(0.08, 0.07, 0.06, 0.74));
+            }
+        }
+    }
+}
+
+#[allow(clippy::type_complexity)]
 fn handle_fps_cap_buttons(
     mut buttons: Query<(&Interaction, &FpsCapButton), (Changed<Interaction>, With<Button>)>,
     mut frame_cap: ResMut<FrameRateCap>,
@@ -1316,6 +1508,7 @@ fn update_minimap_hud(
     minimap_roots: Query<Entity, With<MinimapDotsRoot>>,
     units: Query<(&Unit, &Transform)>,
     rescuables: Query<&Transform, With<RescuableUnit>>,
+    exp_packs: Query<&Transform, With<ExpPack>>,
 ) {
     runtime.timer.tick(time.delta());
     if !runtime.timer.just_finished() {
@@ -1334,6 +1527,7 @@ fn update_minimap_hud(
         let mut friendly_count = 0usize;
         let mut enemy_count = 0usize;
         let mut rescuable_count = 0usize;
+        let mut exp_count = 0usize;
         for (unit, transform) in &units {
             let position = transform.translation.truncate();
             let Some(draw_pos) = world_to_minimap_pos(position, *bounds, MINIMAP_SIZE) else {
@@ -1374,6 +1568,18 @@ fn update_minimap_hud(
             };
             rescuable_count += 1;
             spawn_minimap_dot(parent, draw_pos, 2.7, MINIMAP_RESCUABLE_COLOR);
+        }
+
+        for transform in &exp_packs {
+            if exp_count >= MINIMAP_MAX_EXP_BLIPS {
+                break;
+            }
+            let position = transform.translation.truncate();
+            let Some(draw_pos) = world_to_minimap_pos(position, *bounds, MINIMAP_SIZE) else {
+                continue;
+            };
+            exp_count += 1;
+            spawn_minimap_dot(parent, draw_pos, 2.1, MINIMAP_EXP_COLOR);
         }
 
         if banner_state.is_dropped

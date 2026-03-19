@@ -5,6 +5,10 @@ Single-file technical reference for current MVP runtime behavior.
 Use this for entity/component/system lookup without scanning all source files.
 
 ## Latest Update (2026-03-19)
+- Added XP pack minimap markers (yellow blips).
+- Added commander movement slowdown from enemy pressure inside formation bounds (capped at 50% minimum speed multiplier).
+- Pause menu button label now reads `Main Menu`.
+- Added mandatory `LevelUp` state with 5-card draft overlay (image + description) and no skip path.
 - Raised banner follow offset so it renders visibly behind/above the commander during movement.
 - Dropped banner now uses the standard upright banner sprite for stronger in-world readability.
 - Minimap now shows dropped-banner position and rescuable-retinue positions.
@@ -18,7 +22,6 @@ Use this for entity/component/system lookup without scanning all source files.
 - Ambient XP packs now spawn around commander position for better visibility.
 - XP homing speed now scales from commander base speed and stays slightly faster.
 - Increased base drop pickup radius from `30` to `45`.
-- Removed level-up pause hitch by resolving upgrade picks in-run instead of transitioning to `Paused`.
 - Fixed Windows installer asset coverage for runtime-loaded art (`assets/sprites` + `oga_ishtar` pack).
 - Switched battlefield floor to cleaner sand tile set.
 - Added visible perimeter wall ring and hard playfield confinement for units.
@@ -79,6 +82,7 @@ Use this for entity/component/system lookup without scanning all source files.
 - `MainMenu`
 - `Settings`
 - `InRun`
+- `LevelUp` (run is paused until an upgrade card is selected)
 - `Paused`
 - `GameOver` (defeat pauses run and shows overlay actions)
 
@@ -204,6 +208,13 @@ Friendly combined outgoing multiplier has lower clamp:
   - square slot spacing (`formations.square.slot_spacing`)
 - If commander has no recruits, bonus does not apply.
 
+### Movement Slowdown From Enemies Inside Formation (`src/squad.rs`)
+- Commander movement applies additional multiplier based on enemy count inside square formation footprint.
+- Per-enemy slowdown: `0.04` (4%).
+- Minimum multiplier clamp: `0.5` (commander cannot be fully stopped by this effect).
+- Formula:
+  - `multiplier = clamp(1.0 - enemy_count * 0.04, 0.5, 1.0)`
+
 ### Commander XP Requirement (`src/upgrades.rs`)
 - Bracketed exponential scaling:
   - `base = 30`
@@ -268,7 +279,7 @@ Friendly combined outgoing multiplier has lower clamp:
 
 ### `squad.rs`
 - run start commander spawn
-- commander movement
+- commander movement (includes enemy-inside-formation slowdown multiplier)
 - recruit spawn from rescue/upgrade events
 - roster sync/casualties
 
@@ -310,7 +321,8 @@ Friendly combined outgoing multiplier has lower clamp:
 ### `ui.rs`
 - main menu buttons (`Start`, `Settings`, `Exit`)
 - settings screen with FPS selector
-- pause overlay buttons (`Resume`, `Restart`, `Main Menu / Quit`)
+- pause overlay buttons (`Resume`, `Restart`, `Main Menu`)
+- level-up overlay (5 mandatory upgrade cards, icon + description, no skip)
 - game-over overlay buttons (`Restart`, `Main Menu`)
 - top HUD (wave/level/xp/time)
 - progress strips (rescue + banner pickup)
@@ -318,11 +330,13 @@ Friendly combined outgoing multiplier has lower clamp:
 - world-space health bars
 - bottom-right minimap prototype with periodic blip refresh
   - commander/friendlies/enemies
+  - XP packs (yellow)
   - rescuable retinue markers
   - dropped-banner marker
 
 ### `upgrades.rs`
-- XP thresholds and in-run auto-pick upgrade flow (no state pause on level-up)
+- XP thresholds and explicit level-up draft flow (`InRun -> LevelUp -> InRun`)
+- 5-option upgrade draft cards (keyboard `1..5` and mouse click selection)
 - passive commander level scaling
 - level-up full-heal sync for friendlies
 

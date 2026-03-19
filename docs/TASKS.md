@@ -358,6 +358,83 @@
   - Dropped banner is easy to spot in world and on minimap.
   - Rescuables are visible on minimap.
 
+## CRU-046 - Minimap XP Pack Markers
+- Status: `DONE`
+- Type: `UI/HUD`
+- Priority: `P1`
+- Depends on: none
+- Goal: Surface XP pack locations on minimap for clearer pickup routing.
+- Context:
+  - XP packs are now an active on-map collection loop and need minimap visibility.
+  - Existing minimap already draws commander, friendlies, enemies, rescuables, and banner.
+- Implementation:
+  1. Added `ExpPack` query path to minimap refresh system.
+  2. Added yellow minimap dot color constant and max blip cap for XP packs.
+  3. Rendered XP pack dots during periodic minimap redraw.
+- Unit Tests Required:
+  - Existing minimap world-to-panel mapping tests.
+- Acceptance Criteria:
+  - Active XP packs appear on minimap as yellow dots.
+  - XP minimap rendering obeys per-type blip cap.
+
+## CRU-047 - Formation-Pressure Movement Slowdown
+- Status: `DONE`
+- Type: `Gameplay/Movement`
+- Priority: `P1`
+- Depends on: none
+- Goal: Slow commander movement based on enemy units inside the formation footprint.
+- Context:
+  - Requested tradeoff: aggressive formation charges should carry mobility risk.
+  - Slowdown must be capped so movement never fully locks.
+- Implementation:
+  1. Added enemy-inside-square-footprint detection helper in `src/squad.rs`.
+  2. Added per-enemy slowdown multiplier with clamp floor.
+  3. Applied multiplier in commander movement pipeline alongside existing penalties.
+- Unit Tests Required:
+  - Slowdown multiplier floor/cap behavior test.
+  - Inside-formation bounds helper behavior test.
+- Acceptance Criteria:
+  - Commander speed decreases as more enemies are inside formation bounds.
+  - Movement speed stays above configured minimum multiplier.
+
+## CRU-048 - Pause Menu Label Cleanup
+- Status: `DONE`
+- Type: `UI/Flow`
+- Priority: `P2`
+- Depends on: none
+- Goal: Rename in-run pause button from `Main Menu / Quit` to `Main Menu`.
+- Context:
+  - Current pause flow returns to main menu and no longer directly quits.
+- Implementation:
+  1. Updated pause menu button label text.
+- Unit Tests Required:
+  - Existing UI state/flow tests.
+- Acceptance Criteria:
+  - Pause menu third button displays `Main Menu`.
+
+## CRU-049 - Mandatory Level-Up Draft Screen (5 Cards)
+- Status: `DONE`
+- Type: `Gameplay/UI`
+- Priority: `P0`
+- Depends on: none
+- Goal: Pause run on level-up until player picks one of five upgrade cards.
+- Context:
+  - Prior flow auto-resolved upgrades in-run.
+  - New flow requires explicit player selection with no skip path.
+- Implementation:
+  1. Added `GameState::LevelUp`.
+  2. Reworked upgrade flow to open draft state on level threshold and resume only after selection event.
+  3. Added 5-option draft roll, keyboard `1..5` support, and card-click selection.
+  4. Added full-screen level-up overlay with tall cards (title + icon + description).
+  5. Kept pause toggle constrained to `InRun`, so Escape is inactive in `LevelUp`.
+- Unit Tests Required:
+  - Upgrade option count test (`5` options).
+  - Upgrade metadata mapping test for UI display text/icon routing.
+- Acceptance Criteria:
+  - On level-up, gameplay pauses and level-up overlay appears.
+  - Player must select one card to continue.
+  - Escape does not open pause menu while level-up overlay is active.
+
 ---
 
 ## Task Card Template

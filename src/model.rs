@@ -8,6 +8,7 @@ pub enum GameState {
     MainMenu,
     Settings,
     InRun,
+    LevelUp,
     Paused,
     GameOver,
 }
