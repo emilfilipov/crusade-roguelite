@@ -4,9 +4,10 @@ use bevy::prelude::*;
 use crate::banner::{BannerState, banner_pickup_progress_ratio};
 use crate::data::GameData;
 use crate::enemies::WaveRuntime;
+use crate::map::MapBounds;
 use crate::model::{
     FrameRateCap, FriendlyUnit, GameState, Health, Morale, RescuableUnit, RunSession,
-    StartRunEvent, Team, Unit,
+    StartRunEvent, Team, Unit, UnitKind,
 };
 use crate::morale::{Cohesion, average_morale_ratio};
 use crate::rescue::RescueProgress;
@@ -111,6 +112,22 @@ struct MoraleBarFill;
 #[derive(Component, Clone, Copy, Debug)]
 struct CohesionBarFill;
 
+#[derive(Component, Clone, Copy, Debug)]
+struct MinimapDotsRoot;
+
+#[derive(Resource, Clone, Debug)]
+struct MinimapRefreshRuntime {
+    timer: Timer,
+}
+
+impl Default for MinimapRefreshRuntime {
+    fn default() -> Self {
+        Self {
+            timer: Timer::from_seconds(0.12, TimerMode::Repeating),
+        }
+    }
+}
+
 const MENU_BACKGROUND: Color = Color::srgb(0.12, 0.1, 0.08);
 const MENU_BUTTON_TEXT_NORMAL: Color = Color::srgb(0.92, 0.88, 0.8);
 const MENU_BUTTON_TEXT_HOVERED: Color = Color::srgb(0.98, 0.96, 0.88);
@@ -120,12 +137,21 @@ const HUD_TEXT_COLOR: Color = Color::srgb(0.97, 0.95, 0.9);
 const HUD_BAR_BG: Color = Color::srgba(0.12, 0.1, 0.08, 0.8);
 const HUD_BAR_FILL: Color = Color::srgb(0.88, 0.72, 0.28);
 const HUD_VERTICAL_BAR_BG: Color = Color::srgba(0.08, 0.07, 0.06, 0.85);
+const MINIMAP_SIZE: f32 = 170.0;
+const MINIMAP_BORDER: Color = Color::srgb(0.84, 0.76, 0.62);
+const MINIMAP_BG: Color = Color::srgba(0.08, 0.07, 0.06, 0.75);
+const MINIMAP_COMMANDER_COLOR: Color = Color::srgb(1.0, 0.96, 0.78);
+const MINIMAP_FRIENDLY_COLOR: Color = Color::srgb(0.38, 0.79, 0.36);
+const MINIMAP_ENEMY_COLOR: Color = Color::srgb(0.9, 0.28, 0.22);
+const MINIMAP_MAX_ENEMY_BLIPS: usize = 220;
+const MINIMAP_MAX_FRIENDLY_BLIPS: usize = 260;
 
 pub struct UiPlugin;
 
 impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<HudSnapshot>()
+            .init_resource::<MinimapRefreshRuntime>()
             .add_systems(OnEnter(GameState::MainMenu), spawn_main_menu)
             .add_systems(OnExit(GameState::MainMenu), despawn_main_menu)
             .add_systems(OnEnter(GameState::Settings), spawn_settings_menu)
@@ -161,6 +187,10 @@ impl Plugin for UiPlugin {
             .add_systems(
                 Update,
                 (update_in_run_hud, update_rescue_progress_hud).run_if(in_state(GameState::InRun)),
+            )
+            .add_systems(
+                Update,
+                update_minimap_hud.run_if(in_state(GameState::InRun)),
             )
             .add_systems(
                 Update,
@@ -661,6 +691,8 @@ fn spawn_in_run_hud(mut commands: Commands, existing: Query<Entity, With<InRunHu
                     Color::srgb(0.38, 0.69, 0.9),
                 );
             });
+
+            spawn_minimap(root);
         });
 }
 
@@ -725,6 +757,41 @@ fn spawn_vertical_meter<T: Component + Clone>(
                         },
                     ));
                 });
+        });
+}
+
+fn spawn_minimap(parent: &mut ChildBuilder) {
+    parent
+        .spawn(NodeBundle {
+            style: Style {
+                position_type: PositionType::Absolute,
+                right: Val::Px(12.0),
+                bottom: Val::Px(12.0),
+                width: Val::Px(MINIMAP_SIZE),
+                height: Val::Px(MINIMAP_SIZE),
+                border: UiRect::all(Val::Px(1.0)),
+                ..default()
+            },
+            background_color: BackgroundColor(MINIMAP_BG),
+            border_color: BorderColor(MINIMAP_BORDER),
+            ..default()
+        })
+        .with_children(|root| {
+            root.spawn((
+                MinimapDotsRoot,
+                NodeBundle {
+                    style: Style {
+                        position_type: PositionType::Absolute,
+                        left: Val::Px(0.0),
+                        top: Val::Px(0.0),
+                        width: Val::Px(MINIMAP_SIZE),
+                        height: Val::Px(MINIMAP_SIZE),
+                        ..default()
+                    },
+                    background_color: BackgroundColor(Color::NONE),
+                    ..default()
+                },
+            ));
         });
 }
 
@@ -1074,6 +1141,93 @@ fn update_rescue_progress_hud(
     });
 }
 
+fn update_minimap_hud(
+    mut commands: Commands,
+    time: Res<Time>,
+    bounds: Option<Res<MapBounds>>,
+    mut runtime: ResMut<MinimapRefreshRuntime>,
+    minimap_roots: Query<Entity, With<MinimapDotsRoot>>,
+    units: Query<(&Unit, &Transform)>,
+) {
+    runtime.timer.tick(time.delta());
+    if !runtime.timer.just_finished() {
+        return;
+    }
+
+    let Some(bounds) = bounds else {
+        return;
+    };
+    let Ok(root) = minimap_roots.get_single() else {
+        return;
+    };
+
+    commands.entity(root).despawn_descendants();
+    commands.entity(root).with_children(|parent| {
+        let mut friendly_count = 0usize;
+        let mut enemy_count = 0usize;
+        for (unit, transform) in &units {
+            let position = transform.translation.truncate();
+            let Some(draw_pos) = world_to_minimap_pos(position, *bounds, MINIMAP_SIZE) else {
+                continue;
+            };
+
+            match unit.team {
+                Team::Friendly => {
+                    let (color, dot_size) = if unit.kind == UnitKind::Commander {
+                        (MINIMAP_COMMANDER_COLOR, 4.0)
+                    } else {
+                        if friendly_count >= MINIMAP_MAX_FRIENDLY_BLIPS {
+                            continue;
+                        }
+                        friendly_count += 1;
+                        (MINIMAP_FRIENDLY_COLOR, 2.5)
+                    };
+                    spawn_minimap_dot(parent, draw_pos, dot_size, color);
+                }
+                Team::Enemy => {
+                    if enemy_count >= MINIMAP_MAX_ENEMY_BLIPS {
+                        continue;
+                    }
+                    enemy_count += 1;
+                    spawn_minimap_dot(parent, draw_pos, 2.3, MINIMAP_ENEMY_COLOR);
+                }
+                Team::Neutral => {}
+            }
+        }
+    });
+}
+
+fn spawn_minimap_dot(parent: &mut ChildBuilder, draw_pos: Vec2, dot_size: f32, color: Color) {
+    parent.spawn(NodeBundle {
+        style: Style {
+            position_type: PositionType::Absolute,
+            left: Val::Px(draw_pos.x - dot_size * 0.5),
+            top: Val::Px(draw_pos.y - dot_size * 0.5),
+            width: Val::Px(dot_size),
+            height: Val::Px(dot_size),
+            ..default()
+        },
+        background_color: BackgroundColor(color),
+        ..default()
+    });
+}
+
+pub fn world_to_minimap_pos(position: Vec2, bounds: MapBounds, minimap_size: f32) -> Option<Vec2> {
+    if bounds.half_width <= 0.0 || bounds.half_height <= 0.0 || minimap_size <= 0.0 {
+        return None;
+    }
+    let u = (position.x + bounds.half_width) / (bounds.half_width * 2.0);
+    let v = (position.y + bounds.half_height) / (bounds.half_height * 2.0);
+    if !(0.0..=1.0).contains(&u) || !(0.0..=1.0).contains(&v) {
+        return None;
+    }
+
+    Some(Vec2::new(
+        u * minimap_size,
+        (1.0 - v) * minimap_size, // UI Y axis grows downward.
+    ))
+}
+
 pub fn rescue_progress_ratio(elapsed: f32, duration: f32) -> Option<f32> {
     if duration <= 0.0 || elapsed <= 0.0 || elapsed >= duration {
         return None;
@@ -1163,10 +1317,11 @@ pub fn health_bar_fill_width(current: f32, max: f32, full_width: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use crate::enemies::WaveRuntime;
+    use crate::map::MapBounds;
     use crate::model::FrameRateCap;
     use crate::ui::{
         HudSnapshot, displayed_wave_number, format_elapsed_mm_ss, frame_cap_label,
-        health_bar_fill_width, rescue_progress_ratio,
+        health_bar_fill_width, rescue_progress_ratio, world_to_minimap_pos,
     };
 
     #[test]
@@ -1225,5 +1380,17 @@ mod tests {
         assert_eq!(rescue_progress_ratio(2.0, 2.0), None);
         assert_eq!(rescue_progress_ratio(2.4, 2.0), None);
         assert!(rescue_progress_ratio(0.5, 2.0).is_some());
+    }
+
+    #[test]
+    fn minimap_position_maps_world_center_to_panel_center() {
+        let bounds = MapBounds {
+            half_width: 1200.0,
+            half_height: 900.0,
+        };
+        let pos = world_to_minimap_pos(bevy::prelude::Vec2::ZERO, bounds, 170.0)
+            .expect("center should be visible");
+        assert!((pos.x - 85.0).abs() < 0.01);
+        assert!((pos.y - 85.0).abs() < 0.01);
     }
 }

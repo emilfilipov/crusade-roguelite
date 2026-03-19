@@ -12,6 +12,9 @@ Use this for entity/component/system lookup without scanning all source files.
 - Increased base drop pickup radius from `30` to `45`.
 - Removed level-up pause hitch by resolving upgrade picks in-run instead of transitioning to `Paused`.
 - Fixed Windows installer asset coverage for runtime-loaded art (`assets/sprites` + `oga_ishtar` pack).
+- Switched battlefield floor to cleaner sand tile set and reduced noisy foliage density.
+- Added visible perimeter wall ring and hard playfield confinement for units.
+- Added first minimap prototype (bottom-right HUD panel) with commander/friendly/enemy blips.
 - Enabled `CollisionPlugin` in app wiring (enemy collision now active).
 - Added `GameOver` overlay flow with `Restart` and `Main Menu` actions.
 - Rebuilt map floor rendering into tiled desert ground + sparse foliage overlay.
@@ -242,7 +245,9 @@ Friendly combined outgoing multiplier has lower clamp:
 - camera spawn
 - map bounds init
 - tiled desert floor + sparse foliage spawn
-- camera follow + camera-only pixel snap
+- perimeter wall visuals
+- camera follow + camera-only pixel snap + map-edge clamp
+- unit confinement to playable area inside wall inset
 
 ### `squad.rs`
 - run start commander spawn
@@ -290,6 +295,7 @@ Friendly combined outgoing multiplier has lower clamp:
 - progress strips (rescue + banner pickup)
 - bottom-left vertical bars (average morale + cohesion)
 - world-space health bars
+- bottom-right minimap prototype with periodic blip refresh (commander/friendlies/enemies)
 
 ### `upgrades.rs`
 - XP thresholds and in-run auto-pick upgrade flow (no state pause on level-up)

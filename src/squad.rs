@@ -2,7 +2,7 @@ use bevy::prelude::*;
 
 use crate::banner::BannerMovementPenalty;
 use crate::data::GameData;
-use crate::map::MapBounds;
+use crate::map::{MapBounds, playable_bounds};
 use crate::model::{
     Armor, AttackCooldown, AttackProfile, BaseMaxHealth, ColliderRadius, CommanderUnit, EnemyUnit,
     FriendlyUnit, GameState, Health, Morale, MoveSpeed, PlayerControlled, RecruitEvent,
@@ -186,14 +186,15 @@ fn commander_movement(
         transform.translation.x += delta.x;
         transform.translation.y += delta.y;
         if let Some(map_bounds) = &bounds {
+            let playable = playable_bounds(**map_bounds);
             transform.translation.x = transform
                 .translation
                 .x
-                .clamp(-map_bounds.half_width, map_bounds.half_width);
+                .clamp(-playable.half_width, playable.half_width);
             transform.translation.y = transform
                 .translation
                 .y
-                .clamp(-map_bounds.half_height, map_bounds.half_height);
+                .clamp(-playable.half_height, playable.half_height);
         }
     }
 }
