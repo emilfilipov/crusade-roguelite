@@ -29,10 +29,15 @@
     "id": "christian_peasant_archer",
     "max_hp": 72.0,
     "armor": 2.0,
-    "damage": 7.0,
-    "attack_cooldown_secs": 1.35,
-    "attack_range": 185.0,
+    "damage": 4.0,
+    "attack_cooldown_secs": 1.45,
+    "attack_range": 26.0,
     "move_speed": 154.0,
-    "morale": 92.0
+    "morale": 92.0,
+    "ranged_attack_damage": 9.0,
+    "ranged_attack_cooldown_secs": 1.15,
+    "ranged_attack_range": 220.0,
+    "ranged_projectile_speed": 460.0,
+    "ranged_projectile_max_distance": 235.0
   }
 }

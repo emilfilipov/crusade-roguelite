@@ -73,6 +73,27 @@
   - Both peasant unit types can be rescued and spawned into retinue.
   - Both recruit types participate in formation/collision/combat via existing friendly pipelines.
 
+## CRU-059 - Hybrid Archer Combat (Weak Melee + Strong Ranged Projectile)
+- Status: `DONE`
+- Type: `Gameplay/Combat`
+- Priority: `P0`
+- Depends on: `CRU-058`
+- Goal: Make Christian Peasant Archer a true hybrid unit with melee fallback and dedicated ranged projectile stats.
+- Context:
+  - Ranged projectile logic was commander-only.
+  - Archer required separate melee and ranged profiles with range-window routing.
+- Implementation:
+  1. Generalized ranged combat components/systems from commander-specific to unit-generic.
+  2. Added ranged-profile insertion at spawn time for units with ranged config fields.
+  3. Tuned archer data to weak melee profile and stronger ranged projectile profile.
+  4. Added unit tests for ranged target window logic and archer spawn ranged-profile wiring.
+- Unit Tests Required:
+  - Ranged target window boundary tests.
+  - Archer recruit ranged-component spawn test.
+- Acceptance Criteria:
+  - Archers melee only at close range and fire projectiles outside melee range.
+  - Commander keeps projectile ranged behavior under the shared system.
+
 ## CRU-053 - Formation Skillbar Runtime (10 Slots, 1..0 Activation)
 - Status: `DONE`
 - Type: `Gameplay/UI`

@@ -9,6 +9,8 @@ Use this for entity/component/system lookup without scanning all source files.
 - Added `Christian Peasant Archer` as a second recruitable retinue unit.
 - Rescue spawns now carry recruit type metadata and alternate infantry/archer by spawn sequence.
 - Recruit events now preserve rescued unit type so formation/combat/collision pipelines auto-handle both variants.
+- Upgraded ranged combat to a shared unit system (no longer commander-only).
+- Christian Peasant Archer now uses hybrid combat: weak melee profile + stronger projectile ranged profile.
 - Added formation skillbar (bottom-center, 10 slots, keys `1..0`) with exclusive active formation switching.
 - Square formation now uses neutral multipliers (`x1` baseline).
 - Added one-time `Diamond` formation unlock card in level-up draft:
@@ -29,7 +31,7 @@ Use this for entity/component/system lookup without scanning all source files.
 - Activated commander aura mechanics:
   - Authority aura: in-range friendly morale/cohesion-loss resistance + enemy morale drain.
   - Hospitalier aura: in-range friendly HP/morale/cohesion regen.
-- Added commander ranged arrow attack (outside-melee targeting, projectile travel, despawn on hit/max distance).
+- Added shared ranged projectile attacks (outside-melee targeting, projectile travel, despawn on hit/max distance).
 - Added XP pack minimap markers (yellow blips).
 - Added commander movement slowdown from enemy pressure inside formation bounds (capped at 50% minimum speed multiplier).
 - Pause menu button label now reads `Main Menu`.
@@ -118,7 +120,9 @@ Loaded from `assets/data` by `GameData::load_from_dir`.
 - Commander (`baldiun`): `hp=120`, `armor=6`, `damage=12`, `cd=0.9`, `range=34`, `move=170`, `morale=120`, `aura_radius=180`
   - Ranged profile: `damage=9`, `cd=1.2`, `range=250`, `projectile_speed=420`, `max_distance=260`
 - Recruit `christian_peasant_infantry`: `hp=95`, `armor=4`, `damage=9`, `cd=1.1`, `range=36`, `move=150`, `morale=100`
-- Recruit `christian_peasant_archer`: `hp=72`, `armor=2`, `damage=7`, `cd=1.35`, `range=185`, `move=154`, `morale=92`
+- Recruit `christian_peasant_archer`: `hp=72`, `armor=2`, `move=154`, `morale=92`
+  - Melee profile: `damage=4`, `cd=1.45`, `range=26`
+  - Ranged profile: `damage=9`, `cd=1.15`, `range=220`, `projectile_speed=460`, `max_distance=235`
 
 ### `enemies.json`
 - `bandit_raider`: `hp=34`, `armor=1`, `damage=6`, `cd=1.3`, `range=30`, `move=118`, `morale=90`
@@ -195,6 +199,7 @@ Roll fields:
 - Markers/data components: `PlayerControlled`, `FriendlyUnit`, `EnemyUnit`, `RescuableUnit { recruit_kind }`, `CommanderUnit`
 
 ### Module Components
+- `RangedAttackProfile`, `RangedAttackCooldown` (`src/combat.rs`)
 - `BanditVisualRuntime`, `BanditVisualState` (`src/enemies.rs`)
 - `RescueProgress` (`src/rescue.rs`)
 - `ExpPack`, `DropInTransitToCommander` (`src/drops.rs`)
@@ -264,10 +269,11 @@ Friendly combined outgoing multiplier has lower clamp:
 - Commander movement speed is multiplied by active formation move-speed multiplier.
 - Friendly effective armor is multiplied by active formation defense multiplier.
 
-### Commander Ranged Arrow Attack (`src/combat.rs`, `src/projectiles.rs`)
-- Commander fires arrows only when targets are outside melee range and inside ranged range.
-- Arrow projectile is non-instant and travels via velocity each frame.
-- Arrow despawns on hit or when max travel distance is consumed.
+### Ranged Projectile Attacks (`src/combat.rs`, `src/projectiles.rs`)
+- Units with `RangedAttackProfile` fire projectiles only when targets are outside melee range and inside ranged range.
+- Current ranged units: commander + Christian Peasant Archer.
+- Projectile is non-instant and travels via velocity each frame.
+- Projectile despawns on hit or when max travel distance is consumed.
 
 ### Commander XP Requirement (`src/upgrades.rs`)
 - Bracketed exponential scaling:
@@ -369,7 +375,7 @@ Friendly combined outgoing multiplier has lower clamp:
 
 ### `combat.rs`
 - attack cooldown tick
-- commander ranged arrow projectile emission
+- shared unit ranged projectile emission (commander + archer hybrid behavior)
 - in-range targeting + damage emit
 - enemy-in-formation vulnerability check (`+20%` friendly damage when inside formation bounds)
 - damage apply + `UnitDamagedEvent`

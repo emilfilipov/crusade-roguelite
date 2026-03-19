@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use crate::banner::BannerMovementPenalty;
-use crate::combat::{CommanderRangedAttackCooldown, CommanderRangedAttackProfile};
+use crate::combat::{RangedAttackCooldown, RangedAttackProfile};
 use crate::data::GameData;
 use crate::formation::{
     ActiveFormation, FormationModifiers, active_formation_config, formation_contains_position,
@@ -79,53 +79,58 @@ fn handle_start_run(
 
 fn spawn_commander(commands: &mut Commands, data: &GameData, art: &ArtAssets) -> Entity {
     let cfg = &data.units.commander;
-    commands
-        .spawn((
-            Unit {
-                team: Team::Friendly,
-                kind: UnitKind::Commander,
-                level: 1,
+    let mut entity = commands.spawn((
+        Unit {
+            team: Team::Friendly,
+            kind: UnitKind::Commander,
+            level: 1,
+        },
+        CommanderUnit,
+        FriendlyUnit,
+        PlayerControlled,
+        Health::new(cfg.max_hp),
+        BaseMaxHealth(cfg.max_hp),
+        Morale::new(cfg.morale),
+        Armor(cfg.armor),
+        ColliderRadius(14.0),
+        AttackProfile {
+            damage: cfg.damage,
+            range: cfg.attack_range,
+            cooldown_secs: cfg.attack_cooldown_secs,
+        },
+        AttackCooldown(Timer::from_seconds(
+            cfg.attack_cooldown_secs,
+            TimerMode::Repeating,
+        )),
+        MoveSpeed(cfg.move_speed),
+        SpriteBundle {
+            texture: art.commander_idle.clone(),
+            sprite: Sprite {
+                color: Color::srgb(1.0, 0.88, 0.88),
+                custom_size: Some(Vec2::splat(36.0)),
+                ..default()
             },
-            CommanderUnit,
-            FriendlyUnit,
-            PlayerControlled,
-            Health::new(cfg.max_hp),
-            BaseMaxHealth(cfg.max_hp),
-            Morale::new(cfg.morale),
-            Armor(cfg.armor),
-            ColliderRadius(14.0),
-            AttackProfile {
-                damage: cfg.damage,
-                range: cfg.attack_range,
-                cooldown_secs: cfg.attack_cooldown_secs,
-            },
-            AttackCooldown(Timer::from_seconds(
-                cfg.attack_cooldown_secs,
-                TimerMode::Repeating,
-            )),
-            CommanderRangedAttackProfile {
+            transform: Transform::from_xyz(0.0, 0.0, 10.0),
+            ..default()
+        },
+    ));
+
+    if cfg.ranged_attack_damage > 0.0 {
+        entity.insert((
+            RangedAttackProfile {
                 damage: cfg.ranged_attack_damage,
                 range: cfg.ranged_attack_range,
                 projectile_speed: cfg.ranged_projectile_speed,
                 projectile_max_distance: cfg.ranged_projectile_max_distance,
             },
-            CommanderRangedAttackCooldown(Timer::from_seconds(
+            RangedAttackCooldown(Timer::from_seconds(
                 cfg.ranged_attack_cooldown_secs,
                 TimerMode::Repeating,
             )),
-            MoveSpeed(cfg.move_speed),
-            SpriteBundle {
-                texture: art.commander_idle.clone(),
-                sprite: Sprite {
-                    color: Color::srgb(1.0, 0.88, 0.88),
-                    custom_size: Some(Vec2::splat(36.0)),
-                    ..default()
-                },
-                transform: Transform::from_xyz(0.0, 0.0, 10.0),
-                ..default()
-            },
-        ))
-        .id()
+        ));
+    }
+
+    entity.id()
 }
 
 fn spawn_recruit(
@@ -152,41 +157,56 @@ fn spawn_recruit(
         ),
     };
 
-    commands
-        .spawn((
-            Unit {
-                team: Team::Friendly,
-                kind: unit_kind,
-                level: 1,
-            },
-            FriendlyUnit,
-            Health::new(cfg.max_hp),
-            BaseMaxHealth(cfg.max_hp),
-            Morale::new(cfg.morale),
-            Armor(cfg.armor),
-            ColliderRadius(collider_radius),
-            AttackProfile {
-                damage: cfg.damage,
-                range: cfg.attack_range,
-                cooldown_secs: cfg.attack_cooldown_secs,
-            },
-            AttackCooldown(Timer::from_seconds(
-                cfg.attack_cooldown_secs,
-                TimerMode::Repeating,
-            )),
-            MoveSpeed(cfg.move_speed),
-            SpriteBundle {
-                texture,
-                sprite: Sprite {
-                    color: sprite_tint,
-                    custom_size: Some(Vec2::splat(32.0)),
-                    ..default()
-                },
-                transform: Transform::from_xyz(position.x, position.y, 10.0),
+    let mut entity = commands.spawn((
+        Unit {
+            team: Team::Friendly,
+            kind: unit_kind,
+            level: 1,
+        },
+        FriendlyUnit,
+        Health::new(cfg.max_hp),
+        BaseMaxHealth(cfg.max_hp),
+        Morale::new(cfg.morale),
+        Armor(cfg.armor),
+        ColliderRadius(collider_radius),
+        AttackProfile {
+            damage: cfg.damage,
+            range: cfg.attack_range,
+            cooldown_secs: cfg.attack_cooldown_secs,
+        },
+        AttackCooldown(Timer::from_seconds(
+            cfg.attack_cooldown_secs,
+            TimerMode::Repeating,
+        )),
+        MoveSpeed(cfg.move_speed),
+        SpriteBundle {
+            texture,
+            sprite: Sprite {
+                color: sprite_tint,
+                custom_size: Some(Vec2::splat(32.0)),
                 ..default()
             },
-        ))
-        .id()
+            transform: Transform::from_xyz(position.x, position.y, 10.0),
+            ..default()
+        },
+    ));
+
+    if cfg.ranged_attack_damage > 0.0 {
+        entity.insert((
+            RangedAttackProfile {
+                damage: cfg.ranged_attack_damage,
+                range: cfg.ranged_attack_range,
+                projectile_speed: cfg.ranged_projectile_speed,
+                projectile_max_distance: cfg.ranged_projectile_max_distance,
+            },
+            RangedAttackCooldown(Timer::from_seconds(
+                cfg.ranged_attack_cooldown_secs,
+                TimerMode::Repeating,
+            )),
+        ));
+    }
+
+    entity.id()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -344,9 +364,10 @@ fn _satisfy_query_markers(_enemy: Option<EnemyUnit>, _rescue: Option<RescuableUn
 mod tests {
     use bevy::prelude::*;
 
+    use crate::combat::RangedAttackProfile;
     use crate::data::GameData;
-    use crate::formation::ActiveFormation;
-    use crate::model::{CommanderUnit, GameState, StartRunEvent};
+    use crate::formation::{ActiveFormation, FormationModifiers};
+    use crate::model::{CommanderUnit, GameState, RecruitEvent, RecruitUnitKind, StartRunEvent};
     use crate::squad::{
         SquadPlugin, enemy_inside_active_formation, movement_multiplier_from_inside_enemy_count,
     };
@@ -362,6 +383,8 @@ mod tests {
             GameData::load_from_dir(std::path::Path::new("assets/data")).expect("data"),
         );
         app.insert_resource(ArtAssets::default());
+        app.insert_resource(ActiveFormation::Square);
+        app.insert_resource(FormationModifiers::default());
         app.add_plugins(SquadPlugin);
 
         app.world_mut().send_event(StartRunEvent);
@@ -398,5 +421,44 @@ mod tests {
             30.0,
             ActiveFormation::Square,
         ));
+    }
+
+    #[test]
+    fn archer_recruit_gets_ranged_attack_profile() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, bevy::state::app::StatesPlugin));
+        app.init_state::<GameState>();
+        app.add_event::<StartRunEvent>();
+        app.insert_resource(
+            GameData::load_from_dir(std::path::Path::new("assets/data")).expect("data"),
+        );
+        app.insert_resource(ArtAssets::default());
+        app.insert_resource(ActiveFormation::Square);
+        app.insert_resource(FormationModifiers::default());
+        app.add_plugins(SquadPlugin);
+
+        app.world_mut().send_event(StartRunEvent);
+        app.update();
+
+        app.world_mut()
+            .resource_mut::<NextState<GameState>>()
+            .set(GameState::InRun);
+        app.update();
+
+        app.world_mut().send_event(RecruitEvent {
+            world_position: Vec2::new(24.0, 8.0),
+            recruit_kind: RecruitUnitKind::ChristianPeasantArcher,
+        });
+        app.update();
+
+        let found_archer_with_ranged = {
+            let world = app.world_mut();
+            let mut query = world.query::<(&crate::model::Unit, Option<&RangedAttackProfile>)>();
+            query.iter(world).any(|(unit, ranged_profile)| {
+                unit.kind == crate::model::UnitKind::ChristianPeasantArcher
+                    && ranged_profile.is_some()
+            })
+        };
+        assert!(found_archer_with_ranged);
     }
 }

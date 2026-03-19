@@ -5,9 +5,8 @@ use crate::formation::{
     ActiveFormation, FormationModifiers, active_formation_config, formation_contains_position,
 };
 use crate::model::{
-    AttackCooldown, AttackProfile, CommanderUnit, DamageEvent, EnemyUnit, FriendlyUnit, GameState,
-    GlobalBuffs, Health, Morale, SpawnExpPackEvent, Team, Unit, UnitDamagedEvent, UnitDiedEvent,
-    UnitKind,
+    AttackCooldown, AttackProfile, DamageEvent, EnemyUnit, GameState, GlobalBuffs, Health, Morale,
+    SpawnExpPackEvent, Team, Unit, UnitDamagedEvent, UnitDiedEvent, UnitKind,
 };
 use crate::morale::CohesionCombatModifiers;
 use crate::projectiles::Projectile;
@@ -21,12 +20,12 @@ const LOW_MORALE_MIN_MULTIPLIER: f32 = 0.75;
 const ENEMY_DROP_PICKUP_DELAY_SECS: f32 = 0.9;
 const INSIDE_FORMATION_DAMAGE_MULTIPLIER: f32 = 1.2;
 const FORMATION_BOUNDS_PADDING_SLOTS: f32 = 0.35;
-const COMMANDER_ARROW_HIT_RADIUS: f32 = 10.0;
-const COMMANDER_ARROW_RENDER_SIZE: f32 = 16.0;
-const COMMANDER_ARROW_RENDER_Z: f32 = 28.0;
+const RANGED_PROJECTILE_HIT_RADIUS: f32 = 10.0;
+const RANGED_PROJECTILE_RENDER_SIZE: f32 = 16.0;
+const RANGED_PROJECTILE_RENDER_Z: f32 = 28.0;
 
 #[derive(Component, Clone, Copy, Debug)]
-pub struct CommanderRangedAttackProfile {
+pub struct RangedAttackProfile {
     pub damage: f32,
     pub range: f32,
     pub projectile_speed: f32,
@@ -34,7 +33,7 @@ pub struct CommanderRangedAttackProfile {
 }
 
 #[derive(Component, Clone, Debug)]
-pub struct CommanderRangedAttackCooldown(pub Timer);
+pub struct RangedAttackCooldown(pub Timer);
 
 pub struct CombatPlugin;
 
@@ -44,7 +43,7 @@ impl Plugin for CombatPlugin {
             Update,
             (
                 tick_attack_timers,
-                commander_ranged_attacks,
+                emit_ranged_projectile_attacks,
                 emit_damage_events,
                 apply_damage_events,
                 resolve_deaths,
@@ -89,7 +88,7 @@ fn tick_attack_timers(
 
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::type_complexity)]
-fn commander_ranged_attacks(
+fn emit_ranged_projectile_attacks(
     mut commands: Commands,
     time: Res<Time>,
     art: Res<ArtAssets>,
@@ -100,47 +99,75 @@ fn commander_ranged_attacks(
     progression: Option<Res<Progression>>,
     global_buffs: Option<Res<GlobalBuffs>>,
     commander_motion: Option<Res<CommanderMotionState>>,
-    mut commanders: Query<
-        (
-            &Unit,
-            Option<&Morale>,
-            &Transform,
-            &AttackProfile,
-            &CommanderRangedAttackProfile,
-            &mut CommanderRangedAttackCooldown,
-        ),
-        With<CommanderUnit>,
-    >,
-    friendlies: Query<&Unit, With<FriendlyUnit>>,
-    enemies: Query<(&Transform, &Health, &Unit), With<EnemyUnit>>,
+    mut ranged_attackers: Query<(
+        Entity,
+        &Unit,
+        Option<&Morale>,
+        &Transform,
+        &AttackProfile,
+        &RangedAttackProfile,
+        &mut RangedAttackCooldown,
+    )>,
+    targets: Query<(Entity, &Transform, &Health, &Unit)>,
 ) {
     let level_multiplier = progression
         .as_ref()
         .map(|value| commander_level_combat_multiplier(value.level))
         .unwrap_or(1.0);
+    let target_snapshot: Vec<(Entity, Vec2, f32, Unit)> = targets
+        .iter()
+        .map(|(entity, transform, health, unit)| {
+            (
+                entity,
+                transform.translation.truncate(),
+                health.current,
+                *unit,
+            )
+        })
+        .collect();
+    let has_non_commander_friendlies = target_snapshot.iter().any(|(_, _, health, unit)| {
+        unit.team == Team::Friendly && unit.kind != UnitKind::Commander && *health > 0.0
+    });
+    let formation_targets: Vec<(Entity, Unit, Vec2, f32, f32)> = target_snapshot
+        .iter()
+        .map(|(entity, position, health, unit)| (*entity, *unit, *position, *health, 0.0))
+        .collect();
+    let formation_context = friendly_formation_context(&formation_targets);
+    let slot_spacing = active_formation_config(&data, *active_formation).slot_spacing;
+
     for (
+        _attacker_entity,
         commander_unit,
         commander_morale,
         commander_transform,
         melee_profile,
         ranged_profile,
         mut ranged_cooldown,
-    ) in &mut commanders
+    ) in &mut ranged_attackers
     {
-        let recruit_count = friendlies
-            .iter()
-            .filter(|unit| unit.kind != UnitKind::Commander)
-            .count();
+        if ranged_profile.range <= melee_profile.range || ranged_profile.damage <= 0.0 {
+            continue;
+        }
+
+        let attacker_team = commander_unit.team;
+        let opposite_team = match attacker_team {
+            Team::Friendly => Team::Enemy,
+            Team::Enemy => Team::Friendly,
+            Team::Neutral => continue,
+        };
         let morale_multiplier = commander_morale
             .copied()
             .map(|value| morale_effect_multiplier(value.ratio()))
             .unwrap_or(1.0);
-        let mut attack_speed =
-            cohesion_mods.attack_speed_multiplier * morale_multiplier * level_multiplier;
-        if let Some(buff) = &global_buffs {
-            attack_speed *= buff.attack_speed_multiplier;
+        let mut attack_speed = morale_multiplier;
+        if attacker_team == Team::Friendly {
+            attack_speed *= cohesion_mods.attack_speed_multiplier * level_multiplier;
+            if let Some(buff) = &global_buffs {
+                attack_speed *= buff.attack_speed_multiplier;
+            }
+            attack_speed = attack_speed.max(MIN_FRIENDLY_COMBAT_MULTIPLIER);
         }
-        attack_speed = attack_speed.max(MIN_FRIENDLY_COMBAT_MULTIPLIER);
+
         ranged_cooldown.0.tick(std::time::Duration::from_secs_f32(
             time.delta_seconds() * attack_speed,
         ));
@@ -149,20 +176,24 @@ fn commander_ranged_attacks(
         }
 
         let commander_position = commander_transform.translation.truncate();
-        let melee_range_sq = melee_profile.range * melee_profile.range;
-        let ranged_range_sq = ranged_profile.range * ranged_profile.range;
 
         let mut best_target: Option<(Vec2, f32, UnitKind)> = None;
-        for (enemy_transform, enemy_health, enemy_unit) in &enemies {
-            if enemy_health.current <= 0.0 {
+        for (_, target_position, target_health, target_unit) in &target_snapshot {
+            if target_unit.team != opposite_team || *target_health <= 0.0 {
                 continue;
             }
-            let enemy_position = enemy_transform.translation.truncate();
-            let distance_sq = commander_position.distance_squared(enemy_position);
-            if distance_sq <= melee_range_sq || distance_sq > ranged_range_sq {
+            if !enemy_target_allowed(
+                attacker_team,
+                target_unit.kind,
+                has_non_commander_friendlies,
+            ) {
                 continue;
             }
-            let candidate = (enemy_position, distance_sq, enemy_unit.kind);
+            let distance_sq = commander_position.distance_squared(*target_position);
+            if !ranged_target_in_window(distance_sq, melee_profile.range, ranged_profile.range) {
+                continue;
+            }
+            let candidate = (*target_position, distance_sq, target_unit.kind);
             match best_target {
                 Some((_, best_distance, _)) if distance_sq >= best_distance => {}
                 _ => best_target = Some(candidate),
@@ -178,28 +209,32 @@ fn commander_ranged_attacks(
         }
         let direction_normalized = direction.normalize();
 
-        let base_multiplier = friendly_outgoing_multiplier(
-            effective_formation_offense_multiplier(&formation_mods, commander_motion.as_deref()),
-            cohesion_mods.damage_multiplier,
-            global_buffs
-                .as_ref()
-                .map(|buff| buff.damage_multiplier)
-                .unwrap_or(1.0),
-            level_multiplier,
-            morale_multiplier,
-        );
-        let formation_multiplier = inside_formation_damage_multiplier(
-            &Some(FriendlyFormationContext {
-                commander_position,
-                recruit_count,
-            }),
-            target_position,
-            target_kind,
-            *active_formation,
-            active_formation_config(&data, *active_formation).slot_spacing,
-        );
-        let projectile_damage =
-            (ranged_profile.damage * base_multiplier * formation_multiplier).max(1.0);
+        let outgoing_multiplier = if attacker_team == Team::Friendly {
+            let base_multiplier = friendly_outgoing_multiplier(
+                effective_formation_offense_multiplier(
+                    &formation_mods,
+                    commander_motion.as_deref(),
+                ),
+                cohesion_mods.damage_multiplier,
+                global_buffs
+                    .as_ref()
+                    .map(|buff| buff.damage_multiplier)
+                    .unwrap_or(1.0),
+                level_multiplier,
+                morale_multiplier,
+            );
+            let formation_multiplier = inside_formation_damage_multiplier(
+                &formation_context,
+                target_position,
+                target_kind,
+                *active_formation,
+                slot_spacing,
+            );
+            base_multiplier * formation_multiplier
+        } else {
+            morale_multiplier
+        };
+        let projectile_damage = (ranged_profile.damage * outgoing_multiplier).max(1.0);
 
         ranged_cooldown.0.reset();
         commands.spawn((
@@ -207,20 +242,20 @@ fn commander_ranged_attacks(
                 velocity: direction_normalized * ranged_profile.projectile_speed,
                 damage: projectile_damage,
                 remaining_distance: ranged_profile.projectile_max_distance,
-                radius: COMMANDER_ARROW_HIT_RADIUS,
+                radius: RANGED_PROJECTILE_HIT_RADIUS,
                 source_team: commander_unit.team,
             },
             SpriteBundle {
                 texture: art.arrow_projectile.clone(),
                 sprite: Sprite {
-                    custom_size: Some(Vec2::splat(COMMANDER_ARROW_RENDER_SIZE)),
+                    custom_size: Some(Vec2::splat(RANGED_PROJECTILE_RENDER_SIZE)),
                     ..default()
                 },
                 transform: Transform {
                     translation: Vec3::new(
                         commander_position.x,
                         commander_position.y,
-                        COMMANDER_ARROW_RENDER_Z,
+                        RANGED_PROJECTILE_RENDER_Z,
                     ),
                     rotation: Quat::from_rotation_z(
                         direction_normalized.y.atan2(direction_normalized.x),
@@ -231,6 +266,15 @@ fn commander_ranged_attacks(
             },
         ));
     }
+}
+
+pub fn ranged_target_in_window(distance_sq: f32, melee_range: f32, ranged_range: f32) -> bool {
+    if melee_range <= 0.0 || ranged_range <= 0.0 || ranged_range <= melee_range {
+        return false;
+    }
+    let melee_range_sq = melee_range * melee_range;
+    let ranged_range_sq = ranged_range * ranged_range;
+    distance_sq > melee_range_sq && distance_sq <= ranged_range_sq
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -567,7 +611,7 @@ mod tests {
         FriendlyFormationContext, commander_level_combat_multiplier, compute_damage,
         effective_formation_offense_multiplier, enemy_target_allowed, friendly_formation_context,
         friendly_outgoing_multiplier, inside_active_formation_bounds,
-        inside_formation_damage_multiplier, morale_effect_multiplier,
+        inside_formation_damage_multiplier, morale_effect_multiplier, ranged_target_in_window,
     };
     use crate::formation::{ActiveFormation, FormationModifiers};
     use crate::model::{Team, UnitKind};
@@ -710,5 +754,13 @@ mod tests {
         let context = friendly_formation_context(&targets).expect("formation context");
         assert_eq!(context.commander_position, Vec2::new(10.0, 20.0));
         assert_eq!(context.recruit_count, 1);
+    }
+
+    #[test]
+    fn ranged_target_window_requires_outside_melee_and_inside_ranged() {
+        assert!(ranged_target_in_window(64.0, 6.0, 12.0));
+        assert!(!ranged_target_in_window(25.0, 6.0, 12.0));
+        assert!(!ranged_target_in_window(225.0, 6.0, 12.0));
+        assert!(!ranged_target_in_window(64.0, 10.0, 10.0));
     }
 }
