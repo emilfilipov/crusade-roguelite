@@ -17,6 +17,14 @@ pub struct ArtAssets {
     pub terrain_boundary_wall_tile_a: Handle<Image>,
     pub exp_pack_coin_stack: Handle<Image>,
     pub arrow_projectile: Handle<Image>,
+    pub upgrade_damage_icon: Handle<Image>,
+    pub upgrade_attack_speed_icon: Handle<Image>,
+    pub upgrade_armor_icon: Handle<Image>,
+    pub upgrade_pickup_radius_icon: Handle<Image>,
+    pub upgrade_aura_radius_icon: Handle<Image>,
+    pub upgrade_authority_icon: Handle<Image>,
+    pub upgrade_move_speed_icon: Handle<Image>,
+    pub upgrade_hospitalier_icon: Handle<Image>,
 }
 
 pub struct VisualPlugin;
@@ -62,4 +70,20 @@ fn load_art_assets(mut assets: ResMut<ArtAssets>, asset_server: Option<Res<Asset
     assets.exp_pack_coin_stack = asset_server.load("sprites/pickups/xp_coin_stack.png");
     assets.arrow_projectile = asset_server
         .load("third_party/kenney_desert-shooter-pack_1.0/PNG/Weapons/Tiles/tile_0018.png");
+    assets.upgrade_damage_icon =
+        asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0107.png");
+    assets.upgrade_attack_speed_icon =
+        asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0062.png");
+    assets.upgrade_armor_icon =
+        asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0102.png");
+    assets.upgrade_pickup_radius_icon =
+        asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0060.png");
+    assets.upgrade_aura_radius_icon =
+        asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0056.png");
+    assets.upgrade_authority_icon =
+        asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0084.png");
+    assets.upgrade_move_speed_icon = asset_server
+        .load("third_party/kenney_desert-shooter-pack_1.0/PNG/Interface/Tiles/tile_0078.png");
+    assets.upgrade_hospitalier_icon =
+        asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0115.png");
 }

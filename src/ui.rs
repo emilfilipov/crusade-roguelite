@@ -750,14 +750,22 @@ fn spawn_level_up_card(
             LevelUpOptionAction { index },
         ))
         .with_children(|card| {
-            card.spawn(TextBundle::from_section(
-                title,
-                TextStyle {
-                    font_size: 22.0,
-                    color: MENU_BUTTON_TEXT_HOVERED,
+            card.spawn(TextBundle {
+                style: Style {
+                    width: Val::Percent(100.0),
                     ..default()
                 },
-            ));
+                text: Text::from_section(
+                    title,
+                    TextStyle {
+                        font_size: 22.0,
+                        color: MENU_BUTTON_TEXT_HOVERED,
+                        ..default()
+                    },
+                )
+                .with_justify(JustifyText::Center),
+                ..default()
+            });
             card.spawn(ImageBundle {
                 style: Style {
                     width: Val::Px(96.0),
@@ -768,27 +776,35 @@ fn spawn_level_up_card(
                 background_color: BackgroundColor(Color::NONE),
                 ..default()
             });
-            card.spawn(TextBundle::from_section(
-                description,
-                TextStyle {
-                    font_size: 16.0,
-                    color: HUD_TEXT_COLOR,
+            card.spawn(TextBundle {
+                style: Style {
+                    width: Val::Percent(100.0),
                     ..default()
                 },
-            ));
+                text: Text::from_section(
+                    description,
+                    TextStyle {
+                        font_size: 15.0,
+                        color: HUD_TEXT_COLOR,
+                        ..default()
+                    },
+                )
+                .with_justify(JustifyText::Center),
+                ..default()
+            });
         });
 }
 
 fn upgrade_icon_for(icon_kind: UpgradeCardIcon, art: &crate::visuals::ArtAssets) -> Handle<Image> {
     match icon_kind {
-        UpgradeCardIcon::Damage => art.enemy_bandit_raider_attack.clone(),
-        UpgradeCardIcon::AttackSpeed => art.enemy_bandit_raider_move.clone(),
-        UpgradeCardIcon::Armor => art.friendly_knight_idle.clone(),
-        UpgradeCardIcon::PickupRadius => art.exp_pack_coin_stack.clone(),
-        UpgradeCardIcon::AuraRadius => art.banner_upright.clone(),
-        UpgradeCardIcon::AuthorityAura => art.banner_upright.clone(),
-        UpgradeCardIcon::MoveSpeed => art.commander_idle.clone(),
-        UpgradeCardIcon::HospitalierAura => art.commander_idle.clone(),
+        UpgradeCardIcon::Damage => art.upgrade_damage_icon.clone(),
+        UpgradeCardIcon::AttackSpeed => art.upgrade_attack_speed_icon.clone(),
+        UpgradeCardIcon::Armor => art.upgrade_armor_icon.clone(),
+        UpgradeCardIcon::PickupRadius => art.upgrade_pickup_radius_icon.clone(),
+        UpgradeCardIcon::AuraRadius => art.upgrade_aura_radius_icon.clone(),
+        UpgradeCardIcon::AuthorityAura => art.upgrade_authority_icon.clone(),
+        UpgradeCardIcon::MoveSpeed => art.upgrade_move_speed_icon.clone(),
+        UpgradeCardIcon::HospitalierAura => art.upgrade_hospitalier_icon.clone(),
     }
 }
 
