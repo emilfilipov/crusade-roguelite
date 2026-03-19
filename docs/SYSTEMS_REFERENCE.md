@@ -18,6 +18,7 @@ Use this for entity/component/system lookup without scanning all source files.
   - offense bonus while commander is moving,
   - slight movement speed bonus,
   - slight defense penalty.
+- Diamond slot assignment now uses explicit ring + clockwise ordering around commander for clearer unit arrangement.
 - Draft filtering now removes skillbar-bound cards when skillbar is full.
 - Replaced the level-up pool with weighted random 3-option drafts from repeatable upgrades plus one-time skill unlocks.
 - Upgrade values now roll via weighted min/max sampling (higher values are rarer).

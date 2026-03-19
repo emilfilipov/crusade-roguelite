@@ -298,15 +298,48 @@ fn offsets_for_formation(
 }
 
 fn diamond_offsets_excluding_commander_slot(recruit_count: usize, spacing: f32) -> Vec<Vec2> {
-    square_offsets_excluding_commander_slot(recruit_count, spacing)
+    let mut offsets: Vec<Vec2> = square_offsets_excluding_commander_slot(recruit_count, spacing)
         .into_iter()
         .map(rotate_45_degrees)
-        .collect()
+        .collect();
+    offsets.sort_by(diamond_slot_cmp);
+    offsets
 }
 
 fn rotate_45_degrees(offset: Vec2) -> Vec2 {
     let scale = std::f32::consts::FRAC_1_SQRT_2;
     Vec2::new((offset.x - offset.y) * scale, (offset.x + offset.y) * scale)
+}
+
+fn diamond_slot_cmp(a: &Vec2, b: &Vec2) -> std::cmp::Ordering {
+    let radius_cmp = a
+        .length_squared()
+        .partial_cmp(&b.length_squared())
+        .unwrap_or(std::cmp::Ordering::Equal);
+    if radius_cmp != std::cmp::Ordering::Equal {
+        return radius_cmp;
+    }
+
+    let angle_a = diamond_clockwise_angle(*a);
+    let angle_b = diamond_clockwise_angle(*b);
+    let angle_cmp = angle_a
+        .partial_cmp(&angle_b)
+        .unwrap_or(std::cmp::Ordering::Equal);
+    if angle_cmp != std::cmp::Ordering::Equal {
+        return angle_cmp;
+    }
+
+    a.x.partial_cmp(&b.x)
+        .unwrap_or(std::cmp::Ordering::Equal)
+        .then_with(|| a.y.partial_cmp(&b.y).unwrap_or(std::cmp::Ordering::Equal))
+}
+
+fn diamond_clockwise_angle(offset: Vec2) -> f32 {
+    let mut angle = offset.x.atan2(offset.y);
+    if angle < 0.0 {
+        angle += std::f32::consts::TAU;
+    }
+    angle
 }
 
 pub fn formation_contains_position(
@@ -483,5 +516,27 @@ mod tests {
             30.0,
             0.35,
         ));
+    }
+
+    #[test]
+    fn diamond_offsets_are_ordered_by_ring_then_clockwise() {
+        let offsets = super::diamond_offsets_excluding_commander_slot(8, 20.0);
+        assert_eq!(offsets.len(), 8);
+        for pair in offsets.windows(2) {
+            let a = pair[0];
+            let b = pair[1];
+            assert!(
+                b.length_squared() + 0.0001 >= a.length_squared(),
+                "diamond ordering should be non-decreasing by ring distance"
+            );
+        }
+        let topish_exists = offsets
+            .iter()
+            .take(4)
+            .any(|offset| offset.y > offset.x.abs() * 0.5);
+        assert!(
+            topish_exists,
+            "early diamond slots should include a top-side placement"
+        );
     }
 }

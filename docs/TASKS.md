@@ -28,6 +28,23 @@
 
 ---
 
+## CRU-057 - Diamond Slot Ordering Around Commander
+- Status: `DONE`
+- Type: `Gameplay/Formation`
+- Priority: `P1`
+- Depends on: `CRU-055`
+- Goal: Ensure diamond formation distributes units in a visibly different ordered pattern around the commander.
+- Context:
+  - Rotated coordinates alone were valid geometrically but could still look too similar in fill order.
+- Implementation:
+  1. Added explicit diamond slot comparator by ring distance first.
+  2. Added clockwise slot ordering per ring around the commander (starting near top).
+  3. Kept the same diamond geometry while improving assignment/readability.
+- Unit Tests Required:
+  - Ring-order monotonic test for diamond offsets.
+- Acceptance Criteria:
+  - Diamond formation unit ordering around commander is distinct and predictable.
+
 ## CRU-053 - Formation Skillbar Runtime (10 Slots, 1..0 Activation)
 - Status: `DONE`
 - Type: `Gameplay/UI`
