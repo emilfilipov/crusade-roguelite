@@ -3,6 +3,9 @@ use bevy::prelude::*;
 use crate::banner::BannerMovementPenalty;
 use crate::combat::{CommanderRangedAttackCooldown, CommanderRangedAttackProfile};
 use crate::data::GameData;
+use crate::formation::{
+    ActiveFormation, FormationModifiers, active_formation_config, formation_contains_position,
+};
 use crate::map::{MapBounds, playable_bounds};
 use crate::model::{
     Armor, AttackCooldown, AttackProfile, BaseMaxHealth, ColliderRadius, CommanderUnit, EnemyUnit,
@@ -22,11 +25,17 @@ pub struct SquadRoster {
     pub casualties: u32,
 }
 
+#[derive(Resource, Clone, Copy, Debug, Default)]
+pub struct CommanderMotionState {
+    pub is_moving: bool,
+}
+
 pub struct SquadPlugin;
 
 impl Plugin for SquadPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<SquadRoster>()
+            .init_resource::<CommanderMotionState>()
             .add_event::<RecruitEvent>()
             .add_event::<UnitDiedEvent>()
             .add_systems(Update, handle_start_run)
@@ -45,6 +54,7 @@ impl Plugin for SquadPlugin {
 fn handle_start_run(
     mut commands: Commands,
     mut roster: ResMut<SquadRoster>,
+    mut motion: ResMut<CommanderMotionState>,
     mut start_events: EventReader<StartRunEvent>,
     existing_units: Query<Entity, With<Unit>>,
     data: Res<GameData>,
@@ -63,6 +73,7 @@ fn handle_start_run(
     roster.commander = Some(commander);
     roster.friendly_count = 1;
     roster.casualties = 0;
+    motion.is_moving = false;
 }
 
 fn spawn_commander(commands: &mut Commands, data: &GameData, art: &ArtAssets) -> Entity {
@@ -164,8 +175,11 @@ fn spawn_recruit(
 fn commander_movement(
     time: Res<Time>,
     data: Res<GameData>,
+    active_formation: Res<ActiveFormation>,
+    formation_mods: Res<FormationModifiers>,
     buffs: Option<Res<GlobalBuffs>>,
     keyboard: Option<Res<ButtonInput<KeyCode>>>,
+    mut commander_motion: ResMut<CommanderMotionState>,
     bounds: Option<Res<MapBounds>>,
     banner_penalty: Option<Res<BannerMovementPenalty>>,
     friendlies: Query<Entity, (With<FriendlyUnit>, Without<CommanderUnit>)>,
@@ -176,6 +190,7 @@ fn commander_movement(
     >,
 ) {
     let Some(keys) = keyboard else {
+        commander_motion.is_moving = false;
         return;
     };
 
@@ -192,6 +207,8 @@ fn commander_movement(
     if keys.pressed(KeyCode::KeyD) || keys.pressed(KeyCode::ArrowRight) {
         axis.x += 1.0;
     }
+
+    commander_motion.is_moving = axis.length_squared() > 0.0;
     if axis.length_squared() == 0.0 {
         return;
     }
@@ -202,27 +219,31 @@ fn commander_movement(
         .map(|penalty| penalty.friendly_speed_multiplier)
         .unwrap_or(1.0);
     let recruit_count = friendlies.iter().count();
-    let slot_spacing = data.formations.square.slot_spacing;
+    let formation_cfg = active_formation_config(&data, *active_formation);
+    let slot_spacing = formation_cfg.slot_spacing;
     let movement_bonus = buffs
         .as_ref()
         .map(|value| value.move_speed_bonus)
         .unwrap_or(0.0);
+
     for (move_speed, mut transform) in &mut commanders {
         let commander_position = transform.translation.truncate();
         let inside_enemy_count = enemies
             .iter()
             .filter(|enemy_transform| {
-                enemy_inside_square_formation(
+                enemy_inside_active_formation(
                     commander_position,
                     enemy_transform.translation.truncate(),
                     recruit_count,
                     slot_spacing,
+                    *active_formation,
                 )
             })
             .count();
         let formation_slowdown =
             movement_multiplier_from_inside_enemy_count(inside_enemy_count as u32);
-        let effective_speed = (move_speed.0 + movement_bonus).max(1.0);
+        let effective_speed =
+            (move_speed.0 + movement_bonus).max(1.0) * formation_mods.move_speed_multiplier;
         let delta = direction * effective_speed * speed_multiplier * time.delta_seconds();
         transform.translation.x += delta.x * formation_slowdown;
         transform.translation.y += delta.y * formation_slowdown;
@@ -240,19 +261,21 @@ fn commander_movement(
     }
 }
 
-pub fn enemy_inside_square_formation(
+pub fn enemy_inside_active_formation(
     commander_position: Vec2,
     enemy_position: Vec2,
     recruit_count: usize,
     slot_spacing: f32,
+    formation: ActiveFormation,
 ) -> bool {
-    if recruit_count == 0 || slot_spacing <= 0.0 {
-        return false;
-    }
-    let side = ((recruit_count + 1) as f32).sqrt().ceil();
-    let half_extent = ((side - 1.0) * 0.5 + ENEMY_INSIDE_FORMATION_PADDING_SLOTS) * slot_spacing;
-    let delta = enemy_position - commander_position;
-    delta.x.abs() <= half_extent && delta.y.abs() <= half_extent
+    formation_contains_position(
+        formation,
+        commander_position,
+        enemy_position,
+        recruit_count,
+        slot_spacing,
+        ENEMY_INSIDE_FORMATION_PADDING_SLOTS,
+    )
 }
 
 pub fn movement_multiplier_from_inside_enemy_count(inside_enemy_count: u32) -> f32 {
@@ -297,9 +320,10 @@ mod tests {
     use bevy::prelude::*;
 
     use crate::data::GameData;
+    use crate::formation::ActiveFormation;
     use crate::model::{CommanderUnit, GameState, StartRunEvent};
     use crate::squad::{
-        SquadPlugin, enemy_inside_square_formation, movement_multiplier_from_inside_enemy_count,
+        SquadPlugin, enemy_inside_active_formation, movement_multiplier_from_inside_enemy_count,
     };
     use crate::visuals::ArtAssets;
 
@@ -335,17 +359,19 @@ mod tests {
 
     #[test]
     fn enemy_inside_formation_check_requires_recruits() {
-        assert!(!enemy_inside_square_formation(
+        assert!(!enemy_inside_active_formation(
             Vec2::ZERO,
             Vec2::new(10.0, 5.0),
             0,
-            30.0
+            30.0,
+            ActiveFormation::Square,
         ));
-        assert!(enemy_inside_square_formation(
+        assert!(enemy_inside_active_formation(
             Vec2::ZERO,
             Vec2::new(8.0, 6.0),
             9,
-            30.0
+            30.0,
+            ActiveFormation::Square,
         ));
     }
 }

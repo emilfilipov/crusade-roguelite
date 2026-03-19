@@ -1,6 +1,14 @@
 {
   "upgrades": [
     {
+      "id": "unlock_formation_diamond",
+      "kind": "unlock_formation",
+      "value": 1.0,
+      "one_time": true,
+      "adds_to_skillbar": true,
+      "formation_id": "diamond"
+    },
+    {
       "id": "damage_up",
       "kind": "damage",
       "min_value": 1.0,

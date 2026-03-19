@@ -27,6 +27,13 @@ Track external art sources, licenses, and current runtime mapping.
 - `assets/sprites/pickups/xp_coin_stack.png`
 - Runtime usage: XP pack pickup sprite (`exp_pack_coin_stack`)
 
+### Local Generated Formation Icons
+- `assets/sprites/skills/formation_square.png`
+- `assets/sprites/skills/formation_diamond.png`
+- Runtime usage:
+  - formation skillbar slot icons
+  - formation unlock card icons
+
 ## Installed Candidate Packs (Not Active in Runtime)
 - Kenney Roguelike/RPG Pack: `assets/third_party/kenney_roguelike-rpg-pack`
 - Kenney Sketch Desert: `assets/third_party/kenney_sketch-desert_1.0`
@@ -47,6 +54,8 @@ Track external art sources, licenses, and current runtime mapping.
 - `banner_dropped` -> `third_party/kenney_desert-shooter-pack_1.0/PNG/Weapons/Tiles/tile_0003.png`
 - `terrain_desert_base_tile_a` -> `third_party/kenney_desert-shooter-pack_1.0/PNG/Tiles/Tiles/tile_0000.png`
 - `exp_pack_coin_stack` -> `sprites/pickups/xp_coin_stack.png`
+- `formation_square_icon` -> `sprites/skills/formation_square.png`
+- `formation_diamond_icon` -> `sprites/skills/formation_diamond.png`
 
 ## Notes
 - Keep source pack license files in-repo for any active runtime pack.

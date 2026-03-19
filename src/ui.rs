@@ -5,6 +5,7 @@ use crate::banner::{BannerState, banner_pickup_progress_ratio};
 use crate::data::GameData;
 use crate::drops::ExpPack;
 use crate::enemies::WaveRuntime;
+use crate::formation::{FormationSkillBar, SkillBarSkillKind};
 use crate::map::MapBounds;
 use crate::model::{
     FrameRateCap, FriendlyUnit, GameState, Health, Morale, RescuableUnit, RunSession,
@@ -137,6 +138,19 @@ struct CohesionBarFill;
 #[derive(Component, Clone, Copy, Debug)]
 struct MinimapDotsRoot;
 
+#[derive(Component, Clone, Copy, Debug)]
+struct SkillBarRoot;
+
+#[derive(Component, Clone, Copy, Debug)]
+struct SkillBarSlotNode {
+    index: usize,
+}
+
+#[derive(Component, Clone, Copy, Debug)]
+struct SkillBarSlotIcon {
+    index: usize,
+}
+
 #[derive(Resource, Clone, Debug)]
 struct MinimapRefreshRuntime {
     timer: Timer,
@@ -172,6 +186,9 @@ const MINIMAP_MAX_ENEMY_BLIPS: usize = 220;
 const MINIMAP_MAX_FRIENDLY_BLIPS: usize = 260;
 const MINIMAP_MAX_RESCUABLE_BLIPS: usize = 80;
 const MINIMAP_MAX_EXP_BLIPS: usize = 320;
+const SKILL_BAR_SLOT_BG: Color = Color::srgba(0.05, 0.045, 0.04, 0.82);
+const SKILL_BAR_SLOT_BORDER: Color = Color::srgba(0.78, 0.72, 0.58, 0.4);
+const SKILL_BAR_SLOT_ACTIVE_BORDER: Color = Color::srgb(0.94, 0.82, 0.43);
 
 pub struct UiPlugin;
 
@@ -225,7 +242,12 @@ impl Plugin for UiPlugin {
             )
             .add_systems(
                 Update,
-                (update_in_run_hud, update_rescue_progress_hud).run_if(in_state(GameState::InRun)),
+                (
+                    update_in_run_hud,
+                    update_rescue_progress_hud,
+                    update_skill_bar_hud,
+                )
+                    .run_if(in_state(GameState::InRun)),
             )
             .add_systems(
                 Update,
@@ -805,6 +827,8 @@ fn upgrade_icon_for(icon_kind: UpgradeCardIcon, art: &crate::visuals::ArtAssets)
         UpgradeCardIcon::AuthorityAura => art.upgrade_authority_icon.clone(),
         UpgradeCardIcon::MoveSpeed => art.upgrade_move_speed_icon.clone(),
         UpgradeCardIcon::HospitalierAura => art.upgrade_hospitalier_icon.clone(),
+        UpgradeCardIcon::FormationSquare => art.formation_square_icon.clone(),
+        UpgradeCardIcon::FormationDiamond => art.formation_diamond_icon.clone(),
     }
 }
 
@@ -814,7 +838,11 @@ fn despawn_level_up_menu(mut commands: Commands, roots: Query<Entity, With<Level
     }
 }
 
-fn spawn_in_run_hud(mut commands: Commands, existing: Query<Entity, With<InRunHudRoot>>) {
+fn spawn_in_run_hud(
+    mut commands: Commands,
+    existing: Query<Entity, With<InRunHudRoot>>,
+    art: Res<crate::visuals::ArtAssets>,
+) {
     if !existing.is_empty() {
         return;
     }
@@ -975,6 +1003,7 @@ fn spawn_in_run_hud(mut commands: Commands, existing: Query<Entity, With<InRunHu
             });
 
             spawn_minimap(root);
+            spawn_skill_bar(root, &art);
         });
 }
 
@@ -1075,6 +1104,108 @@ fn spawn_minimap(parent: &mut ChildBuilder) {
                 },
             ));
         });
+}
+
+fn spawn_skill_bar(parent: &mut ChildBuilder, art: &crate::visuals::ArtAssets) {
+    parent
+        .spawn((
+            SkillBarRoot,
+            NodeBundle {
+                style: Style {
+                    position_type: PositionType::Absolute,
+                    left: Val::Px(0.0),
+                    right: Val::Px(0.0),
+                    bottom: Val::Px(12.0),
+                    flex_direction: FlexDirection::Row,
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    column_gap: Val::Px(6.0),
+                    padding: UiRect::all(Val::Px(6.0)),
+                    ..default()
+                },
+                background_color: BackgroundColor(Color::srgba(0.05, 0.045, 0.04, 0.28)),
+                ..default()
+            },
+        ))
+        .with_children(|bar| {
+            for index in 0..10 {
+                bar.spawn((
+                    SkillBarSlotNode { index },
+                    NodeBundle {
+                        style: Style {
+                            width: Val::Px(44.0),
+                            height: Val::Px(44.0),
+                            border: UiRect::all(Val::Px(1.0)),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            ..default()
+                        },
+                        background_color: BackgroundColor(SKILL_BAR_SLOT_BG),
+                        border_color: BorderColor(SKILL_BAR_SLOT_BORDER),
+                        ..default()
+                    },
+                ))
+                .with_children(|slot| {
+                    slot.spawn((
+                        SkillBarSlotIcon { index },
+                        ImageBundle {
+                            style: Style {
+                                width: Val::Px(28.0),
+                                height: Val::Px(28.0),
+                                ..default()
+                            },
+                            image: UiImage::new(art.formation_square_icon.clone()),
+                            background_color: BackgroundColor(Color::NONE),
+                            ..default()
+                        },
+                    ));
+                    slot.spawn(TextBundle {
+                        style: Style {
+                            position_type: PositionType::Absolute,
+                            top: Val::Px(2.0),
+                            left: Val::Px(3.0),
+                            ..default()
+                        },
+                        text: Text::from_section(
+                            skillbar_hotkey_label(index),
+                            TextStyle {
+                                font_size: 11.0,
+                                color: HUD_TEXT_COLOR,
+                                ..default()
+                            },
+                        ),
+                        ..default()
+                    });
+                });
+            }
+        });
+}
+
+fn skillbar_hotkey_label(index: usize) -> &'static str {
+    match index {
+        0 => "1",
+        1 => "2",
+        2 => "3",
+        3 => "4",
+        4 => "5",
+        5 => "6",
+        6 => "7",
+        7 => "8",
+        8 => "9",
+        9 => "0",
+        _ => "?",
+    }
+}
+
+fn skillbar_icon_handle(kind: SkillBarSkillKind, art: &crate::visuals::ArtAssets) -> Handle<Image> {
+    match kind {
+        SkillBarSkillKind::Formation(crate::formation::ActiveFormation::Square) => {
+            art.formation_square_icon.clone()
+        }
+        SkillBarSkillKind::Formation(crate::formation::ActiveFormation::Diamond) => {
+            art.formation_diamond_icon.clone()
+        }
+    }
 }
 
 #[allow(clippy::type_complexity)]
@@ -1456,6 +1587,40 @@ fn update_in_run_hud(
     }
     if let Ok(mut style) = bar_styles.p2().get_single_mut() {
         style.height = Val::Percent((hud.cohesion / 100.0).clamp(0.0, 1.0) * 100.0);
+    }
+}
+
+#[allow(clippy::type_complexity)]
+fn update_skill_bar_hud(
+    skillbar: Res<FormationSkillBar>,
+    art: Res<crate::visuals::ArtAssets>,
+    mut slot_nodes: Query<
+        (&SkillBarSlotNode, &mut BorderColor, &mut BackgroundColor),
+        With<SkillBarSlotNode>,
+    >,
+    mut slot_icons: Query<(&SkillBarSlotIcon, &mut UiImage), With<SkillBarSlotIcon>>,
+) {
+    for (slot, mut border_color, mut background) in &mut slot_nodes {
+        let is_active = skillbar.active_slot == Some(slot.index);
+        *border_color = BorderColor(if is_active {
+            SKILL_BAR_SLOT_ACTIVE_BORDER
+        } else {
+            SKILL_BAR_SLOT_BORDER
+        });
+        *background = BackgroundColor(if is_active {
+            Color::srgba(0.12, 0.1, 0.08, 0.9)
+        } else {
+            SKILL_BAR_SLOT_BG
+        });
+    }
+
+    for (slot_icon, mut image) in &mut slot_icons {
+        let Some(entry) = skillbar.slots.get(slot_icon.index) else {
+            image.color = Color::srgba(1.0, 1.0, 1.0, 0.0);
+            continue;
+        };
+        image.texture = skillbar_icon_handle(entry.kind, &art);
+        image.color = Color::WHITE;
     }
 }
 

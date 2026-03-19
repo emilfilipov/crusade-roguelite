@@ -17,7 +17,7 @@ It prevents scope creep and makes expansion decisions explicit.
 ## Limited Now vs Expand Later
 | System | MVP Limit (Now) | Planned Expansion (Later) | Expansion Gate |
 | --- | --- | --- | --- |
-| Formation Set | 1 formation: `Square` only | Add `Line`, `Wedge`, `Column` | Square formation stable across full runs with no slot/positioning bugs |
+| Formation Set | 2 formations: `Square` (neutral baseline) + `Diamond` (offense-while-moving, speed up, defense down) | Add `Line`, `Wedge`, `Column` | Square+Diamond switching stable across full runs with no slot/positioning bugs |
 | Commander Kit | Basic melee auto-attack + conditional ranged arrow attack; aura upgrades (`Authority`, `Hospitalier`) active via level-ups | Multiple aura trees, command actives, commander loadouts | Commander-only early game is reliable and balanced |
 | Recruit Roster | 1 recruit archetype/subtype: `Infantry/Knight` | Spearman, Archer, support units, faction variants | Rescue loop stable and roster growth bug-free |
 | Enemy Roster | 1 enemy type: `bandit_raider` (melee infantry profile) | Archers, cavalry, elites, event waves | Basic wave pacing and melee combat deterministic |
@@ -28,7 +28,8 @@ It prevents scope creep and makes expansion decisions explicit.
 | Skill System | Core per-unit morale + active commander aura effects (`Authority` mitigation/drain, `Hospitalier` regen) | Per-unit skill trees, triggered abilities, active aura skills | Base morale/aura interactions stable and test-covered |
 | Unit Progression | 1 progression track (simple level/veterancy) | Multi-stat growth profiles and role specialization | Level-up logic deterministic and test-covered |
 | Rescue System | 1 rescue interaction: any friendly unit in radius for fixed time | Escort rescues, contested rescues, rescue events | Base rescue flow has no stuck/interruption bugs |
-| Upgrade Draft | Fixed 8-upgrade pool; random 3 choices per level-up with weighted min/max value rolls | Wider pools, synergy bundles, rarity tiers | Starter upgrade set balanced and test-covered |
+| Upgrade Draft | Mixed repeatable + one-time entries; random 3 choices; one-time cards are removed after pick | Wider pools, synergy bundles, rarity tiers | Starter upgrade set balanced and test-covered |
+| Skillbar | 10-slot bottom-center bar; slot `1` starts with `Square`; active skills use keys `1..0` | Click activation, drag-reorder, cooldown overlays | Keyboard activation + slot assignment stable and test-covered |
 | Morale/Cohesion | Per-unit morale + event-driven cohesion with 5 tiers and low-morale retinue pressure | Richer morale events, panic/rout behavior, faction morale traits | Current morale/cohesion loop remains recoverable and readable |
 | Banner | Auto-drop at low cohesion with timed recovery channel and cohesion restore on pickup | Banner traits, relocation rules, enemy banner threats | Auto-drop/recovery loop stable and not abusable |
 | Map Set | 1 map: desert battlefield | Additional biomes/maps and tactical terrain variants | First map supports full run loop cleanly |

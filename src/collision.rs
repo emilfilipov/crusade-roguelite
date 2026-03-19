@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 
 use crate::data::GameData;
+use crate::formation::{ActiveFormation, active_formation_config};
 use crate::map::MapBounds;
 use crate::model::{ColliderRadius, GameState, Team, Unit, UnitKind};
 
@@ -18,6 +19,7 @@ impl Plugin for CollisionPlugin {
 #[allow(clippy::type_complexity)]
 fn resolve_unit_collisions(
     data: Res<GameData>,
+    active_formation: Res<ActiveFormation>,
     mut unit_queries: ParamSet<(
         Query<(Entity, &ColliderRadius, &Transform, &Unit), With<Unit>>,
         Query<&mut Transform, With<Unit>>,
@@ -48,7 +50,7 @@ fn resolve_unit_collisions(
             None
         }
     });
-    let inner_retinue_radius = data.formations.square.slot_spacing * 1.6;
+    let inner_retinue_radius = active_formation_config(&data, *active_formation).slot_spacing * 1.6;
 
     let mut corrections = vec![Vec2::ZERO; snapshot.len()];
     for i in 0..snapshot.len() {

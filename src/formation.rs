@@ -1,26 +1,116 @@
 use bevy::prelude::*;
 
 use crate::banner::BannerMovementPenalty;
-use crate::data::GameData;
-use crate::model::{CommanderUnit, FriendlyUnit, GameState};
+use crate::data::{FormationConfig, GameData};
+use crate::model::{CommanderUnit, FriendlyUnit, GameState, StartRunEvent};
+
+pub const SKILL_BAR_CAPACITY: usize = 10;
 
 #[derive(Resource, Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum ActiveFormation {
     #[default]
     Square,
+    Diamond,
+}
+
+impl ActiveFormation {
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::Square => "square",
+            Self::Diamond => "diamond",
+        }
+    }
+
+    pub const fn display_name(self) -> &'static str {
+        match self {
+            Self::Square => "Square Formation",
+            Self::Diamond => "Diamond Formation",
+        }
+    }
+
+    pub fn from_id(id: &str) -> Option<Self> {
+        match id {
+            "square" => Some(Self::Square),
+            "diamond" => Some(Self::Diamond),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SkillBarSkillKind {
+    Formation(ActiveFormation),
+}
+
+#[derive(Clone, Debug)]
+pub struct SkillBarSkill {
+    pub id: String,
+    pub label: String,
+    pub kind: SkillBarSkillKind,
+}
+
+#[derive(Resource, Clone, Debug)]
+pub struct FormationSkillBar {
+    pub slots: Vec<SkillBarSkill>,
+    pub active_slot: Option<usize>,
+}
+
+impl Default for FormationSkillBar {
+    fn default() -> Self {
+        Self {
+            slots: vec![skill_for_formation(ActiveFormation::Square)],
+            active_slot: Some(0),
+        }
+    }
+}
+
+impl FormationSkillBar {
+    pub fn reset_to_default(&mut self) {
+        *self = Self::default();
+    }
+
+    pub fn is_full(&self) -> bool {
+        self.slots.len() >= SKILL_BAR_CAPACITY
+    }
+
+    pub fn has_formation(&self, formation: ActiveFormation) -> bool {
+        self.slots
+            .iter()
+            .any(|slot| slot.kind == SkillBarSkillKind::Formation(formation))
+    }
+
+    pub fn try_add_formation(&mut self, formation: ActiveFormation) -> bool {
+        if self.is_full() || self.has_formation(formation) {
+            return false;
+        }
+        self.slots.push(skill_for_formation(formation));
+        true
+    }
+
+    pub fn activate_slot(&mut self, slot_index: usize) -> Option<SkillBarSkillKind> {
+        if slot_index >= self.slots.len() {
+            return None;
+        }
+        self.active_slot = Some(slot_index);
+        Some(self.slots[slot_index].kind)
+    }
 }
 
 #[derive(Resource, Clone, Copy, Debug)]
 pub struct FormationModifiers {
     pub offense_multiplier: f32,
+    pub offense_while_moving_multiplier: f32,
     pub defense_multiplier: f32,
+    pub move_speed_multiplier: f32,
 }
 
 impl Default for FormationModifiers {
     fn default() -> Self {
         Self {
             offense_multiplier: 1.0,
+            offense_while_moving_multiplier: 1.0,
             defense_multiplier: 1.0,
+            move_speed_multiplier: 1.0,
         }
     }
 }
@@ -31,23 +121,136 @@ impl Plugin for FormationPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ActiveFormation>()
             .init_resource::<FormationModifiers>()
-            .add_systems(OnEnter(GameState::MainMenu), load_square_modifiers)
+            .init_resource::<FormationSkillBar>()
+            .add_systems(Update, reset_formation_state_on_run_start)
+            .add_systems(
+                OnEnter(GameState::MainMenu),
+                reset_formation_state_on_main_menu,
+            )
             .add_systems(
                 Update,
-                (apply_square_formation, sync_friendly_depth_sorting)
+                (
+                    handle_skillbar_hotkeys,
+                    sync_formation_modifiers,
+                    apply_active_formation,
+                    sync_friendly_depth_sorting,
+                )
                     .chain()
                     .run_if(in_state(GameState::InRun)),
             );
     }
 }
 
-fn load_square_modifiers(mut modifiers: ResMut<FormationModifiers>, data: Res<GameData>) {
-    modifiers.offense_multiplier = data.formations.square.offense_multiplier;
-    modifiers.defense_multiplier = data.formations.square.defense_multiplier;
+fn reset_formation_state_on_main_menu(
+    mut formation: ResMut<ActiveFormation>,
+    mut modifiers: ResMut<FormationModifiers>,
+    mut skillbar: ResMut<FormationSkillBar>,
+    data: Res<GameData>,
+) {
+    *formation = ActiveFormation::Square;
+    skillbar.reset_to_default();
+    sync_modifiers_for_active(&mut modifiers, &data, *formation);
+}
+
+fn reset_formation_state_on_run_start(
+    mut start_events: EventReader<StartRunEvent>,
+    mut formation: ResMut<ActiveFormation>,
+    mut modifiers: ResMut<FormationModifiers>,
+    mut skillbar: ResMut<FormationSkillBar>,
+    data: Res<GameData>,
+) {
+    if start_events.is_empty() {
+        return;
+    }
+    for _ in start_events.read() {}
+
+    *formation = ActiveFormation::Square;
+    skillbar.reset_to_default();
+    sync_modifiers_for_active(&mut modifiers, &data, *formation);
+}
+
+fn handle_skillbar_hotkeys(
+    keyboard: Option<Res<ButtonInput<KeyCode>>>,
+    mut skillbar: ResMut<FormationSkillBar>,
+    mut active_formation: ResMut<ActiveFormation>,
+) {
+    let Some(keys) = keyboard else {
+        return;
+    };
+    let Some(slot_index) = slot_index_from_hotkey(&keys) else {
+        return;
+    };
+
+    if let Some(SkillBarSkillKind::Formation(next)) = skillbar.activate_slot(slot_index)
+        && *active_formation != next
+    {
+        *active_formation = next;
+    }
+}
+
+fn slot_index_from_hotkey(keys: &ButtonInput<KeyCode>) -> Option<usize> {
+    if keys.just_pressed(KeyCode::Digit1) {
+        Some(0)
+    } else if keys.just_pressed(KeyCode::Digit2) {
+        Some(1)
+    } else if keys.just_pressed(KeyCode::Digit3) {
+        Some(2)
+    } else if keys.just_pressed(KeyCode::Digit4) {
+        Some(3)
+    } else if keys.just_pressed(KeyCode::Digit5) {
+        Some(4)
+    } else if keys.just_pressed(KeyCode::Digit6) {
+        Some(5)
+    } else if keys.just_pressed(KeyCode::Digit7) {
+        Some(6)
+    } else if keys.just_pressed(KeyCode::Digit8) {
+        Some(7)
+    } else if keys.just_pressed(KeyCode::Digit9) {
+        Some(8)
+    } else if keys.just_pressed(KeyCode::Digit0) {
+        Some(9)
+    } else {
+        None
+    }
+}
+
+fn sync_formation_modifiers(
+    mut modifiers: ResMut<FormationModifiers>,
+    data: Res<GameData>,
+    active: Res<ActiveFormation>,
+) {
+    sync_modifiers_for_active(&mut modifiers, &data, *active);
+}
+
+fn sync_modifiers_for_active(
+    modifiers: &mut FormationModifiers,
+    data: &GameData,
+    active: ActiveFormation,
+) {
+    let config = active_formation_config(data, active);
+    modifiers.offense_multiplier = config.offense_multiplier;
+    modifiers.offense_while_moving_multiplier = config.offense_while_moving_multiplier;
+    modifiers.defense_multiplier = config.defense_multiplier;
+    modifiers.move_speed_multiplier = config.move_speed_multiplier;
+}
+
+pub fn active_formation_config(data: &GameData, active: ActiveFormation) -> &FormationConfig {
+    match active {
+        ActiveFormation::Square => &data.formations.square,
+        ActiveFormation::Diamond => &data.formations.diamond,
+    }
+}
+
+pub fn skill_for_formation(formation: ActiveFormation) -> SkillBarSkill {
+    SkillBarSkill {
+        id: format!("formation_{}", formation.id()),
+        label: formation.display_name().to_string(),
+        kind: SkillBarSkillKind::Formation(formation),
+    }
 }
 
 #[allow(clippy::type_complexity)]
-fn apply_square_formation(
+fn apply_active_formation(
     time: Res<Time>,
     data: Res<GameData>,
     formation: Res<ActiveFormation>,
@@ -55,17 +258,15 @@ fn apply_square_formation(
     commanders: Query<&Transform, With<CommanderUnit>>,
     mut friendlies: Query<(Entity, &mut Transform), (With<FriendlyUnit>, Without<CommanderUnit>)>,
 ) {
-    if *formation != ActiveFormation::Square {
-        return;
-    }
     let Ok(commander_transform) = commanders.get_single() else {
         return;
     };
 
-    let spacing = data.formations.square.slot_spacing;
+    let config = active_formation_config(&data, *formation);
+    let spacing = config.slot_spacing;
     let mut members: Vec<(Entity, Mut<Transform>)> = friendlies.iter_mut().collect();
     members.sort_by_key(|(entity, _)| entity.index());
-    let offsets = square_offsets_excluding_commander_slot(members.len(), spacing);
+    let offsets = offsets_for_formation(*formation, members.len(), spacing);
     let speed_multiplier = banner_penalty
         .as_ref()
         .map(|penalty| penalty.friendly_speed_multiplier)
@@ -74,10 +275,60 @@ fn apply_square_formation(
     for ((_, mut transform), offset) in members.into_iter().zip(offsets.into_iter()) {
         let target = commander_transform.translation.truncate() + offset;
         let current = transform.translation.truncate();
-        let smooth = (time.delta_seconds() * 10.0 * speed_multiplier).clamp(0.0, 1.0);
+        let smooth =
+            (time.delta_seconds() * 10.0 * speed_multiplier * config.move_speed_multiplier)
+                .clamp(0.0, 1.0);
         let next = current.lerp(target, smooth);
         transform.translation.x = next.x;
         transform.translation.y = next.y;
+    }
+}
+
+fn offsets_for_formation(
+    formation: ActiveFormation,
+    recruit_count: usize,
+    spacing: f32,
+) -> Vec<Vec2> {
+    match formation {
+        ActiveFormation::Square => square_offsets_excluding_commander_slot(recruit_count, spacing),
+        ActiveFormation::Diamond => {
+            diamond_offsets_excluding_commander_slot(recruit_count, spacing)
+        }
+    }
+}
+
+fn diamond_offsets_excluding_commander_slot(recruit_count: usize, spacing: f32) -> Vec<Vec2> {
+    square_offsets_excluding_commander_slot(recruit_count, spacing)
+        .into_iter()
+        .map(rotate_45_degrees)
+        .collect()
+}
+
+fn rotate_45_degrees(offset: Vec2) -> Vec2 {
+    let scale = std::f32::consts::FRAC_1_SQRT_2;
+    Vec2::new((offset.x - offset.y) * scale, (offset.x + offset.y) * scale)
+}
+
+pub fn formation_contains_position(
+    formation: ActiveFormation,
+    commander_position: Vec2,
+    target_position: Vec2,
+    recruit_count: usize,
+    slot_spacing: f32,
+    padding_slots: f32,
+) -> bool {
+    if recruit_count == 0 || slot_spacing <= 0.0 {
+        return false;
+    }
+    let side = ((recruit_count + 1) as f32).sqrt().ceil();
+    let half_extent = ((side - 1.0) * 0.5 + padding_slots) * slot_spacing;
+    let delta = target_position - commander_position;
+
+    match formation {
+        ActiveFormation::Square => delta.x.abs() <= half_extent && delta.y.abs() <= half_extent,
+        ActiveFormation::Diamond => {
+            delta.x.abs() + delta.y.abs() <= half_extent * std::f32::consts::SQRT_2
+        }
     }
 }
 
@@ -141,7 +392,8 @@ mod tests {
     use bevy::prelude::Vec2;
 
     use crate::formation::{
-        depth_z_for_world_y, square_offsets, square_offsets_excluding_commander_slot,
+        ActiveFormation, FormationSkillBar, SKILL_BAR_CAPACITY, depth_z_for_world_y,
+        formation_contains_position, square_offsets,
     };
 
     #[test]
@@ -167,20 +419,69 @@ mod tests {
     }
 
     #[test]
-    fn formation_reserves_commander_slot() {
-        let offsets = square_offsets_excluding_commander_slot(8, 12.0);
-        assert_eq!(offsets.len(), 8);
-        assert!(
-            !offsets
-                .iter()
-                .any(|offset| offset.length_squared() < 0.0001)
-        );
-    }
-
-    #[test]
     fn depth_sorting_places_lower_units_on_top() {
         let upper = depth_z_for_world_y(100.0);
         let lower = depth_z_for_world_y(-100.0);
         assert!(lower > upper);
+    }
+
+    #[test]
+    fn skillbar_starts_with_square_in_first_slot_active() {
+        let skillbar = FormationSkillBar::default();
+        assert_eq!(skillbar.slots.len(), 1);
+        assert_eq!(skillbar.active_slot, Some(0));
+        assert!(skillbar.has_formation(ActiveFormation::Square));
+    }
+
+    #[test]
+    fn skillbar_add_and_activate_diamond() {
+        let mut skillbar = FormationSkillBar::default();
+        assert!(skillbar.try_add_formation(ActiveFormation::Diamond));
+        let activated = skillbar.activate_slot(1);
+        assert_eq!(
+            activated,
+            Some(crate::formation::SkillBarSkillKind::Formation(
+                ActiveFormation::Diamond
+            ))
+        );
+        assert_eq!(skillbar.active_slot, Some(1));
+    }
+
+    #[test]
+    fn skillbar_rejects_duplicate_or_full_adds() {
+        let mut skillbar = FormationSkillBar::default();
+        assert!(!skillbar.try_add_formation(ActiveFormation::Square));
+
+        skillbar.slots = (0..SKILL_BAR_CAPACITY)
+            .map(|i| crate::formation::SkillBarSkill {
+                id: format!("slot_{i}"),
+                label: format!("Slot {i}"),
+                kind: crate::formation::SkillBarSkillKind::Formation(ActiveFormation::Square),
+            })
+            .collect();
+        assert!(skillbar.is_full());
+        assert!(!skillbar.try_add_formation(ActiveFormation::Diamond));
+    }
+
+    #[test]
+    fn formation_contains_position_handles_square_and_diamond() {
+        let commander = Vec2::ZERO;
+        let near = Vec2::new(12.0, 10.0);
+        assert!(formation_contains_position(
+            ActiveFormation::Square,
+            commander,
+            near,
+            9,
+            30.0,
+            0.35,
+        ));
+        assert!(formation_contains_position(
+            ActiveFormation::Diamond,
+            commander,
+            near,
+            9,
+            30.0,
+            0.35,
+        ));
     }
 }

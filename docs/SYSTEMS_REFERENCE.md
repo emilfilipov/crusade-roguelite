@@ -5,7 +5,21 @@ Single-file technical reference for current MVP runtime behavior.
 Use this for entity/component/system lookup without scanning all source files.
 
 ## Latest Update (2026-03-19)
-- Replaced the level-up pool with 8 upgrades and random 3-option drafts.
+- Added formation skillbar (bottom-center, 10 slots, keys `1..0`) with exclusive active formation switching.
+- Square formation now uses neutral multipliers (`x1` baseline).
+- Added one-time `Diamond` formation unlock card in level-up draft:
+  - unlock card is skillbar-bound,
+  - appears once per run,
+  - auto-adds to next free skillbar slot.
+- Added simple generated formation icons for skillbar/cards:
+  - `assets/sprites/skills/formation_square.png`
+  - `assets/sprites/skills/formation_diamond.png`
+- Added Diamond gameplay tuning:
+  - offense bonus while commander is moving,
+  - slight movement speed bonus,
+  - slight defense penalty.
+- Draft filtering now removes skillbar-bound cards when skillbar is full.
+- Replaced the level-up pool with weighted random 3-option drafts from repeatable upgrades plus one-time skill unlocks.
 - Upgrade values now roll via weighted min/max sampling (higher values are rarer).
 - Activated commander aura mechanics:
   - Authority aura: in-range friendly morale/cohesion-loss resistance + enemy morale drain.
@@ -104,7 +118,8 @@ Loaded from `assets/data` by `GameData::load_from_dir`.
 - `bandit_raider`: `hp=34`, `armor=1`, `damage=6`, `cd=1.3`, `range=30`, `move=118`, `morale=90`
 
 ### `formations.json`
-- `square`: `slot_spacing=30`, `offense=0.95`, `defense=1.1`, `anti_cavalry=1.2`
+- `square`: `slot_spacing=30`, `offense=1.0`, `offense_while_moving=1.0`, `defense=1.0`, `anti_cavalry=1.0`, `move_speed=1.0`
+- `diamond`: `slot_spacing=30`, `offense=1.0`, `offense_while_moving=1.2`, `defense=0.9`, `anti_cavalry=0.95`, `move_speed=1.08`
 
 ### `waves.json`
 Scripted waves:
@@ -135,6 +150,7 @@ Procedural continuation:
 - `rescue_duration_secs=2.2`
 
 ### `upgrades.json`
+- `unlock_formation_diamond` (`one_time`, `adds_to_skillbar`, `formation_id=diamond`)
 - `damage`
 - `attack_speed`
 - `armor`
@@ -149,6 +165,9 @@ Roll fields:
 - `max_value`
 - `value_step`
 - `weight_exponent`
+- `one_time`
+- `adds_to_skillbar`
+- `formation_id`
 
 ### `map.json`
 - `width=2400`
@@ -183,10 +202,13 @@ Roll fields:
 - `MapBounds`
 - `SquadRoster`
 - `ActiveFormation`, `FormationModifiers`
+- `FormationSkillBar`
 - `WaveRuntime`
 - `Cohesion`, `CohesionCombatModifiers`
 - `BannerState`, `BannerMovementPenalty`
 - `Progression`, `UpgradeDraft`, `GlobalBuffs`
+- `OneTimeUpgradeTracker`
+- `CommanderMotionState`
 - `HudSnapshot`
 - `PlatformRuntime`
 - `ArtAssets`
@@ -229,6 +251,12 @@ Friendly combined outgoing multiplier has lower clamp:
 - Minimum multiplier clamp: `0.5` (commander cannot be fully stopped by this effect).
 - Formula:
   - `multiplier = clamp(1.0 - enemy_count * 0.04, 0.5, 1.0)`
+
+### Diamond Formation Combat/Movement Effects
+- Formation offense multiplier now has a moving-state modifier:
+  - `effective_offense = offense_multiplier * offense_while_moving_multiplier` when commander is moving.
+- Commander movement speed is multiplied by active formation move-speed multiplier.
+- Friendly effective armor is multiplied by active formation defense multiplier.
 
 ### Commander Ranged Arrow Attack (`src/combat.rs`, `src/projectiles.rs`)
 - Commander fires arrows only when targets are outside melee range and inside ranged range.
@@ -369,6 +397,10 @@ Friendly combined outgoing multiplier has lower clamp:
   - XP packs (yellow)
   - rescuable retinue markers
   - dropped-banner marker
+- bottom-center skillbar (10 slots)
+  - slot `1` default Square formation (active)
+  - key labels `1..0`
+  - active slot border highlight
 
 ### `upgrades.rs`
 - XP thresholds and explicit level-up draft flow (`InRun -> LevelUp -> InRun`)

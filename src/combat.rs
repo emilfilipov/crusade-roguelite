@@ -1,7 +1,9 @@
 use bevy::prelude::*;
 
 use crate::data::GameData;
-use crate::formation::FormationModifiers;
+use crate::formation::{
+    ActiveFormation, FormationModifiers, active_formation_config, formation_contains_position,
+};
 use crate::model::{
     AttackCooldown, AttackProfile, CommanderUnit, DamageEvent, EnemyUnit, FriendlyUnit, GameState,
     GlobalBuffs, Health, Morale, SpawnExpPackEvent, Team, Unit, UnitDamagedEvent, UnitDiedEvent,
@@ -9,6 +11,7 @@ use crate::model::{
 };
 use crate::morale::CohesionCombatModifiers;
 use crate::projectiles::Projectile;
+use crate::squad::CommanderMotionState;
 use crate::upgrades::Progression;
 use crate::visuals::ArtAssets;
 
@@ -91,10 +94,12 @@ fn commander_ranged_attacks(
     time: Res<Time>,
     art: Res<ArtAssets>,
     data: Res<GameData>,
+    active_formation: Res<ActiveFormation>,
     formation_mods: Res<FormationModifiers>,
     cohesion_mods: Res<CohesionCombatModifiers>,
     progression: Option<Res<Progression>>,
     global_buffs: Option<Res<GlobalBuffs>>,
+    commander_motion: Option<Res<CommanderMotionState>>,
     mut commanders: Query<
         (
             &Unit,
@@ -174,7 +179,7 @@ fn commander_ranged_attacks(
         let direction_normalized = direction.normalize();
 
         let base_multiplier = friendly_outgoing_multiplier(
-            formation_mods.offense_multiplier,
+            effective_formation_offense_multiplier(&formation_mods, commander_motion.as_deref()),
             cohesion_mods.damage_multiplier,
             global_buffs
                 .as_ref()
@@ -190,7 +195,8 @@ fn commander_ranged_attacks(
             }),
             target_position,
             target_kind,
-            data.formations.square.slot_spacing,
+            *active_formation,
+            active_formation_config(&data, *active_formation).slot_spacing,
         );
         let projectile_damage =
             (ranged_profile.damage * base_multiplier * formation_multiplier).max(1.0);
@@ -232,10 +238,12 @@ fn commander_ranged_attacks(
 fn emit_damage_events(
     mut damage_events: EventWriter<DamageEvent>,
     data: Res<GameData>,
+    active_formation: Res<ActiveFormation>,
     formation_mods: Res<FormationModifiers>,
     cohesion_mods: Res<CohesionCombatModifiers>,
     progression: Option<Res<Progression>>,
     global_buffs: Option<Res<GlobalBuffs>>,
+    commander_motion: Option<Res<CommanderMotionState>>,
     mut attackers: Query<(
         Entity,
         &Unit,
@@ -261,11 +269,15 @@ fn emit_damage_events(
         .map(|(entity, unit, transform, health, armor)| {
             let base_armor = armor.map(|value| value.0).unwrap_or(0.0);
             let effective_armor = if unit.team == Team::Friendly {
-                base_armor
+                let armor_with_buffs = base_armor
                     + global_buffs
                         .as_ref()
                         .map(|buff| buff.armor_bonus)
-                        .unwrap_or(0.0)
+                        .unwrap_or(0.0);
+                (armor_with_buffs.max(0.0)
+                    * formation_mods.defense_multiplier
+                    * cohesion_mods.defense_multiplier)
+                    .max(0.0)
             } else {
                 base_armor
             };
@@ -335,7 +347,10 @@ fn emit_damage_events(
                 .unwrap_or(1.0);
             let outgoing_multiplier = if attacker_unit.team == Team::Friendly {
                 let base = friendly_outgoing_multiplier(
-                    formation_mods.offense_multiplier,
+                    effective_formation_offense_multiplier(
+                        &formation_mods,
+                        commander_motion.as_deref(),
+                    ),
                     cohesion_mods.damage_multiplier,
                     global_buffs
                         .as_ref()
@@ -348,7 +363,8 @@ fn emit_damage_events(
                     &formation_context,
                     target_position,
                     target_kind,
-                    data.formations.square.slot_spacing,
+                    *active_formation,
+                    active_formation_config(&data, *active_formation).slot_spacing,
                 );
                 base * inside_multiplier
             } else {
@@ -407,6 +423,21 @@ pub fn friendly_outgoing_multiplier(
         .max(MIN_FRIENDLY_COMBAT_MULTIPLIER)
 }
 
+pub fn effective_formation_offense_multiplier(
+    formation_modifiers: &FormationModifiers,
+    commander_motion: Option<&CommanderMotionState>,
+) -> f32 {
+    let moving_multiplier = if commander_motion
+        .map(|state| state.is_moving)
+        .unwrap_or(false)
+    {
+        formation_modifiers.offense_while_moving_multiplier
+    } else {
+        1.0
+    };
+    formation_modifiers.offense_multiplier * moving_multiplier
+}
+
 pub fn compute_damage(base_damage: f32, armor: f32, outgoing_multiplier: f32) -> f32 {
     (base_damage * outgoing_multiplier - armor).max(1.0)
 }
@@ -443,6 +474,7 @@ pub fn inside_formation_damage_multiplier(
     formation_context: &Option<FriendlyFormationContext>,
     target_position: Vec2,
     target_kind: UnitKind,
+    active_formation: ActiveFormation,
     slot_spacing: f32,
 ) -> f32 {
     let Some(context) = formation_context else {
@@ -451,7 +483,8 @@ pub fn inside_formation_damage_multiplier(
     if context.recruit_count == 0 || target_kind != UnitKind::EnemyBanditRaider {
         return 1.0;
     }
-    if inside_square_formation_bounds(
+    if inside_active_formation_bounds(
+        active_formation,
         context.commander_position,
         target_position,
         context.recruit_count,
@@ -463,19 +496,21 @@ pub fn inside_formation_damage_multiplier(
     }
 }
 
-pub fn inside_square_formation_bounds(
+pub fn inside_active_formation_bounds(
+    active_formation: ActiveFormation,
     commander_position: Vec2,
     target_position: Vec2,
     recruit_count: usize,
     slot_spacing: f32,
 ) -> bool {
-    if recruit_count == 0 || slot_spacing <= 0.0 {
-        return false;
-    }
-    let side = ((recruit_count + 1) as f32).sqrt().ceil();
-    let half_extent = ((side - 1.0) * 0.5 + FORMATION_BOUNDS_PADDING_SLOTS) * slot_spacing;
-    let delta = target_position - commander_position;
-    delta.x.abs() <= half_extent && delta.y.abs() <= half_extent
+    formation_contains_position(
+        active_formation,
+        commander_position,
+        target_position,
+        recruit_count,
+        slot_spacing,
+        FORMATION_BOUNDS_PADDING_SLOTS,
+    )
 }
 
 fn apply_damage_events(
@@ -530,11 +565,13 @@ mod tests {
 
     use crate::combat::{
         FriendlyFormationContext, commander_level_combat_multiplier, compute_damage,
-        enemy_target_allowed, friendly_formation_context, friendly_outgoing_multiplier,
-        inside_formation_damage_multiplier, inside_square_formation_bounds,
-        morale_effect_multiplier,
+        effective_formation_offense_multiplier, enemy_target_allowed, friendly_formation_context,
+        friendly_outgoing_multiplier, inside_active_formation_bounds,
+        inside_formation_damage_multiplier, morale_effect_multiplier,
     };
+    use crate::formation::{ActiveFormation, FormationModifiers};
     use crate::model::{Team, UnitKind};
+    use crate::squad::CommanderMotionState;
 
     #[test]
     fn damage_formula_respects_armor_floor() {
@@ -554,6 +591,23 @@ mod tests {
     fn friendly_multiplier_has_floor() {
         let multiplier = friendly_outgoing_multiplier(0.6, 0.7, 0.8, 0.9, 0.75);
         assert!((multiplier - 0.55).abs() < 0.0001);
+    }
+
+    #[test]
+    fn moving_formation_offense_bonus_applies_only_while_moving() {
+        let mods = FormationModifiers {
+            offense_multiplier: 1.0,
+            offense_while_moving_multiplier: 1.2,
+            defense_multiplier: 0.9,
+            move_speed_multiplier: 1.0,
+        };
+        let idle = effective_formation_offense_multiplier(&mods, None);
+        let moving = effective_formation_offense_multiplier(
+            &mods,
+            Some(&CommanderMotionState { is_moving: true }),
+        );
+        assert!((idle - 1.0).abs() < 0.0001);
+        assert!((moving - 1.2).abs() < 0.0001);
     }
 
     #[test]
@@ -591,12 +645,14 @@ mod tests {
             &context,
             Vec2::new(20.0, 15.0),
             UnitKind::EnemyBanditRaider,
+            ActiveFormation::Square,
             30.0,
         );
         let outside = inside_formation_damage_multiplier(
             &context,
             Vec2::new(220.0, 0.0),
             UnitKind::EnemyBanditRaider,
+            ActiveFormation::Square,
             30.0,
         );
         assert!((inside - 1.2).abs() < 0.0001);
@@ -605,7 +661,8 @@ mod tests {
 
     #[test]
     fn formation_bounds_check_requires_recruits() {
-        assert!(!inside_square_formation_bounds(
+        assert!(!inside_active_formation_bounds(
+            ActiveFormation::Square,
             Vec2::ZERO,
             Vec2::new(1.0, 1.0),
             0,

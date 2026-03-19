@@ -1,8 +1,10 @@
+use std::collections::HashSet;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use bevy::prelude::*;
 
 use crate::data::{GameData, UpgradeConfig};
+use crate::formation::{ActiveFormation, FormationSkillBar};
 use crate::model::{
     BaseMaxHealth, FriendlyUnit, GainXpEvent, GameState, GlobalBuffs, Health, StartRunEvent,
 };
@@ -36,6 +38,11 @@ pub struct UpgradeDraft {
     pub options: Vec<UpgradeConfig>,
 }
 
+#[derive(Resource, Clone, Debug, Default)]
+pub struct OneTimeUpgradeTracker {
+    pub acquired_ids: HashSet<String>,
+}
+
 #[derive(Event, Clone, Copy, Debug)]
 pub struct SelectUpgradeEvent {
     pub option_index: usize,
@@ -51,6 +58,8 @@ pub enum UpgradeCardIcon {
     AuthorityAura,
     MoveSpeed,
     HospitalierAura,
+    FormationSquare,
+    FormationDiamond,
 }
 
 #[derive(Resource, Clone, Copy, Debug)]
@@ -111,6 +120,7 @@ impl Plugin for UpgradePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Progression>()
             .init_resource::<UpgradeDraft>()
+            .init_resource::<OneTimeUpgradeTracker>()
             .init_resource::<LevelPassiveRuntime>()
             .init_resource::<UpgradeRngState>()
             .init_resource::<GlobalBuffs>()
@@ -142,6 +152,7 @@ fn reset_progress_on_run_start(
     mut start_events: EventReader<StartRunEvent>,
     mut progression: ResMut<Progression>,
     mut draft: ResMut<UpgradeDraft>,
+    mut one_time_tracker: ResMut<OneTimeUpgradeTracker>,
     mut passive_runtime: ResMut<LevelPassiveRuntime>,
     mut buffs: ResMut<GlobalBuffs>,
     mut rng: ResMut<UpgradeRngState>,
@@ -152,6 +163,7 @@ fn reset_progress_on_run_start(
     for _ in start_events.read() {}
     *progression = Progression::default();
     *draft = UpgradeDraft::default();
+    *one_time_tracker = OneTimeUpgradeTracker::default();
     *passive_runtime = LevelPassiveRuntime::default();
     *buffs = GlobalBuffs::default();
     rng.reseed_from_time();
@@ -166,6 +178,8 @@ fn gain_xp(mut progression: ResMut<Progression>, mut xp_events: EventReader<Gain
 fn open_draft_on_level_up(
     mut progression: ResMut<Progression>,
     mut draft: ResMut<UpgradeDraft>,
+    one_time_tracker: Res<OneTimeUpgradeTracker>,
+    skillbar: Res<FormationSkillBar>,
     data: Res<GameData>,
     mut rng: ResMut<UpgradeRngState>,
     mut next_state: ResMut<NextState<GameState>>,
@@ -178,8 +192,13 @@ fn open_draft_on_level_up(
         progression.level += 1;
         progression.xp -= progression.next_level_xp;
         progression.next_level_xp = xp_required_for_level(progression.level);
-        draft.options =
-            roll_upgrade_options(&data.upgrades.upgrades, &mut rng, LEVEL_UP_OPTION_COUNT);
+        draft.options = roll_upgrade_options(
+            &data.upgrades.upgrades,
+            &mut rng,
+            LEVEL_UP_OPTION_COUNT,
+            &one_time_tracker,
+            &skillbar,
+        );
         draft.active = !draft.options.is_empty();
         if draft.active {
             next_state.set(GameState::LevelUp);
@@ -259,6 +278,8 @@ fn resolve_upgrade_selection(
     mut draft: ResMut<UpgradeDraft>,
     mut selection_events: EventReader<SelectUpgradeEvent>,
     mut buffs: ResMut<GlobalBuffs>,
+    mut one_time_tracker: ResMut<OneTimeUpgradeTracker>,
+    mut skillbar: ResMut<FormationSkillBar>,
     mut next_state: ResMut<NextState<GameState>>,
 ) {
     if !draft.active || draft.options.is_empty() {
@@ -270,7 +291,10 @@ fn resolve_upgrade_selection(
     };
     let index = selection.option_index.min(draft.options.len() - 1);
     let picked = draft.options[index].clone();
-    apply_upgrade(&picked, &mut buffs);
+    apply_upgrade(&picked, &mut buffs, &mut skillbar);
+    if picked.one_time {
+        one_time_tracker.acquired_ids.insert(picked.id.clone());
+    }
     draft.active = false;
     draft.options.clear();
     next_state.set(GameState::InRun);
@@ -280,12 +304,33 @@ fn roll_upgrade_options(
     pool: &[UpgradeConfig],
     rng: &mut UpgradeRngState,
     count: usize,
+    one_time_tracker: &OneTimeUpgradeTracker,
+    skillbar: &FormationSkillBar,
 ) -> Vec<UpgradeConfig> {
     if pool.is_empty() || count == 0 {
         return Vec::new();
     }
-    let pick_count = count.min(pool.len());
-    let indices = draw_unique_indices(pool.len(), pick_count, rng);
+    let mut candidate_indices: Vec<usize> = pool
+        .iter()
+        .enumerate()
+        .filter(|(_, upgrade)| {
+            if upgrade.one_time && one_time_tracker.acquired_ids.contains(&upgrade.id) {
+                return false;
+            }
+            if upgrade.adds_to_skillbar
+                && (skillbar.is_full() || skillbar_contains_upgrade(skillbar, upgrade))
+            {
+                return false;
+            }
+            true
+        })
+        .map(|(index, _)| index)
+        .collect();
+    if candidate_indices.is_empty() {
+        return Vec::new();
+    }
+    let pick_count = count.min(candidate_indices.len());
+    let indices = draw_unique_indices(&mut candidate_indices, pick_count, rng);
     indices
         .into_iter()
         .map(|idx| {
@@ -296,16 +341,32 @@ fn roll_upgrade_options(
         .collect()
 }
 
-fn draw_unique_indices(pool_len: usize, count: usize, rng: &mut UpgradeRngState) -> Vec<usize> {
-    let mut indices: Vec<usize> = (0..pool_len).collect();
+fn draw_unique_indices(
+    candidate_indices: &mut [usize],
+    count: usize,
+    rng: &mut UpgradeRngState,
+) -> Vec<usize> {
+    let pool_len = candidate_indices.len();
     for i in 0..count {
         let remaining = pool_len - i;
         let offset = (rng.next_u32() as usize) % remaining;
         let j = i + offset;
-        indices.swap(i, j);
+        candidate_indices.swap(i, j);
     }
-    indices.truncate(count);
-    indices
+    candidate_indices[..count].to_vec()
+}
+
+fn skillbar_contains_upgrade(skillbar: &FormationSkillBar, upgrade: &UpgradeConfig) -> bool {
+    if upgrade.kind != "unlock_formation" {
+        return false;
+    }
+    let Some(formation_id) = upgrade.formation_id.as_deref() else {
+        return false;
+    };
+    let Some(formation) = ActiveFormation::from_id(formation_id) else {
+        return false;
+    };
+    skillbar.has_formation(formation)
 }
 
 fn roll_upgrade_value(config: &UpgradeConfig, rng: &mut UpgradeRngState) -> f32 {
@@ -345,6 +406,10 @@ pub fn upgrade_card_icon(upgrade: &UpgradeConfig) -> UpgradeCardIcon {
         "authority_aura" => UpgradeCardIcon::AuthorityAura,
         "move_speed" => UpgradeCardIcon::MoveSpeed,
         "hospitalier_aura" => UpgradeCardIcon::HospitalierAura,
+        "unlock_formation" => match upgrade.formation_id.as_deref() {
+            Some("diamond") => UpgradeCardIcon::FormationDiamond,
+            _ => UpgradeCardIcon::FormationSquare,
+        },
         _ => UpgradeCardIcon::Damage,
     }
 }
@@ -359,6 +424,11 @@ pub fn upgrade_display_title(upgrade: &UpgradeConfig) -> &'static str {
         "authority_aura" => "Authority Aura",
         "move_speed" => "Forced March",
         "hospitalier_aura" => "Hospitalier Aura",
+        "unlock_formation" => match upgrade.formation_id.as_deref() {
+            Some("diamond") => "Diamond Formation",
+            Some("square") => "Square Formation",
+            _ => "Formation Unlock",
+        },
         _ => "Field Upgrade",
     }
 }
@@ -385,11 +455,20 @@ pub fn upgrade_display_description(upgrade: &UpgradeConfig) -> String {
             upgrade.value * HOSPITALIER_COHESION_REGEN_SCALE,
             upgrade.value * HOSPITALIER_MORALE_REGEN_SCALE
         ),
+        "unlock_formation" => match upgrade.formation_id.as_deref() {
+            Some("diamond") => "Unlock Diamond formation on the skill bar: offense bonus while moving, faster movement, lower defense.".to_string(),
+            Some("square") => "Unlock Square formation on the skill bar.".to_string(),
+            _ => "Unlock a formation skill for the skill bar.".to_string(),
+        },
         _ => "Apply a battlefield improvement.".to_string(),
     }
 }
 
-fn apply_upgrade(upgrade: &UpgradeConfig, buffs: &mut GlobalBuffs) {
+fn apply_upgrade(
+    upgrade: &UpgradeConfig,
+    buffs: &mut GlobalBuffs,
+    skillbar: &mut FormationSkillBar,
+) {
     match upgrade.kind.as_str() {
         "damage" => {
             buffs.damage_multiplier += upgrade.value * 0.01;
@@ -421,6 +500,15 @@ fn apply_upgrade(upgrade: &UpgradeConfig, buffs: &mut GlobalBuffs) {
             buffs.hospitalier_morale_regen_per_sec +=
                 upgrade.value * HOSPITALIER_MORALE_REGEN_SCALE;
         }
+        "unlock_formation" => {
+            if let Some(formation) = upgrade
+                .formation_id
+                .as_deref()
+                .and_then(ActiveFormation::from_id)
+            {
+                skillbar.try_add_formation(formation);
+            }
+        }
         _ => {}
     }
 }
@@ -430,73 +518,57 @@ mod tests {
     use std::collections::HashSet;
 
     use crate::data::UpgradeConfig;
+    use crate::formation::{
+        ActiveFormation, FormationSkillBar, SKILL_BAR_CAPACITY, SkillBarSkill, SkillBarSkillKind,
+    };
     use crate::model::GlobalBuffs;
     use crate::upgrades::{
-        UpgradeCardIcon, UpgradeRngState, commander_level_hp_bonus, roll_upgrade_options,
-        roll_upgrade_value, upgrade_card_icon, upgrade_display_description, upgrade_display_title,
-        xp_required_for_level,
+        OneTimeUpgradeTracker, UpgradeCardIcon, UpgradeRngState, commander_level_hp_bonus,
+        roll_upgrade_options, roll_upgrade_value, upgrade_card_icon, upgrade_display_description,
+        upgrade_display_title, xp_required_for_level,
     };
+
+    fn upgrade(kind: &str, id: &str) -> UpgradeConfig {
+        UpgradeConfig {
+            id: id.to_string(),
+            kind: kind.to_string(),
+            value: 1.0,
+            min_value: Some(1.0),
+            max_value: Some(4.0),
+            value_step: Some(0.5),
+            weight_exponent: Some(2.0),
+            one_time: false,
+            adds_to_skillbar: false,
+            formation_id: None,
+        }
+    }
 
     #[test]
     fn rolls_three_unique_options() {
         let pool = vec![
-            UpgradeConfig {
-                id: "a".to_string(),
-                kind: "damage".to_string(),
-                value: 1.0,
-                min_value: Some(1.0),
-                max_value: Some(4.0),
-                value_step: Some(0.5),
-                weight_exponent: Some(2.0),
-            },
-            UpgradeConfig {
-                id: "b".to_string(),
-                kind: "armor".to_string(),
-                value: 1.0,
-                min_value: Some(1.0),
-                max_value: Some(4.0),
-                value_step: Some(0.5),
-                weight_exponent: Some(2.0),
-            },
-            UpgradeConfig {
-                id: "c".to_string(),
-                kind: "attack_speed".to_string(),
-                value: 0.1,
-                min_value: Some(0.01),
-                max_value: Some(0.08),
-                value_step: Some(0.01),
-                weight_exponent: Some(2.0),
-            },
-            UpgradeConfig {
-                id: "d".to_string(),
-                kind: "pickup_radius".to_string(),
-                value: 3.0,
-                min_value: Some(2.0),
-                max_value: Some(8.0),
-                value_step: Some(1.0),
-                weight_exponent: Some(2.0),
-            },
+            upgrade("damage", "a"),
+            upgrade("armor", "b"),
+            upgrade("attack_speed", "c"),
+            upgrade("pickup_radius", "d"),
         ];
         let mut rng = UpgradeRngState {
             state: 0x1234_5678_9ABC_DEF0,
         };
-        let picks = roll_upgrade_options(&pool, &mut rng, 3);
+        let picks = roll_upgrade_options(
+            &pool,
+            &mut rng,
+            3,
+            &OneTimeUpgradeTracker::default(),
+            &FormationSkillBar::default(),
+        );
         assert_eq!(picks.len(), 3);
-        let ids: HashSet<String> = picks.iter().map(|upgrade| upgrade.id.clone()).collect();
+        let ids: HashSet<String> = picks.iter().map(|picked| picked.id.clone()).collect();
         assert_eq!(ids.len(), 3);
     }
 
     #[test]
     fn weighted_roll_stays_in_min_max_bounds() {
-        let upgrade = UpgradeConfig {
-            id: "damage".to_string(),
-            kind: "damage".to_string(),
-            value: 1.0,
-            min_value: Some(1.0),
-            max_value: Some(4.0),
-            value_step: Some(0.5),
-            weight_exponent: Some(2.2),
-        };
+        let upgrade = upgrade("damage", "damage");
         let mut rng = UpgradeRngState {
             state: 0xCAFE_BABE_0123_4567,
         };
@@ -504,6 +576,75 @@ mod tests {
             let value = roll_upgrade_value(&upgrade, &mut rng);
             assert!((1.0..=4.0).contains(&value));
         }
+    }
+
+    #[test]
+    fn one_time_upgrade_is_removed_after_pick() {
+        let formation_upgrade = UpgradeConfig {
+            id: "unlock_diamond".to_string(),
+            kind: "unlock_formation".to_string(),
+            value: 1.0,
+            min_value: None,
+            max_value: None,
+            value_step: None,
+            weight_exponent: None,
+            one_time: true,
+            adds_to_skillbar: true,
+            formation_id: Some("diamond".to_string()),
+        };
+        let pool = vec![formation_upgrade];
+        let mut tracker = OneTimeUpgradeTracker::default();
+        tracker.acquired_ids.insert("unlock_diamond".to_string());
+        let mut rng = UpgradeRngState {
+            state: 0xBEEF_1234_9876_1111,
+        };
+        let picks =
+            roll_upgrade_options(&pool, &mut rng, 3, &tracker, &FormationSkillBar::default());
+        assert!(picks.is_empty());
+    }
+
+    #[test]
+    fn skillbar_bound_upgrades_are_filtered_when_hotbar_is_full() {
+        let formation_upgrade = UpgradeConfig {
+            id: "unlock_diamond".to_string(),
+            kind: "unlock_formation".to_string(),
+            value: 1.0,
+            min_value: None,
+            max_value: None,
+            value_step: None,
+            weight_exponent: None,
+            one_time: true,
+            adds_to_skillbar: true,
+            formation_id: Some("diamond".to_string()),
+        };
+        let normal_upgrade = upgrade("damage", "damage_up");
+        let pool = vec![formation_upgrade, normal_upgrade];
+
+        let mut full_skillbar = FormationSkillBar {
+            slots: Vec::new(),
+            active_slot: Some(0),
+        };
+        full_skillbar.slots = (0..SKILL_BAR_CAPACITY)
+            .map(|idx| SkillBarSkill {
+                id: format!("slot_{idx}"),
+                label: format!("Slot {idx}"),
+                kind: SkillBarSkillKind::Formation(ActiveFormation::Square),
+            })
+            .collect();
+        assert!(full_skillbar.is_full());
+
+        let mut rng = UpgradeRngState {
+            state: 0x1357_9BDF_2468_ACE0,
+        };
+        let picks = roll_upgrade_options(
+            &pool,
+            &mut rng,
+            3,
+            &OneTimeUpgradeTracker::default(),
+            &full_skillbar,
+        );
+        assert_eq!(picks.len(), 1);
+        assert_eq!(picks[0].id, "damage_up");
     }
 
     #[test]
@@ -535,17 +676,31 @@ mod tests {
 
     #[test]
     fn upgrade_display_metadata_maps_known_kinds() {
-        let upgrade = UpgradeConfig {
-            id: "damage_up".to_string(),
-            kind: "damage".to_string(),
-            value: 1.5,
-            min_value: Some(1.0),
-            max_value: Some(4.0),
-            value_step: Some(0.5),
-            weight_exponent: Some(2.0),
+        let damage_upgrade = upgrade("damage", "damage_up");
+        assert_eq!(upgrade_card_icon(&damage_upgrade), UpgradeCardIcon::Damage);
+        assert_eq!(upgrade_display_title(&damage_upgrade), "Sharpened Steel");
+        assert!(upgrade_display_description(&damage_upgrade).contains("damage"));
+
+        let formation_upgrade = UpgradeConfig {
+            id: "unlock_diamond".to_string(),
+            kind: "unlock_formation".to_string(),
+            value: 1.0,
+            min_value: None,
+            max_value: None,
+            value_step: None,
+            weight_exponent: None,
+            one_time: true,
+            adds_to_skillbar: true,
+            formation_id: Some("diamond".to_string()),
         };
-        assert_eq!(upgrade_card_icon(&upgrade), UpgradeCardIcon::Damage);
-        assert_eq!(upgrade_display_title(&upgrade), "Sharpened Steel");
-        assert!(upgrade_display_description(&upgrade).contains("damage"));
+        assert_eq!(
+            upgrade_card_icon(&formation_upgrade),
+            UpgradeCardIcon::FormationDiamond
+        );
+        assert_eq!(
+            upgrade_display_title(&formation_upgrade),
+            "Diamond Formation"
+        );
+        assert!(upgrade_display_description(&formation_upgrade).contains("Diamond"));
     }
 }

@@ -59,13 +59,18 @@ pub struct FormationConfig {
     pub id: String,
     pub slot_spacing: f32,
     pub offense_multiplier: f32,
+    #[serde(default = "default_multiplier")]
+    pub offense_while_moving_multiplier: f32,
     pub defense_multiplier: f32,
     pub anti_cavalry_multiplier: f32,
+    #[serde(default = "default_multiplier")]
+    pub move_speed_multiplier: f32,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct FormationsConfigFile {
     pub square: FormationConfig,
+    pub diamond: FormationConfig,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -93,6 +98,12 @@ pub struct UpgradeConfig {
     pub value_step: Option<f32>,
     #[serde(default)]
     pub weight_exponent: Option<f32>,
+    #[serde(default)]
+    pub one_time: bool,
+    #[serde(default)]
+    pub adds_to_skillbar: bool,
+    #[serde(default)]
+    pub formation_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -174,6 +185,10 @@ fn read_json<T: for<'de> Deserialize<'de>>(path: PathBuf) -> Result<T> {
         .with_context(|| format!("failed to parse config file {}", path.display()))
 }
 
+fn default_multiplier() -> f32 {
+    1.0
+}
+
 fn validate_unit_stats(unit: &UnitStatsConfig, label: &str) -> Result<()> {
     if unit.max_hp <= 0.0 {
         bail!("{label} max_hp must be > 0");
@@ -235,11 +250,23 @@ fn validate_enemies(config: &EnemiesConfigFile) -> Result<()> {
 }
 
 fn validate_formations(config: &FormationsConfigFile) -> Result<()> {
-    if config.square.slot_spacing <= 0.0 {
-        bail!("square slot_spacing must be > 0");
+    validate_formation("square", &config.square)?;
+    validate_formation("diamond", &config.diamond)?;
+    Ok(())
+}
+
+fn validate_formation(label: &str, formation: &FormationConfig) -> Result<()> {
+    if formation.slot_spacing <= 0.0 {
+        bail!("{label} slot_spacing must be > 0");
     }
-    if config.square.offense_multiplier <= 0.0 || config.square.defense_multiplier <= 0.0 {
-        bail!("square multipliers must be > 0");
+    if formation.offense_multiplier <= 0.0 || formation.defense_multiplier <= 0.0 {
+        bail!("{label} offense/defense multipliers must be > 0");
+    }
+    if formation.offense_while_moving_multiplier <= 0.0 {
+        bail!("{label} offense_while_moving_multiplier must be > 0");
+    }
+    if formation.move_speed_multiplier <= 0.0 {
+        bail!("{label} move_speed_multiplier must be > 0");
     }
     Ok(())
 }
@@ -271,6 +298,18 @@ fn validate_upgrades(config: &UpgradesConfigFile) -> Result<()> {
     for (idx, upgrade) in config.upgrades.iter().enumerate() {
         if upgrade.id.trim().is_empty() || upgrade.kind.trim().is_empty() {
             bail!("upgrade[{idx}] id and kind must be non-empty");
+        }
+        let is_formation_unlock = upgrade.kind == "unlock_formation";
+        if is_formation_unlock {
+            let Some(formation_id) = upgrade.formation_id.as_deref() else {
+                bail!("upgrade[{idx}] unlock_formation requires formation_id");
+            };
+            if formation_id.trim().is_empty() {
+                bail!("upgrade[{idx}] formation_id must be non-empty");
+            }
+            if !upgrade.adds_to_skillbar {
+                bail!("upgrade[{idx}] unlock_formation must set adds_to_skillbar=true");
+            }
         }
         if let (Some(min_value), Some(max_value)) = (upgrade.min_value, upgrade.max_value) {
             if min_value <= 0.0 || max_value <= 0.0 {
@@ -376,7 +415,7 @@ mod tests {
         write_config(
             dir,
             "formations.json",
-            r#"{"square":{"id":"square","slot_spacing":20.0,"offense_multiplier":1.0,"defense_multiplier":1.0,"anti_cavalry_multiplier":1.0}}"#,
+            r#"{"square":{"id":"square","slot_spacing":20.0,"offense_multiplier":1.0,"offense_while_moving_multiplier":1.0,"defense_multiplier":1.0,"anti_cavalry_multiplier":1.0,"move_speed_multiplier":1.0},"diamond":{"id":"diamond","slot_spacing":20.0,"offense_multiplier":1.0,"offense_while_moving_multiplier":1.1,"defense_multiplier":0.9,"anti_cavalry_multiplier":1.0,"move_speed_multiplier":1.05}}"#,
         );
         write_config(
             dir,

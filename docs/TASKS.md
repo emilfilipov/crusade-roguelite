@@ -28,6 +28,92 @@
 
 ---
 
+## CRU-053 - Formation Skillbar Runtime (10 Slots, 1..0 Activation)
+- Status: `DONE`
+- Type: `Gameplay/UI`
+- Priority: `P0`
+- Depends on: none
+- Goal: Add a bottom-center skillbar that hosts active skills/formations with keyboard activation.
+- Context:
+  - Formations are now player-facing active selections and need a deterministic runtime owner.
+  - Commander starts in `Square`, so slot `1` must be pre-populated and active by default.
+- Implementation:
+  1. Added `FormationSkillBar` resource with fixed capacity (`10`) and active-slot tracking.
+  2. Added hotkey activation (`1..0`) for slot selection during `InRun`.
+  3. Enforced exclusive active formation selection through `ActiveFormation`.
+- Unit Tests Required:
+  - Default skillbar state test (square in slot 1, active).
+  - Activation test (switch to diamond when slot is selected).
+  - Duplicate/full-slot rejection tests.
+- Acceptance Criteria:
+  - Skillbar exists with square active on run start.
+  - Pressing `1..0` activates the corresponding skill if present.
+  - Only one formation can be active at once.
+
+## CRU-054 - One-Time Skillbar Upgrade Entries + Draft Filtering
+- Status: `DONE`
+- Type: `Gameplay/Progression`
+- Priority: `P0`
+- Depends on: `CRU-053`
+- Goal: Support one-time active-skill upgrades and remove skillbar-bound cards when the bar is full.
+- Context:
+  - Formation unlock cards should not reappear after pick.
+  - Skillbar additions should not be offered when no slot is available.
+- Implementation:
+  1. Extended `UpgradeConfig` with `one_time`, `adds_to_skillbar`, and `formation_id`.
+  2. Added one-time tracker resource reset on run start.
+  3. Filtered draft pool by one-time history and skillbar capacity/contents.
+  4. Added `unlock_formation_diamond` to `assets/data/upgrades.json`.
+- Unit Tests Required:
+  - One-time card exclusion after acquisition.
+  - Skillbar-full exclusion for `adds_to_skillbar` upgrades.
+- Acceptance Criteria:
+  - Picked one-time upgrades do not return in future drafts.
+  - Skillbar-bound upgrades are absent when skillbar is full.
+
+## CRU-055 - Diamond Formation Gameplay Modifiers
+- Status: `DONE`
+- Type: `Gameplay/Balance`
+- Priority: `P0`
+- Depends on: `CRU-053`
+- Goal: Add Diamond formation with offense bonus while moving, speed bonus, and defense penalty.
+- Context:
+  - Square was normalized to neutral baseline (`x1`) to make Diamond a clear tactical choice.
+- Implementation:
+  1. Expanded `formations.json` with `diamond` and per-formation runtime fields:
+     - `offense_while_moving_multiplier`
+     - `move_speed_multiplier`
+  2. Applied formation move-speed multiplier in commander movement.
+  3. Applied moving offense bonus through combat multiplier path.
+  4. Applied defense multiplier in friendly effective armor path.
+- Unit Tests Required:
+  - Moving offense helper test.
+  - Formation bounds and switching behavior tests.
+- Acceptance Criteria:
+  - Diamond is selectable and changes combat/movement behavior as designed.
+  - Square remains neutral baseline.
+
+## CRU-056 - Formation Icons + Skillbar HUD Rendering
+- Status: `DONE`
+- Type: `UI/Visual`
+- Priority: `P1`
+- Depends on: `CRU-053`
+- Goal: Add clear visual identifiers for formations in cards and the skillbar.
+- Context:
+  - Requested simple dot-pattern icons (dice-like readability).
+- Implementation:
+  1. Added generated icons:
+     - `assets/sprites/skills/formation_square.png`
+     - `assets/sprites/skills/formation_diamond.png`
+  2. Loaded formation icons into `ArtAssets`.
+  3. Added bottom-center skillbar HUD with 10 slots, active highlight, and key labels.
+  4. Routed formation upgrade card icons to the new assets.
+- Unit Tests Required:
+  - Existing UI logic tests + metadata/icon mapping tests.
+- Acceptance Criteria:
+  - Formation cards and skillbar slots show correct icons.
+  - Active skillbar slot is visibly highlighted.
+
 ## CRU-029 - Drop Transit-To-Commander Consumption
 - Status: `DONE`
 - Type: `Gameplay`

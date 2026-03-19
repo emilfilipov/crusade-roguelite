@@ -25,6 +25,8 @@ pub struct ArtAssets {
     pub upgrade_authority_icon: Handle<Image>,
     pub upgrade_move_speed_icon: Handle<Image>,
     pub upgrade_hospitalier_icon: Handle<Image>,
+    pub formation_square_icon: Handle<Image>,
+    pub formation_diamond_icon: Handle<Image>,
 }
 
 pub struct VisualPlugin;
@@ -86,4 +88,6 @@ fn load_art_assets(mut assets: ResMut<ArtAssets>, asset_server: Option<Res<Asset
         .load("third_party/kenney_desert-shooter-pack_1.0/PNG/Interface/Tiles/tile_0078.png");
     assets.upgrade_hospitalier_icon =
         asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0115.png");
+    assets.formation_square_icon = asset_server.load("sprites/skills/formation_square.png");
+    assets.formation_diamond_icon = asset_server.load("sprites/skills/formation_diamond.png");
 }
