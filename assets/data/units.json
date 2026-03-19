@@ -15,8 +15,8 @@
     "ranged_projectile_speed": 420.0,
     "ranged_projectile_max_distance": 260.0
   },
-  "recruit_infantry_knight": {
-    "id": "infantry_knight",
+  "recruit_christian_peasant_infantry": {
+    "id": "christian_peasant_infantry",
     "max_hp": 95.0,
     "armor": 4.0,
     "damage": 9.0,
@@ -24,5 +24,15 @@
     "attack_range": 36.0,
     "move_speed": 150.0,
     "morale": 100.0
+  },
+  "recruit_christian_peasant_archer": {
+    "id": "christian_peasant_archer",
+    "max_hp": 72.0,
+    "armor": 2.0,
+    "damage": 7.0,
+    "attack_cooldown_secs": 1.35,
+    "attack_range": 185.0,
+    "move_speed": 154.0,
+    "morale": 92.0
   }
 }

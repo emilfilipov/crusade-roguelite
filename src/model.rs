@@ -57,9 +57,33 @@ pub enum Team {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UnitKind {
     Commander,
-    InfantryKnight,
+    ChristianPeasantInfantry,
+    ChristianPeasantArcher,
     EnemyBanditRaider,
-    RescuableInfantry,
+    RescuableChristianPeasantInfantry,
+    RescuableChristianPeasantArcher,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RecruitUnitKind {
+    ChristianPeasantInfantry,
+    ChristianPeasantArcher,
+}
+
+impl RecruitUnitKind {
+    pub const fn as_unit_kind(self) -> UnitKind {
+        match self {
+            Self::ChristianPeasantInfantry => UnitKind::ChristianPeasantInfantry,
+            Self::ChristianPeasantArcher => UnitKind::ChristianPeasantArcher,
+        }
+    }
+
+    pub const fn as_rescuable_unit_kind(self) -> UnitKind {
+        match self {
+            Self::ChristianPeasantInfantry => UnitKind::RescuableChristianPeasantInfantry,
+            Self::ChristianPeasantArcher => UnitKind::RescuableChristianPeasantArcher,
+        }
+    }
 }
 
 #[derive(Component, Clone, Copy, Debug)]
@@ -133,7 +157,9 @@ pub struct FriendlyUnit;
 pub struct EnemyUnit;
 
 #[derive(Component, Clone, Copy, Debug)]
-pub struct RescuableUnit;
+pub struct RescuableUnit {
+    pub recruit_kind: RecruitUnitKind,
+}
 
 #[derive(Component, Clone, Copy, Debug)]
 pub struct CommanderUnit;
@@ -177,6 +203,7 @@ pub struct StartRunEvent;
 #[derive(Event, Clone, Copy, Debug)]
 pub struct RecruitEvent {
     pub world_position: Vec2,
+    pub recruit_kind: RecruitUnitKind,
 }
 
 #[derive(Event, Clone, Copy, Debug)]

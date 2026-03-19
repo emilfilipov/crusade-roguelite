@@ -3,7 +3,8 @@ use bevy::prelude::*;
 use crate::data::GameData;
 use crate::map::MapBounds;
 use crate::model::{
-    FriendlyUnit, GameState, RecruitEvent, RescuableUnit, StartRunEvent, Team, Unit, UnitKind,
+    FriendlyUnit, GameState, RecruitEvent, RecruitUnitKind, RescuableUnit, StartRunEvent, Team,
+    Unit,
 };
 use crate::visuals::ArtAssets;
 
@@ -61,9 +62,11 @@ fn spawn_rescuables_on_run_start(
 
     let count = data.rescue.spawn_count.max(1);
     for idx in 0..count {
+        let recruit_kind = recruit_kind_for_sequence(idx);
         spawn_rescuable(
             &mut commands,
             rescue_spawn_position(idx, bounds.as_deref().copied()),
+            recruit_kind,
             &art,
         );
     }
@@ -91,7 +94,8 @@ fn spawn_rescuables_over_time(
     }
 
     let spawn_position = rescue_spawn_position(runtime.sequence, bounds.as_deref().copied());
-    spawn_rescuable(&mut commands, spawn_position, &art);
+    let recruit_kind = recruit_kind_for_sequence(runtime.sequence);
+    spawn_rescuable(&mut commands, spawn_position, recruit_kind, &art);
     runtime.sequence = runtime.sequence.saturating_add(1);
 }
 
@@ -100,7 +104,10 @@ fn tick_rescue_progress(
     time: Res<Time>,
     data: Res<GameData>,
     friendlies: Query<&Transform, With<FriendlyUnit>>,
-    mut rescuables: Query<(Entity, &Transform, &mut RescueProgress), With<RescuableUnit>>,
+    mut rescuables: Query<
+        (Entity, &Transform, &RescuableUnit, &mut RescueProgress),
+        With<RescuableUnit>,
+    >,
     mut recruit_events: EventWriter<RecruitEvent>,
 ) {
     let friendly_positions: Vec<Vec2> = friendlies
@@ -113,7 +120,7 @@ fn tick_rescue_progress(
     let rescue_radius = data.rescue.rescue_radius;
     let rescue_duration = data.rescue.rescue_duration_secs;
 
-    for (entity, transform, mut rescue_progress) in &mut rescuables {
+    for (entity, transform, rescuable_unit, mut rescue_progress) in &mut rescuables {
         let in_range = any_friendly_in_rescue_radius(
             transform.translation.truncate(),
             &friendly_positions,
@@ -128,6 +135,7 @@ fn tick_rescue_progress(
         if rescue_progress.elapsed >= rescue_duration {
             recruit_events.send(RecruitEvent {
                 world_position: transform.translation.truncate(),
+                recruit_kind: rescuable_unit.recruit_kind,
             });
             commands.entity(entity).despawn_recursive();
         }
@@ -145,18 +153,37 @@ pub fn any_friendly_in_rescue_radius(
         .any(|position| position.distance_squared(rescuable_position) <= rescue_radius_sq)
 }
 
-fn spawn_rescuable(commands: &mut Commands, position: Vec2, art: &ArtAssets) {
+fn spawn_rescuable(
+    commands: &mut Commands,
+    position: Vec2,
+    recruit_kind: RecruitUnitKind,
+    art: &ArtAssets,
+) {
+    let (rescuable_unit_kind, texture, tint) = match recruit_kind {
+        RecruitUnitKind::ChristianPeasantInfantry => (
+            crate::model::UnitKind::RescuableChristianPeasantInfantry,
+            art.friendly_peasant_infantry_rescuable_variant.clone(),
+            Color::srgb(0.88, 0.92, 1.0),
+        ),
+        RecruitUnitKind::ChristianPeasantArcher => (
+            crate::model::UnitKind::RescuableChristianPeasantArcher,
+            art.friendly_peasant_archer_rescuable_variant.clone(),
+            Color::srgb(0.86, 0.95, 0.86),
+        ),
+    };
+
     commands.spawn((
         Unit {
             team: Team::Neutral,
-            kind: UnitKind::RescuableInfantry,
+            kind: rescuable_unit_kind,
             level: 1,
         },
-        RescuableUnit,
+        RescuableUnit { recruit_kind },
         RescueProgress { elapsed: 0.0 },
         SpriteBundle {
-            texture: art.friendly_knight_rescuable_variant.clone(),
+            texture,
             sprite: Sprite {
+                color: tint,
                 custom_size: Some(Vec2::splat(32.0)),
                 ..default()
             },
@@ -164,6 +191,14 @@ fn spawn_rescuable(commands: &mut Commands, position: Vec2, art: &ArtAssets) {
             ..default()
         },
     ));
+}
+
+fn recruit_kind_for_sequence(sequence: u32) -> RecruitUnitKind {
+    if sequence.is_multiple_of(2) {
+        RecruitUnitKind::ChristianPeasantInfantry
+    } else {
+        RecruitUnitKind::ChristianPeasantArcher
+    }
 }
 
 fn rescue_spawn_position(sequence: u32, bounds: Option<MapBounds>) -> Vec2 {
@@ -194,8 +229,10 @@ mod tests {
     use bevy::prelude::Vec2;
 
     use crate::map::MapBounds;
+    use crate::model::RecruitUnitKind;
     use crate::rescue::{
-        advance_rescue_progress, any_friendly_in_rescue_radius, rescue_spawn_position,
+        advance_rescue_progress, any_friendly_in_rescue_radius, recruit_kind_for_sequence,
+        rescue_spawn_position,
     };
 
     #[test]
@@ -235,5 +272,21 @@ mod tests {
             &friendlies,
             12.0
         ));
+    }
+
+    #[test]
+    fn rescue_spawn_sequence_alternates_recruit_kinds() {
+        assert_eq!(
+            recruit_kind_for_sequence(0),
+            RecruitUnitKind::ChristianPeasantInfantry
+        );
+        assert_eq!(
+            recruit_kind_for_sequence(1),
+            RecruitUnitKind::ChristianPeasantArcher
+        );
+        assert_eq!(
+            recruit_kind_for_sequence(2),
+            RecruitUnitKind::ChristianPeasantInfantry
+        );
     }
 }

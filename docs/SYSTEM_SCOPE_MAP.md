@@ -19,7 +19,7 @@ It prevents scope creep and makes expansion decisions explicit.
 | --- | --- | --- | --- |
 | Formation Set | 2 formations: `Square` (neutral baseline) + `Diamond` (offense-while-moving, speed up, defense down) | Add `Line`, `Wedge`, `Column` | Square+Diamond switching stable across full runs with no slot/positioning bugs |
 | Commander Kit | Basic melee auto-attack + conditional ranged arrow attack; aura upgrades (`Authority`, `Hospitalier`) active via level-ups | Multiple aura trees, command actives, commander loadouts | Commander-only early game is reliable and balanced |
-| Recruit Roster | 1 recruit archetype/subtype: `Infantry/Knight` | Spearman, Archer, support units, faction variants | Rescue loop stable and roster growth bug-free |
+| Recruit Roster | 2 recruit variants: `Christian Peasant Infantry` (melee) and `Christian Peasant Archer` (ranged) | Spearman, cavalry, support units, faction variants | Rescue loop stable and roster growth bug-free |
 | Enemy Roster | 1 enemy type: `bandit_raider` (melee infantry profile) | Archers, cavalry, elites, event waves | Basic wave pacing and melee combat deterministic |
 | Enemy AI | 1 behavior profile: chase + melee | Ranged kiting, cavalry charge, coordinated groups | No AI deadlocks and target selection stable |
 | Enemy Visual States | 1 state set for `bandit_raider`: idle/move/attack/hit/dead sprite swaps | Multi-frame animation sets and per-faction visual variants | State mapping remains readable and stable under combat load |

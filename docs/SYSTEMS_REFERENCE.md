@@ -5,6 +5,10 @@ Single-file technical reference for current MVP runtime behavior.
 Use this for entity/component/system lookup without scanning all source files.
 
 ## Latest Update (2026-03-19)
+- Renamed the old recruit `Infantry/Knight` to `Christian Peasant Infantry`.
+- Added `Christian Peasant Archer` as a second recruitable retinue unit.
+- Rescue spawns now carry recruit type metadata and alternate infantry/archer by spawn sequence.
+- Recruit events now preserve rescued unit type so formation/combat/collision pipelines auto-handle both variants.
 - Added formation skillbar (bottom-center, 10 slots, keys `1..0`) with exclusive active formation switching.
 - Square formation now uses neutral multipliers (`x1` baseline).
 - Added one-time `Diamond` formation unlock card in level-up draft:
@@ -50,7 +54,7 @@ Use this for entity/component/system lookup without scanning all source files.
 - Enabled `CollisionPlugin` in app wiring (enemy collision now active).
 - Added `GameOver` overlay flow with `Restart` and `Main Menu` actions.
 - Rebuilt map floor rendering into tiled desert ground.
-- Increased knight attack range from `32` to `36`.
+- Increased Christian Peasant Infantry attack range from `32` to `36`.
 - Added drop transit-to-commander flow: friendly pickup starts homing, drop effect triggers only on commander contact.
 - Replaced placeholder `morale_weight` usage with active per-unit `Morale` (friendlies and enemies).
 - Added morale-based combat debuff below 50% morale.
@@ -113,7 +117,8 @@ Loaded from `assets/data` by `GameData::load_from_dir`.
 ### `units.json`
 - Commander (`baldiun`): `hp=120`, `armor=6`, `damage=12`, `cd=0.9`, `range=34`, `move=170`, `morale=120`, `aura_radius=180`
   - Ranged profile: `damage=9`, `cd=1.2`, `range=250`, `projectile_speed=420`, `max_distance=260`
-- Recruit knight (`infantry_knight`): `hp=95`, `armor=4`, `damage=9`, `cd=1.1`, `range=36`, `move=150`, `morale=100`
+- Recruit `christian_peasant_infantry`: `hp=95`, `armor=4`, `damage=9`, `cd=1.1`, `range=36`, `move=150`, `morale=100`
+- Recruit `christian_peasant_archer`: `hp=72`, `armor=2`, `damage=7`, `cd=1.35`, `range=185`, `move=154`, `morale=92`
 
 ### `enemies.json`
 - `bandit_raider`: `hp=34`, `armor=1`, `damage=6`, `cd=1.3`, `range=30`, `move=118`, `morale=90`
@@ -187,7 +192,7 @@ Roll fields:
 - `AttackCooldown`
 - `MoveSpeed`
 - `ColliderRadius`
-- Markers: `PlayerControlled`, `FriendlyUnit`, `EnemyUnit`, `RescuableUnit`, `CommanderUnit`
+- Markers/data components: `PlayerControlled`, `FriendlyUnit`, `EnemyUnit`, `RescuableUnit { recruit_kind }`, `CommanderUnit`
 
 ### Module Components
 - `BanditVisualRuntime`, `BanditVisualState` (`src/enemies.rs`)
@@ -352,6 +357,7 @@ Friendly combined outgoing multiplier has lower clamp:
 
 ### `rescue.rs`
 - start spawn + timed respawn of rescuables
+- typed rescuable metadata (`Christian Peasant Infantry` / `Christian Peasant Archer`)
 - any-friendly rescue channel logic
 
 ### `enemies.rs`

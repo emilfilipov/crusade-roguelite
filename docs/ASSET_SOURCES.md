@@ -11,17 +11,27 @@ Track external art sources, licenses, and current runtime mapping.
 - License: CC0 (per source page/pack metadata)
 - Runtime usage:
   - Commander sprite
-  - Friendly knight sprite
-  - Rescuable variant sprite
+  - Friendly peasant infantry sprite
+  - Friendly peasant archer sprite
+  - Rescuable peasant variants
   - `bandit_raider` state sprites (idle/move/attack/hit/dead)
+  - Several upgrade icons
 
 ### Kenney - Desert Shooter Pack
 - URL: https://kenney.nl/assets/desert-shooter-pack
 - Local path: `assets/third_party/kenney_desert-shooter-pack_1.0`
 - License: Kenney License (`License.txt` in pack)
 - Runtime usage:
+  - Commander arrow projectile sprite
+  - Movement-speed upgrade icon
+
+### OGA - Ishtar Top-Down Pack 1.1
+- URL: https://opengameart.org/content/top-down-asset-pack-1
+- Local path: `assets/third_party/oga_ishtar_top-down-pack_1.1`
+- License: See bundled `License.txt`
+- Runtime usage:
   - Banner upright/dropped sprites
-  - Desert terrain base tile
+  - Desert base/foliage/wall terrain tiles
 
 ### Local Curated Sprite
 - `assets/sprites/pickups/xp_coin_stack.png`
@@ -43,17 +53,22 @@ Track external art sources, licenses, and current runtime mapping.
 
 ## Runtime Mapping (`src/visuals.rs`)
 - `commander_idle` -> `third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0097.png`
-- `friendly_knight_idle` -> `third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0096.png`
-- `friendly_knight_rescuable_variant` -> `third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0096.png`
+- `friendly_peasant_infantry_idle` -> `third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0111.png`
+- `friendly_peasant_infantry_rescuable_variant` -> `third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0111.png`
+- `friendly_peasant_archer_idle` -> `third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0112.png`
+- `friendly_peasant_archer_rescuable_variant` -> `third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0112.png`
 - `enemy_bandit_raider_idle` -> `third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0105.png`
 - `enemy_bandit_raider_move` -> `third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0100.png`
 - `enemy_bandit_raider_attack` -> `third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0099.png`
 - `enemy_bandit_raider_hit` -> `third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0098.png`
 - `enemy_bandit_raider_dead` -> `third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0120.png`
-- `banner_upright` -> `third_party/kenney_desert-shooter-pack_1.0/PNG/Weapons/Tiles/tile_0018.png`
-- `banner_dropped` -> `third_party/kenney_desert-shooter-pack_1.0/PNG/Weapons/Tiles/tile_0003.png`
-- `terrain_desert_base_tile_a` -> `third_party/kenney_desert-shooter-pack_1.0/PNG/Tiles/Tiles/tile_0000.png`
+- `banner_upright` -> `third_party/oga_ishtar_top-down-pack_1.1/top-down-pack-1/tiles/Slice 24.png`
+- `banner_dropped` -> `third_party/oga_ishtar_top-down-pack_1.1/top-down-pack-1/tiles/Slice 16.png`
+- `terrain_desert_base_tile_a` -> `third_party/oga_ishtar_top-down-pack_1.1/top-down-pack-1/tiles/Slice 39.png`
+- `terrain_desert_foliage_tile_a` -> `third_party/oga_ishtar_top-down-pack_1.1/top-down-pack-1/tiles/Slice 70.png`
+- `terrain_boundary_wall_tile_a` -> `third_party/oga_ishtar_top-down-pack_1.1/top-down-pack-1/tiles/Slice 76.png`
 - `exp_pack_coin_stack` -> `sprites/pickups/xp_coin_stack.png`
+- `arrow_projectile` -> `third_party/kenney_desert-shooter-pack_1.0/PNG/Weapons/Tiles/tile_0018.png`
 - `formation_square_icon` -> `sprites/skills/formation_square.png`
 - `formation_diamond_icon` -> `sprites/skills/formation_diamond.png`
 

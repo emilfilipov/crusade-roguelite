@@ -7,7 +7,7 @@ UI element art is intentionally excluded for now (basic programmatic shapes are 
 ## Scope Assumptions (MVP)
 - Top-down or slightly angled 2D battlefield.
 - One commander at run start (`Baldiun`).
-- One recruitable soldier type (`Infantry/Knight`).
+- Two recruitable soldier types (`Christian Peasant Infantry`, `Christian Peasant Archer`).
 - One enemy type (melee infantry).
 - One formation in use (`Square`).
 - One map biome (desert).
@@ -32,12 +32,18 @@ UI element art is intentionally excluded for now (basic programmatic shapes are 
 6. `commander_baldiun_battle_cry_cast` (simple cast/readability pose)
 
 ### 2) Characters - Friendly Units
-1. `friendly_infantry_knight_idle` (loop)
-2. `friendly_infantry_knight_move` (loop)
-3. `friendly_infantry_knight_attack_melee`
-4. `friendly_infantry_knight_hit_react`
-5. `friendly_infantry_knight_death`
-6. `friendly_infantry_knight_rescuable_variant`
+1. `friendly_christian_peasant_infantry_idle` (loop)
+2. `friendly_christian_peasant_infantry_move` (loop)
+3. `friendly_christian_peasant_infantry_attack_melee`
+4. `friendly_christian_peasant_infantry_hit_react`
+5. `friendly_christian_peasant_infantry_death`
+6. `friendly_christian_peasant_infantry_rescuable_variant`
+7. `friendly_christian_peasant_archer_idle` (loop)
+8. `friendly_christian_peasant_archer_move` (loop)
+9. `friendly_christian_peasant_archer_attack_ranged`
+10. `friendly_christian_peasant_archer_hit_react`
+11. `friendly_christian_peasant_archer_death`
+12. `friendly_christian_peasant_archer_rescuable_variant`
 
 ### 3) Characters - Enemies
 1. `enemy_bandit_raider_idle` (loop)
@@ -102,7 +108,7 @@ UI element art is intentionally excluded for now (basic programmatic shapes are 
 2. `bg_haze_gradient`
 
 ## Recommended First-Pass Quantities
-- Fully animated unit sets: 3 total (commander, friendly infantry/knight, enemy bandit raider).
+- Fully animated unit sets: 4 total (commander, friendly peasant infantry, friendly peasant archer, enemy bandit raider).
 - Terrain/foliage sprites: 14 base pieces (enough for visual variation without overproduction).
 - Gameplay object sprites: 5.
 - VFX sprites/flipbooks: 9.
@@ -111,7 +117,7 @@ UI element art is intentionally excluded for now (basic programmatic shapes are 
 ## Not Required for MVP (Do Not Produce Yet)
 - UI frame art, buttons, portraits, inventory panels.
 - Additional enemy families (archer/cavalry/elites).
-- Additional recruit classes (spearman/archer/support).
+- Additional recruit classes (spearman/support).
 - Additional map biomes.
 - Formation-specific art variants beyond square-first gameplay.
 

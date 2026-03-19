@@ -198,8 +198,8 @@ mod tests {
         let inner_radius = 24.0;
         let enemy = unit(Team::Enemy, UnitKind::EnemyBanditRaider);
         let commander = unit(Team::Friendly, UnitKind::Commander);
-        let inner_retinue = unit(Team::Friendly, UnitKind::InfantryKnight);
-        let outer_retinue = unit(Team::Friendly, UnitKind::InfantryKnight);
+        let inner_retinue = unit(Team::Friendly, UnitKind::ChristianPeasantInfantry);
+        let outer_retinue = unit(Team::Friendly, UnitKind::ChristianPeasantInfantry);
 
         assert!(should_resolve_collision_pair(
             enemy,

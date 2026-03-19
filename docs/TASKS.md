@@ -45,6 +45,34 @@
 - Acceptance Criteria:
   - Diamond formation unit ordering around commander is distinct and predictable.
 
+## CRU-058 - Recruit Roster Expansion (Christian Peasant Infantry + Archer)
+- Status: `DONE`
+- Type: `Gameplay/Data/Visual`
+- Priority: `P1`
+- Depends on: none
+- Goal: Replace legacy knight naming and add a second recruitable ranged unit while keeping rescue/formation/combat wiring generic.
+- Context:
+  - Recruit roster was still single-type and hardcoded to `Infantry/Knight`.
+  - Requested naming update to `Christian Peasant Infantry` plus new `Christian Peasant Archer`.
+  - Rescue/recruit flow needed typed propagation so new units auto-plug into existing systems.
+- Implementation:
+  1. Added typed recruit metadata (`RecruitUnitKind`) and expanded `UnitKind` variants.
+  2. Extended `units.json` schema/data with two recruit entries:
+     - `recruit_christian_peasant_infantry`
+     - `recruit_christian_peasant_archer`
+  3. Refactored rescue flow to spawn typed rescuables and emit typed `RecruitEvent`.
+  4. Refactored squad recruit spawning to instantiate the matching unit config/sprite per recruit type.
+  5. Swapped friendly runtime art to two distinct peasant sprites from Tiny Dungeon:
+     - infantry: `tile_0111`
+     - archer: `tile_0112`
+- Unit Tests Required:
+  - Rescue sequence test for alternating recruit kinds.
+  - Existing config-loader validation tests for new unit schema entries.
+- Acceptance Criteria:
+  - Knight naming no longer appears in runtime recruit data.
+  - Both peasant unit types can be rescued and spawned into retinue.
+  - Both recruit types participate in formation/collision/combat via existing friendly pipelines.
+
 ## CRU-053 - Formation Skillbar Runtime (10 Slots, 1..0 Activation)
 - Status: `DONE`
 - Type: `Gameplay/UI`
@@ -342,20 +370,20 @@
 - Acceptance Criteria:
   - Enemy bodies maintain separation instead of collapsing into a single stack.
 
-## CRU-040 - Infantry Knight Range Balance Pass
+## CRU-040 - Christian Peasant Infantry Range Balance Pass
 - Status: `DONE`
 - Type: `Balance`
 - Priority: `P2`
 - Depends on: none
-- Goal: Slightly increase infantry knight attack range.
+- Goal: Slightly increase Christian Peasant Infantry attack range.
 - Context:
   - Requested micro-buff for frontline feel and contact consistency.
 - Implementation:
-  1. Increased `recruit_infantry_knight.attack_range` in `assets/data/units.json`.
+  1. Increased frontline recruit attack range in `assets/data/units.json`.
 - Unit Tests Required:
   - Config loader/validation tests.
 - Acceptance Criteria:
-  - Knight range increase is active in runtime and validated by config tests.
+- Christian Peasant Infantry range increase is active in runtime and validated by config tests.
 
 ## CRU-041 - Floor Artifact Cleanup (Opaque Foliage Squares)
 - Status: `DONE`

@@ -34,7 +34,8 @@ pub struct UnitStatsConfig {
 #[derive(Clone, Debug, Deserialize)]
 pub struct UnitsConfigFile {
     pub commander: UnitStatsConfig,
-    pub recruit_infantry_knight: UnitStatsConfig,
+    pub recruit_christian_peasant_infantry: UnitStatsConfig,
+    pub recruit_christian_peasant_archer: UnitStatsConfig,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -224,7 +225,14 @@ fn validate_unit_stats(unit: &UnitStatsConfig, label: &str) -> Result<()> {
 
 fn validate_units(config: &UnitsConfigFile) -> Result<()> {
     validate_unit_stats(&config.commander, "commander")?;
-    validate_unit_stats(&config.recruit_infantry_knight, "recruit_infantry_knight")
+    validate_unit_stats(
+        &config.recruit_christian_peasant_infantry,
+        "recruit_christian_peasant_infantry",
+    )?;
+    validate_unit_stats(
+        &config.recruit_christian_peasant_archer,
+        "recruit_christian_peasant_archer",
+    )
 }
 
 fn validate_enemies(config: &EnemiesConfigFile) -> Result<()> {
@@ -404,7 +412,8 @@ mod tests {
             "units.json",
             r#"{
               "commander":{"id":"c","max_hp":10.0,"armor":1.0,"damage":2.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":100.0,"morale":100.0,"aura_radius":10.0},
-              "recruit_infantry_knight":{"id":"r","max_hp":9.0,"armor":1.0,"damage":2.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":90.0,"morale":90.0}
+              "recruit_christian_peasant_infantry":{"id":"r1","max_hp":9.0,"armor":1.0,"damage":2.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":90.0,"morale":90.0},
+              "recruit_christian_peasant_archer":{"id":"r2","max_hp":7.0,"armor":0.5,"damage":1.5,"attack_cooldown_secs":1.1,"attack_range":80.0,"move_speed":95.0,"morale":85.0}
             }"#,
         );
         write_config(
@@ -458,7 +467,8 @@ mod tests {
             "units.json",
             r#"{
               "commander":{"id":"c","max_hp":10.0,"armor":1.0,"damage":2.0,"attack_cooldown_secs":-1.0,"attack_range":20.0,"move_speed":100.0,"morale":100.0,"aura_radius":10.0},
-              "recruit_infantry_knight":{"id":"r","max_hp":9.0,"armor":1.0,"damage":2.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":90.0,"morale":90.0}
+              "recruit_christian_peasant_infantry":{"id":"r1","max_hp":9.0,"armor":1.0,"damage":2.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":90.0,"morale":90.0},
+              "recruit_christian_peasant_archer":{"id":"r2","max_hp":7.0,"armor":0.5,"damage":1.5,"attack_cooldown_secs":1.1,"attack_range":80.0,"move_speed":95.0,"morale":85.0}
             }"#,
         );
 

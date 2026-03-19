@@ -3,8 +3,10 @@ use bevy::prelude::*;
 #[derive(Resource, Clone, Debug, Default)]
 pub struct ArtAssets {
     pub commander_idle: Handle<Image>,
-    pub friendly_knight_idle: Handle<Image>,
-    pub friendly_knight_rescuable_variant: Handle<Image>,
+    pub friendly_peasant_infantry_idle: Handle<Image>,
+    pub friendly_peasant_infantry_rescuable_variant: Handle<Image>,
+    pub friendly_peasant_archer_idle: Handle<Image>,
+    pub friendly_peasant_archer_rescuable_variant: Handle<Image>,
     pub enemy_bandit_raider_idle: Handle<Image>,
     pub enemy_bandit_raider_move: Handle<Image>,
     pub enemy_bandit_raider_attack: Handle<Image>,
@@ -45,10 +47,14 @@ fn load_art_assets(mut assets: ResMut<ArtAssets>, asset_server: Option<Res<Asset
 
     assets.commander_idle =
         asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0097.png");
-    assets.friendly_knight_idle =
-        asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0096.png");
-    assets.friendly_knight_rescuable_variant =
-        asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0096.png");
+    assets.friendly_peasant_infantry_idle =
+        asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0111.png");
+    assets.friendly_peasant_infantry_rescuable_variant =
+        asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0111.png");
+    assets.friendly_peasant_archer_idle =
+        asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0112.png");
+    assets.friendly_peasant_archer_rescuable_variant =
+        asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0112.png");
     assets.enemy_bandit_raider_idle =
         asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0105.png");
     assets.enemy_bandit_raider_move =

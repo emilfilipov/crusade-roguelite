@@ -624,7 +624,7 @@ mod tests {
         ));
         assert!(enemy_target_allowed(
             Team::Enemy,
-            UnitKind::InfantryKnight,
+            UnitKind::ChristianPeasantInfantry,
             true
         ));
     }
@@ -688,7 +688,7 @@ mod tests {
                 Entity::from_raw(2),
                 crate::model::Unit {
                     team: Team::Friendly,
-                    kind: UnitKind::InfantryKnight,
+                    kind: UnitKind::ChristianPeasantInfantry,
                     level: 1,
                 },
                 Vec2::new(40.0, 20.0),

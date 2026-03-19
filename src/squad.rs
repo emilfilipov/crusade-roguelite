@@ -10,7 +10,8 @@ use crate::map::{MapBounds, playable_bounds};
 use crate::model::{
     Armor, AttackCooldown, AttackProfile, BaseMaxHealth, ColliderRadius, CommanderUnit, EnemyUnit,
     FriendlyUnit, GameState, GlobalBuffs, Health, Morale, MoveSpeed, PlayerControlled,
-    RecruitEvent, RescuableUnit, StartRunEvent, Team, Unit, UnitDiedEvent, UnitKind,
+    RecruitEvent, RecruitUnitKind, RescuableUnit, StartRunEvent, Team, Unit, UnitDiedEvent,
+    UnitKind,
 };
 use crate::visuals::ArtAssets;
 
@@ -131,14 +132,31 @@ fn spawn_recruit(
     commands: &mut Commands,
     data: &GameData,
     art: &ArtAssets,
+    recruit_kind: RecruitUnitKind,
     position: Vec2,
 ) -> Entity {
-    let cfg = &data.units.recruit_infantry_knight;
+    let (cfg, unit_kind, texture, collider_radius, sprite_tint) = match recruit_kind {
+        RecruitUnitKind::ChristianPeasantInfantry => (
+            &data.units.recruit_christian_peasant_infantry,
+            UnitKind::ChristianPeasantInfantry,
+            art.friendly_peasant_infantry_idle.clone(),
+            12.0,
+            Color::WHITE,
+        ),
+        RecruitUnitKind::ChristianPeasantArcher => (
+            &data.units.recruit_christian_peasant_archer,
+            UnitKind::ChristianPeasantArcher,
+            art.friendly_peasant_archer_idle.clone(),
+            11.0,
+            Color::srgb(0.94, 1.0, 0.94),
+        ),
+    };
+
     commands
         .spawn((
             Unit {
                 team: Team::Friendly,
-                kind: UnitKind::InfantryKnight,
+                kind: unit_kind,
                 level: 1,
             },
             FriendlyUnit,
@@ -146,7 +164,7 @@ fn spawn_recruit(
             BaseMaxHealth(cfg.max_hp),
             Morale::new(cfg.morale),
             Armor(cfg.armor),
-            ColliderRadius(12.0),
+            ColliderRadius(collider_radius),
             AttackProfile {
                 damage: cfg.damage,
                 range: cfg.attack_range,
@@ -158,8 +176,9 @@ fn spawn_recruit(
             )),
             MoveSpeed(cfg.move_speed),
             SpriteBundle {
-                texture: art.friendly_knight_idle.clone(),
+                texture,
                 sprite: Sprite {
+                    color: sprite_tint,
                     custom_size: Some(Vec2::splat(32.0)),
                     ..default()
                 },
@@ -290,7 +309,13 @@ fn apply_recruit_events(
     art: Res<ArtAssets>,
 ) {
     for event in recruit_events.read() {
-        spawn_recruit(&mut commands, &data, &art, event.world_position);
+        spawn_recruit(
+            &mut commands,
+            &data,
+            &art,
+            event.recruit_kind,
+            event.world_position,
+        );
     }
 }
 

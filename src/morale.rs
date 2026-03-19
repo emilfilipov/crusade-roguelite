@@ -477,9 +477,10 @@ mod tests {
 
     #[test]
     fn friendly_death_penalty_scales_with_health_and_commander_kind() {
-        let recruit_cohesion = friendly_death_cohesion_loss(95.0, UnitKind::InfantryKnight);
+        let recruit_cohesion =
+            friendly_death_cohesion_loss(95.0, UnitKind::ChristianPeasantInfantry);
         let commander_cohesion = friendly_death_cohesion_loss(120.0, UnitKind::Commander);
-        let recruit_morale = friendly_death_morale_loss(95.0, UnitKind::InfantryKnight);
+        let recruit_morale = friendly_death_morale_loss(95.0, UnitKind::ChristianPeasantInfantry);
         let commander_morale = friendly_death_morale_loss(120.0, UnitKind::Commander);
 
         assert!(commander_cohesion > recruit_cohesion);
