@@ -46,7 +46,6 @@ fn initialize_map_resources(mut commands: Commands, data: Res<GameData>) {
 struct BackgroundVisual;
 
 const FLOOR_TILE_WORLD_SIZE: f32 = 96.0;
-const FOLIAGE_TILE_WORLD_SIZE: f32 = 36.0;
 const WALL_TILE_WORLD_SIZE: f32 = 56.0;
 pub const MAP_WALL_INSET: f32 = 56.0;
 
@@ -66,7 +65,6 @@ fn spawn_background_visual(
         .spawn((BackgroundVisual, SpatialBundle::default()))
         .with_children(|parent| {
             spawn_floor_tiles(parent, &bounds, &art);
-            spawn_sparse_foliage(parent, &bounds, &art);
             spawn_perimeter_walls(parent, &bounds, &art);
         });
 }
@@ -120,34 +118,6 @@ fn spawn_floor_tiles(parent: &mut ChildBuilder, bounds: &MapBounds, art: &ArtAss
                     ..default()
                 },
                 transform: Transform::from_xyz(world_x, world_y, -20.0),
-                ..default()
-            });
-        }
-    }
-}
-
-fn spawn_sparse_foliage(parent: &mut ChildBuilder, bounds: &MapBounds, art: &ArtAssets) {
-    let tiles_x = ((bounds.half_width * 2.0) / FLOOR_TILE_WORLD_SIZE).ceil() as i32;
-    let tiles_y = ((bounds.half_height * 2.0) / FLOOR_TILE_WORLD_SIZE).ceil() as i32;
-    let start_x = -bounds.half_width + FLOOR_TILE_WORLD_SIZE * 0.5;
-    let start_y = -bounds.half_height + FLOOR_TILE_WORLD_SIZE * 0.5;
-
-    for y in 0..tiles_y {
-        for x in 0..tiles_x {
-            if !should_place_foliage_tile(x, y) {
-                continue;
-            }
-            let jitter = tile_jitter(x, y, 10.0);
-            let world_x = start_x + x as f32 * FLOOR_TILE_WORLD_SIZE + jitter.x;
-            let world_y = start_y + y as f32 * FLOOR_TILE_WORLD_SIZE + jitter.y;
-            parent.spawn(SpriteBundle {
-                texture: art.terrain_desert_foliage_tile_a.clone(),
-                sprite: Sprite {
-                    custom_size: Some(Vec2::splat(FOLIAGE_TILE_WORLD_SIZE)),
-                    color: Color::srgba(1.0, 1.0, 1.0, 0.8),
-                    ..default()
-                },
-                transform: Transform::from_xyz(world_x, world_y, -19.0),
                 ..default()
             });
         }
@@ -251,53 +221,11 @@ pub fn clamped_camera_target(command_pos: Vec2, bounds: MapBounds, half_view: Ve
     )
 }
 
-pub fn should_place_foliage_tile(grid_x: i32, grid_y: i32) -> bool {
-    pseudo_hash(grid_x, grid_y).is_multiple_of(29)
-}
-
-fn tile_jitter(grid_x: i32, grid_y: i32, max_offset: f32) -> Vec2 {
-    let hash = pseudo_hash(grid_x, grid_y);
-    let x_bits = (hash & 0xFF) as f32 / 255.0;
-    let y_bits = ((hash >> 8) & 0xFF) as f32 / 255.0;
-    Vec2::new(
-        (x_bits - 0.5) * max_offset * 2.0,
-        (y_bits - 0.5) * max_offset * 2.0,
-    )
-}
-
-fn pseudo_hash(grid_x: i32, grid_y: i32) -> u32 {
-    let x = grid_x as u32;
-    let y = grid_y as u32;
-    x.wrapping_mul(1_103_515_245)
-        .wrapping_add(y.wrapping_mul(97_867_311))
-        .rotate_left(11)
-}
-
 #[cfg(test)]
 mod tests {
     use bevy::prelude::Vec2;
 
-    use crate::map::{
-        MapBounds, clamped_camera_target, playable_bounds, should_place_foliage_tile,
-    };
-
-    #[test]
-    fn foliage_placement_is_stable_and_sparse() {
-        assert_eq!(
-            should_place_foliage_tile(10, 22),
-            should_place_foliage_tile(10, 22)
-        );
-        let mut placed = 0;
-        for y in 0..20 {
-            for x in 0..20 {
-                if should_place_foliage_tile(x, y) {
-                    placed += 1;
-                }
-            }
-        }
-        assert!(placed > 0);
-        assert!(placed < 40);
-    }
+    use crate::map::{MapBounds, clamped_camera_target, playable_bounds};
 
     #[test]
     fn playable_bounds_apply_wall_inset() {

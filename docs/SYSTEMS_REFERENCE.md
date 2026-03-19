@@ -5,6 +5,7 @@ Single-file technical reference for current MVP runtime behavior.
 Use this for entity/component/system lookup without scanning all source files.
 
 ## Latest Update (2026-03-19)
+- Removed decorative floor foliage overlay; battlefield floor now renders as pure sand tiles only.
 - Switched foliage overlay to transparent detail tile to remove opaque square artifacts on the floor.
 - Enemy waves now spawn as staggered batches at pseudo-random positions across the playable map (not border ring-only).
 - `Escape` now only triggers while in `InRun`, opening a centered pause overlay with `Resume`, `Restart`, and `Main Menu / Quit`.
@@ -15,12 +16,12 @@ Use this for entity/component/system lookup without scanning all source files.
 - Increased base drop pickup radius from `30` to `45`.
 - Removed level-up pause hitch by resolving upgrade picks in-run instead of transitioning to `Paused`.
 - Fixed Windows installer asset coverage for runtime-loaded art (`assets/sprites` + `oga_ishtar` pack).
-- Switched battlefield floor to cleaner sand tile set and reduced noisy foliage density.
+- Switched battlefield floor to cleaner sand tile set.
 - Added visible perimeter wall ring and hard playfield confinement for units.
 - Added first minimap prototype (bottom-right HUD panel) with commander/friendly/enemy blips.
 - Enabled `CollisionPlugin` in app wiring (enemy collision now active).
 - Added `GameOver` overlay flow with `Restart` and `Main Menu` actions.
-- Rebuilt map floor rendering into tiled desert ground + sparse foliage overlay.
+- Rebuilt map floor rendering into tiled desert ground.
 - Increased knight attack range from `32` to `36`.
 - Added drop transit-to-commander flow: friendly pickup starts homing, drop effect triggers only on commander contact.
 - Replaced placeholder `morale_weight` usage with active per-unit `Morale` (friendlies and enemies).
@@ -247,7 +248,7 @@ Friendly combined outgoing multiplier has lower clamp:
 ### `map.rs`
 - camera spawn
 - map bounds init
-- tiled desert floor + sparse foliage spawn
+- tiled desert floor spawn
 - perimeter wall visuals
 - camera follow + camera-only pixel snap + map-edge clamp
 - unit confinement to playable area inside wall inset
