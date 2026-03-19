@@ -5,6 +5,9 @@ Single-file technical reference for current MVP runtime behavior.
 Use this for entity/component/system lookup without scanning all source files.
 
 ## Latest Update (2026-03-19)
+- Switched foliage overlay to transparent detail tile to remove opaque square artifacts on the floor.
+- Enemy waves now spawn as staggered batches at pseudo-random positions across the playable map (not border ring-only).
+- `Escape` now only triggers while in `InRun`, opening a centered pause overlay with `Resume`, `Restart`, and `Main Menu / Quit`.
 - Added enemy chase hysteresis and removed unit position snapping to reduce movement jitter.
 - Added delayed enemy XP drops (`0.9s` pickup lock) before homing can start.
 - Ambient XP packs now spawn around commander position for better visibility.
@@ -237,7 +240,7 @@ Friendly combined outgoing multiplier has lower clamp:
 ### `core.rs`
 - Boot -> menu transition
 - Main menu cleanup
-- pause/resume
+- in-run pause trigger (`Escape` -> `Paused`)
 - survival timer
 - commander-loss transition to `GameOver`
 
@@ -266,6 +269,8 @@ Friendly combined outgoing multiplier has lower clamp:
 
 ### `enemies.rs`
 - scripted + infinite waves
+- queued enemy batch spawning with wave-scaled batch sizes/intervals
+- pseudo-random spawn points within playable map bounds
 - chase AI (retinue-prioritized targeting)
 - visual state texture mapping
 
@@ -290,6 +295,7 @@ Friendly combined outgoing multiplier has lower clamp:
 ### `ui.rs`
 - main menu buttons (`Start`, `Settings`, `Exit`)
 - settings screen with FPS selector
+- pause overlay buttons (`Resume`, `Restart`, `Main Menu / Quit`)
 - game-over overlay buttons (`Restart`, `Main Menu`)
 - top HUD (wave/level/xp/time)
 - progress strips (rescue + banner pickup)

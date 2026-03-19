@@ -254,6 +254,67 @@
 - Acceptance Criteria:
   - Knight range increase is active in runtime and validated by config tests.
 
+## CRU-041 - Floor Artifact Cleanup (Opaque Foliage Squares)
+- Status: `DONE`
+- Type: `Visual`
+- Priority: `P1`
+- Depends on: none
+- Goal: Remove remaining square floor artifacts while keeping light battlefield variation.
+- Context:
+  - Decorative overlay used an opaque tile that created visible square stamps.
+  - Fix should preserve deterministic placement logic and avoid introducing new map seams.
+- Implementation:
+  1. Switched decorative overlay source to a transparent Ishtar detail tile.
+  2. Tuned overlay render size/alpha for subtle, non-blocky floor variation.
+  3. Kept deterministic placement helper unchanged.
+- Unit Tests Required:
+  - Existing deterministic placement test remains valid.
+- Acceptance Criteria:
+  - Circled floor artifacts from issue screenshot are no longer visible.
+  - Background remains textured and readable.
+
+## CRU-042 - Randomized Batched Enemy Spawning
+- Status: `DONE`
+- Type: `Gameplay/AI`
+- Priority: `P0`
+- Depends on: none
+- Goal: Spawn enemies in wave batches at random map positions rather than ring-border bursts.
+- Context:
+  - Ring-border all-at-once spawning caused predictable pressure and clutter spikes.
+  - Needed wave pacing while preserving infinite-wave scaling and deterministic behavior for tests.
+- Implementation:
+  1. Added queued pending wave batches in `WaveRuntime`.
+  2. Added wave-scaled batch size + interval processing system.
+  3. Replaced border ring spawn points with pseudo-random playable-area spawn positions (with commander distance guard).
+- Unit Tests Required:
+  - Batch size/interval scaling tests.
+  - Random spawn bounds/distance validity tests.
+- Acceptance Criteria:
+  - Enemies no longer appear only along map border.
+  - Wave enemies arrive in staggered groups instead of one frame burst.
+
+## CRU-043 - In-Run Escape Pause Overlay
+- Status: `DONE`
+- Type: `UI/Flow`
+- Priority: `P0`
+- Depends on: none
+- Goal: Make `Escape` open a pause menu only during live matches.
+- Context:
+  - Prior flow allowed Escape-to-resume without menu and lacked explicit in-match pause actions.
+  - Request requires centered pause menu similar to defeat menu.
+- Implementation:
+  1. Added `Paused` overlay with buttons: `Resume`, `Restart`, `Main Menu / Quit`.
+  2. Added pause-menu action handler:
+     - `Resume` -> `InRun`
+     - `Restart` -> resets run + sends `StartRunEvent`
+     - `Main Menu / Quit` -> `MainMenu`
+  3. Removed Escape resume toggle from `Paused`; Escape now only opens pause from `InRun`.
+- Unit Tests Required:
+  - Existing core state tests remain valid.
+- Acceptance Criteria:
+  - Escape has effect only during `InRun`.
+  - Pausing shows centered menu with required button order and behavior.
+
 ---
 
 ## Task Card Template

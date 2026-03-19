@@ -55,7 +55,7 @@ fn load_art_assets(mut assets: ResMut<ArtAssets>, asset_server: Option<Res<Asset
     assets.terrain_desert_base_tile_a = asset_server
         .load("third_party/oga_ishtar_top-down-pack_1.1/top-down-pack-1/tiles/Slice 39.png");
     assets.terrain_desert_foliage_tile_a = asset_server
-        .load("third_party/oga_ishtar_top-down-pack_1.1/top-down-pack-1/tiles/Slice 43.png");
+        .load("third_party/oga_ishtar_top-down-pack_1.1/top-down-pack-1/tiles/Slice 70.png");
     assets.terrain_boundary_wall_tile_a = asset_server
         .load("third_party/oga_ishtar_top-down-pack_1.1/top-down-pack-1/tiles/Slice 76.png");
     assets.exp_pack_coin_stack = asset_server.load("sprites/pickups/xp_coin_stack.png");

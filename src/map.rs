@@ -46,7 +46,7 @@ fn initialize_map_resources(mut commands: Commands, data: Res<GameData>) {
 struct BackgroundVisual;
 
 const FLOOR_TILE_WORLD_SIZE: f32 = 96.0;
-const FOLIAGE_TILE_WORLD_SIZE: f32 = 72.0;
+const FOLIAGE_TILE_WORLD_SIZE: f32 = 36.0;
 const WALL_TILE_WORLD_SIZE: f32 = 56.0;
 pub const MAP_WALL_INSET: f32 = 56.0;
 
@@ -144,7 +144,7 @@ fn spawn_sparse_foliage(parent: &mut ChildBuilder, bounds: &MapBounds, art: &Art
                 texture: art.terrain_desert_foliage_tile_a.clone(),
                 sprite: Sprite {
                     custom_size: Some(Vec2::splat(FOLIAGE_TILE_WORLD_SIZE)),
-                    color: Color::srgba(1.0, 1.0, 1.0, 0.45),
+                    color: Color::srgba(1.0, 1.0, 1.0, 0.8),
                     ..default()
                 },
                 transform: Transform::from_xyz(world_x, world_y, -19.0),

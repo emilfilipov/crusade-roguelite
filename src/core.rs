@@ -19,7 +19,7 @@ impl Plugin for CorePlugin {
             )
             .add_systems(OnEnter(GameState::Settings), set_main_menu_clear_color)
             .add_systems(OnExit(GameState::MainMenu), set_in_run_clear_color)
-            .add_systems(Update, (pause_toggle, resume_from_pause))
+            .add_systems(Update, pause_toggle)
             .add_systems(
                 PostUpdate,
                 detect_game_over.run_if(in_state(GameState::InRun)),
@@ -81,23 +81,6 @@ fn pause_toggle(
         .unwrap_or(false)
     {
         next_state.set(GameState::Paused);
-    }
-}
-
-fn resume_from_pause(
-    state: Res<State<GameState>>,
-    mut next_state: ResMut<NextState<GameState>>,
-    keyboard: Option<Res<ButtonInput<KeyCode>>>,
-) {
-    if *state.get() != GameState::Paused {
-        return;
-    }
-    if keyboard
-        .as_ref()
-        .map(|keys| keys.just_pressed(KeyCode::Escape))
-        .unwrap_or(false)
-    {
-        next_state.set(GameState::InRun);
     }
 }
 

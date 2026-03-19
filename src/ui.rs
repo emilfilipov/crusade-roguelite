@@ -83,6 +83,16 @@ enum GameOverMenuAction {
     MainMenu,
 }
 
+#[derive(Component, Clone, Copy, Debug)]
+struct PauseMenuRoot;
+
+#[derive(Component, Clone, Copy, Debug, Eq, PartialEq)]
+enum PauseMenuAction {
+    Resume,
+    Restart,
+    MainMenuOrQuit,
+}
+
 #[derive(Component, Clone, Copy, Debug, Eq, PartialEq)]
 struct FpsCapButton {
     cap: FrameRateCap,
@@ -158,6 +168,8 @@ impl Plugin for UiPlugin {
             .add_systems(OnExit(GameState::Settings), despawn_settings_menu)
             .add_systems(OnEnter(GameState::GameOver), spawn_game_over_menu)
             .add_systems(OnExit(GameState::GameOver), despawn_game_over_menu)
+            .add_systems(OnEnter(GameState::Paused), spawn_pause_menu)
+            .add_systems(OnExit(GameState::Paused), despawn_pause_menu)
             .add_systems(OnEnter(GameState::MainMenu), despawn_in_run_hud)
             .add_systems(OnEnter(GameState::Settings), despawn_in_run_hud)
             .add_systems(OnEnter(GameState::GameOver), despawn_in_run_hud)
@@ -179,6 +191,10 @@ impl Plugin for UiPlugin {
             .add_systems(
                 Update,
                 handle_game_over_buttons.run_if(in_state(GameState::GameOver)),
+            )
+            .add_systems(
+                Update,
+                handle_pause_menu_buttons.run_if(in_state(GameState::Paused)),
             )
             .add_systems(
                 Update,
@@ -527,6 +543,93 @@ fn spawn_game_over_button(parent: &mut ChildBuilder, action: GameOverMenuAction,
 }
 
 fn despawn_game_over_menu(mut commands: Commands, roots: Query<Entity, With<GameOverMenuRoot>>) {
+    for entity in &roots {
+        commands.entity(entity).despawn_recursive();
+    }
+}
+
+fn spawn_pause_menu(mut commands: Commands) {
+    commands
+        .spawn((
+            PauseMenuRoot,
+            NodeBundle {
+                style: Style {
+                    width: Val::Percent(100.0),
+                    height: Val::Percent(100.0),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px(16.0),
+                    ..default()
+                },
+                background_color: BackgroundColor(Color::srgba(0.03, 0.03, 0.03, 0.58)),
+                z_index: ZIndex::Global(115),
+                ..default()
+            },
+        ))
+        .with_children(|parent| {
+            parent.spawn(TextBundle::from_section(
+                "PAUSED",
+                TextStyle {
+                    font_size: 42.0,
+                    color: MENU_BUTTON_TEXT_HOVERED,
+                    ..default()
+                },
+            ));
+            parent
+                .spawn(NodeBundle {
+                    style: Style {
+                        flex_direction: FlexDirection::Column,
+                        align_items: AlignItems::Center,
+                        row_gap: Val::Px(14.0),
+                        ..default()
+                    },
+                    background_color: BackgroundColor(Color::NONE),
+                    ..default()
+                })
+                .with_children(|buttons| {
+                    spawn_pause_menu_button(buttons, PauseMenuAction::Resume, "RESUME");
+                    spawn_pause_menu_button(buttons, PauseMenuAction::Restart, "RESTART");
+                    spawn_pause_menu_button(
+                        buttons,
+                        PauseMenuAction::MainMenuOrQuit,
+                        "MAIN MENU / QUIT",
+                    );
+                });
+        });
+}
+
+fn spawn_pause_menu_button(parent: &mut ChildBuilder, action: PauseMenuAction, label: &str) {
+    parent
+        .spawn((
+            ButtonBundle {
+                style: Style {
+                    width: Val::Px(260.0),
+                    height: Val::Px(56.0),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    border: UiRect::all(Val::Px(1.0)),
+                    ..default()
+                },
+                background_color: BackgroundColor(Color::NONE),
+                border_color: BorderColor(Color::NONE),
+                ..default()
+            },
+            action,
+        ))
+        .with_children(|button| {
+            button.spawn(TextBundle::from_section(
+                label,
+                TextStyle {
+                    font_size: 28.0,
+                    color: MENU_BUTTON_TEXT_NORMAL,
+                    ..default()
+                },
+            ));
+        });
+}
+
+fn despawn_pause_menu(mut commands: Commands, roots: Query<Entity, With<PauseMenuRoot>>) {
     for entity in &roots {
         commands.entity(entity).despawn_recursive();
     }
@@ -942,6 +1045,65 @@ fn handle_game_over_buttons(
                     }
                     GameOverMenuAction::MainMenu => {
                         info!("Returning to MainMenu from GameOver.");
+                        next_state.set(GameState::MainMenu);
+                    }
+                }
+            }
+            Interaction::Hovered => {
+                *border_color = BorderColor(MENU_BUTTON_BORDER_HOVERED);
+                *background = BackgroundColor(Color::NONE);
+            }
+            Interaction::None => {
+                *border_color = BorderColor(Color::NONE);
+                *background = BackgroundColor(Color::NONE);
+            }
+        }
+    }
+}
+
+#[allow(clippy::type_complexity)]
+fn handle_pause_menu_buttons(
+    mut buttons: Query<
+        (
+            &Interaction,
+            &PauseMenuAction,
+            &Children,
+            &mut BorderColor,
+            &mut BackgroundColor,
+        ),
+        (Changed<Interaction>, With<Button>),
+    >,
+    mut text_query: Query<&mut Text>,
+    mut next_state: ResMut<NextState<GameState>>,
+    mut run_session: ResMut<RunSession>,
+    mut start_run_events: EventWriter<StartRunEvent>,
+) {
+    for (interaction, action, children, mut border_color, mut background) in &mut buttons {
+        if let Some(&text_entity) = children.first()
+            && let Ok(mut text) = text_query.get_mut(text_entity)
+        {
+            text.sections[0].style.color = match *interaction {
+                Interaction::Hovered | Interaction::Pressed => MENU_BUTTON_TEXT_HOVERED,
+                Interaction::None => MENU_BUTTON_TEXT_NORMAL,
+            };
+        }
+        match *interaction {
+            Interaction::Pressed => {
+                *border_color = BorderColor(MENU_BUTTON_BORDER_HOVERED);
+                *background = BackgroundColor(Color::NONE);
+                match action {
+                    PauseMenuAction::Resume => {
+                        info!("Resuming run from pause menu.");
+                        next_state.set(GameState::InRun);
+                    }
+                    PauseMenuAction::Restart => {
+                        info!("Restart requested from pause menu.");
+                        *run_session = RunSession::default();
+                        start_run_events.send(StartRunEvent);
+                        next_state.set(GameState::InRun);
+                    }
+                    PauseMenuAction::MainMenuOrQuit => {
+                        info!("Returning to MainMenu from pause menu.");
                         next_state.set(GameState::MainMenu);
                     }
                 }
