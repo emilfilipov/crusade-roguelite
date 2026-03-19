@@ -27,7 +27,6 @@ impl Default for Progression {
 pub struct UpgradeDraft {
     pub active: bool,
     pub options: Vec<UpgradeConfig>,
-    pub autopick_timer: f32,
 }
 
 #[derive(Resource, Clone, Copy, Debug)]
@@ -55,14 +54,11 @@ impl Plugin for UpgradePlugin {
                 (
                     gain_xp,
                     open_draft_on_level_up,
+                    resolve_upgrade_draft,
                     sync_friendly_level_health_caps,
                 )
                     .chain()
                     .run_if(in_state(GameState::InRun)),
-            )
-            .add_systems(
-                Update,
-                resolve_upgrade_draft.run_if(in_state(GameState::Paused)),
             );
     }
 }
@@ -94,7 +90,6 @@ fn open_draft_on_level_up(
     mut progression: ResMut<Progression>,
     mut draft: ResMut<UpgradeDraft>,
     data: Res<GameData>,
-    mut next_state: ResMut<NextState<GameState>>,
 ) {
     if draft.active {
         return;
@@ -106,8 +101,6 @@ fn open_draft_on_level_up(
         progression.next_level_xp = xp_required_for_level(progression.level);
         draft.options = roll_upgrade_options(&data.upgrades.upgrades, progression.level);
         draft.active = true;
-        draft.autopick_timer = 0.0;
-        next_state.set(GameState::Paused);
     }
 }
 
@@ -156,19 +149,16 @@ fn sync_friendly_level_health_caps(
 }
 
 fn resolve_upgrade_draft(
-    time: Res<Time>,
     keyboard: Option<Res<ButtonInput<KeyCode>>>,
     commanders: Query<&Transform, With<CommanderUnit>>,
     mut draft: ResMut<UpgradeDraft>,
     mut buffs: ResMut<GlobalBuffs>,
     mut recruit_events: EventWriter<RecruitEvent>,
-    mut next_state: ResMut<NextState<GameState>>,
 ) {
     if !draft.active || draft.options.is_empty() {
         return;
     }
 
-    draft.autopick_timer += time.delta_seconds();
     let mut selected_idx = None;
     if let Some(keys) = keyboard {
         if keys.just_pressed(KeyCode::Digit1) {
@@ -180,7 +170,7 @@ fn resolve_upgrade_draft(
         }
     }
 
-    if selected_idx.is_none() && draft.autopick_timer > 0.2 {
+    if selected_idx.is_none() {
         selected_idx = Some(0);
     }
 
@@ -189,8 +179,6 @@ fn resolve_upgrade_draft(
         apply_upgrade(&picked, &mut buffs, &commanders, &mut recruit_events);
         draft.active = false;
         draft.options.clear();
-        draft.autopick_timer = 0.0;
-        next_state.set(GameState::InRun);
     }
 }
 

@@ -9,6 +9,8 @@ Use this for entity/component/system lookup without scanning all source files.
 - Added delayed enemy XP drops (`0.9s` pickup lock) before homing can start.
 - Ambient XP packs now spawn around commander position for better visibility.
 - XP homing speed now scales from commander base speed and stays slightly faster.
+- Increased base drop pickup radius from `30` to `45`.
+- Removed level-up pause hitch by resolving upgrade picks in-run instead of transitioning to `Paused`.
 - Fixed Windows installer asset coverage for runtime-loaded art (`assets/sprites` + `oga_ishtar` pack).
 - Enabled `CollisionPlugin` in app wiring (enemy collision now active).
 - Added `GameOver` overlay flow with `Restart` and `Main Menu` actions.
@@ -101,7 +103,7 @@ Procedural continuation:
 ### `drops.json`
 - `initial_spawn_count=8`
 - `spawn_interval_secs=2.5`
-- `pickup_radius=30`
+- `pickup_radius=45`
 - `xp_per_pack=6`
 - `max_active_packs=5000`
 
@@ -290,7 +292,7 @@ Friendly combined outgoing multiplier has lower clamp:
 - world-space health bars
 
 ### `upgrades.rs`
-- XP thresholds and draft flow
+- XP thresholds and in-run auto-pick upgrade flow (no state pause on level-up)
 - passive commander level scaling
 - level-up full-heal sync for friendlies
 
