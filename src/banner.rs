@@ -11,6 +11,21 @@ const BANNER_RECOVERY_RADIUS: f32 = 42.0;
 const BANNER_COHESION_RESTORE: f32 = 65.0;
 const BANNER_REDROP_GRACE_SECS: f32 = 10.0;
 const BANNER_DROPPED_SPEED_MULTIPLIER: f32 = 0.72;
+const BANNER_FOLLOW_Y_OFFSET: f32 = 18.0;
+const BANNER_FOLLOW_Z: f32 = 9.0;
+const BANNER_DROPPED_Z: f32 = 3.0;
+
+pub fn banner_follow_translation(position: Vec2) -> Vec3 {
+    Vec3::new(
+        position.x,
+        position.y + BANNER_FOLLOW_Y_OFFSET,
+        BANNER_FOLLOW_Z,
+    )
+}
+
+fn banner_dropped_translation(position: Vec2) -> Vec3 {
+    Vec3::new(position.x, position.y, BANNER_DROPPED_Z)
+}
 
 #[derive(Component, Clone, Copy, Debug)]
 pub struct BannerMarker;
@@ -108,7 +123,7 @@ fn reset_banner_on_run_start(
                 custom_size: Some(Vec2::splat(32.0)),
                 ..default()
             },
-            transform: Transform::from_xyz(commander_pos.x, commander_pos.y, 3.0),
+            transform: Transform::from_translation(banner_follow_translation(commander_pos)),
             ..default()
         },
     ));
@@ -129,8 +144,7 @@ fn follow_commander_when_banner_up(
     let new_position = commander.translation.truncate();
     banner_state.world_position = new_position;
     if let Ok(mut banner_transform) = banner_query.get_single_mut() {
-        banner_transform.translation.x = new_position.x;
-        banner_transform.translation.y = new_position.y;
+        banner_transform.translation = banner_follow_translation(new_position);
     }
 }
 
@@ -202,9 +216,9 @@ fn sync_banner_visual(
 ) {
     if let Ok((mut texture, mut transform)) = banner_query.get_single_mut() {
         if banner_state.is_dropped {
-            *texture = art.banner_dropped.clone();
-            transform.translation.x = banner_state.world_position.x;
-            transform.translation.y = banner_state.world_position.y;
+            // Keep dropped banner highly visible by using the upright banner asset.
+            *texture = art.banner_upright.clone();
+            transform.translation = banner_dropped_translation(banner_state.world_position);
         } else {
             *texture = art.banner_upright.clone();
         }
@@ -235,7 +249,11 @@ pub fn banner_pickup_progress_ratio(state: &BannerState) -> Option<f32> {
 
 #[cfg(test)]
 mod tests {
-    use crate::banner::{BannerState, banner_pickup_progress_ratio, should_drop_banner};
+    use bevy::prelude::Vec2;
+
+    use crate::banner::{
+        BannerState, banner_follow_translation, banner_pickup_progress_ratio, should_drop_banner,
+    };
 
     #[test]
     fn banner_drops_only_when_low_cohesion_and_not_graced() {
@@ -257,5 +275,13 @@ mod tests {
 
         state.pickup_unlock_remaining = 0.0;
         assert!(banner_pickup_progress_ratio(&state).is_some());
+    }
+
+    #[test]
+    fn follow_translation_offsets_banner_above_commander() {
+        let translation = banner_follow_translation(Vec2::new(10.0, 25.0));
+        assert!((translation.x - 10.0).abs() < 0.001);
+        assert!(translation.y > 25.0);
+        assert!(translation.z > 0.0);
     }
 }

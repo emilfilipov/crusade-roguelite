@@ -153,8 +153,11 @@ const MINIMAP_BG: Color = Color::srgba(0.08, 0.07, 0.06, 0.75);
 const MINIMAP_COMMANDER_COLOR: Color = Color::srgb(1.0, 0.96, 0.78);
 const MINIMAP_FRIENDLY_COLOR: Color = Color::srgb(0.38, 0.79, 0.36);
 const MINIMAP_ENEMY_COLOR: Color = Color::srgb(0.9, 0.28, 0.22);
+const MINIMAP_RESCUABLE_COLOR: Color = Color::srgb(0.45, 0.72, 0.94);
+const MINIMAP_DROPPED_BANNER_COLOR: Color = Color::srgb(0.95, 0.8, 0.32);
 const MINIMAP_MAX_ENEMY_BLIPS: usize = 220;
 const MINIMAP_MAX_FRIENDLY_BLIPS: usize = 260;
+const MINIMAP_MAX_RESCUABLE_BLIPS: usize = 80;
 
 pub struct UiPlugin;
 
@@ -1303,13 +1306,16 @@ fn update_rescue_progress_hud(
     });
 }
 
+#[allow(clippy::too_many_arguments)]
 fn update_minimap_hud(
     mut commands: Commands,
     time: Res<Time>,
+    banner_state: Res<BannerState>,
     bounds: Option<Res<MapBounds>>,
     mut runtime: ResMut<MinimapRefreshRuntime>,
     minimap_roots: Query<Entity, With<MinimapDotsRoot>>,
     units: Query<(&Unit, &Transform)>,
+    rescuables: Query<&Transform, With<RescuableUnit>>,
 ) {
     runtime.timer.tick(time.delta());
     if !runtime.timer.just_finished() {
@@ -1327,6 +1333,7 @@ fn update_minimap_hud(
     commands.entity(root).with_children(|parent| {
         let mut friendly_count = 0usize;
         let mut enemy_count = 0usize;
+        let mut rescuable_count = 0usize;
         for (unit, transform) in &units {
             let position = transform.translation.truncate();
             let Some(draw_pos) = world_to_minimap_pos(position, *bounds, MINIMAP_SIZE) else {
@@ -1355,6 +1362,25 @@ fn update_minimap_hud(
                 }
                 Team::Neutral => {}
             }
+        }
+
+        for transform in &rescuables {
+            if rescuable_count >= MINIMAP_MAX_RESCUABLE_BLIPS {
+                break;
+            }
+            let position = transform.translation.truncate();
+            let Some(draw_pos) = world_to_minimap_pos(position, *bounds, MINIMAP_SIZE) else {
+                continue;
+            };
+            rescuable_count += 1;
+            spawn_minimap_dot(parent, draw_pos, 2.7, MINIMAP_RESCUABLE_COLOR);
+        }
+
+        if banner_state.is_dropped
+            && let Some(draw_pos) =
+                world_to_minimap_pos(banner_state.world_position, *bounds, MINIMAP_SIZE)
+        {
+            spawn_minimap_dot(parent, draw_pos, 3.6, MINIMAP_DROPPED_BANNER_COLOR);
         }
     });
 }

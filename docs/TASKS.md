@@ -336,6 +336,28 @@
   - Enemies inside formation take 20% increased incoming friendly damage.
   - Commander-only state does not receive this bonus.
 
+## CRU-045 - Banner Visibility and Minimap Tracking Pass
+- Status: `DONE`
+- Type: `Gameplay/UI`
+- Priority: `P1`
+- Depends on: none
+- Goal: Improve banner readability and tactical navigation by surfacing banner/rescue information on minimap.
+- Context:
+  - Banner was frequently hidden behind commander stack.
+  - Dropped-banner sprite readability was weak in combat clutter.
+  - Players need fast directional cues for dropped banner and rescuable retinue.
+- Implementation:
+  1. Added vertical follow offset for banner while attached to commander.
+  2. Switched dropped-banner visual to standard upright banner asset for stronger silhouette.
+  3. Added minimap markers for dropped banner and rescuable retinue entities.
+- Unit Tests Required:
+  - Banner follow-translation helper test.
+  - Existing minimap position conversion tests remain valid.
+- Acceptance Criteria:
+  - Banner is clearly visible during movement.
+  - Dropped banner is easy to spot in world and on minimap.
+  - Rescuables are visible on minimap.
+
 ---
 
 ## Task Card Template

@@ -5,6 +5,9 @@ Single-file technical reference for current MVP runtime behavior.
 Use this for entity/component/system lookup without scanning all source files.
 
 ## Latest Update (2026-03-19)
+- Raised banner follow offset so it renders visibly behind/above the commander during movement.
+- Dropped banner now uses the standard upright banner sprite for stronger in-world readability.
+- Minimap now shows dropped-banner position and rescuable-retinue positions.
 - Added melee-composition incentive: enemies inside the friendly formation footprint take `+20%` damage.
 - Removed decorative floor foliage overlay; battlefield floor now renders as pure sand tiles only.
 - Switched foliage overlay to transparent detail tile to remove opaque square artifacts on the floor.
@@ -228,6 +231,7 @@ Friendly combined outgoing multiplier has lower clamp:
 ## Banner Loop (`src/banner.rs`)
 - Auto-drop trigger: cohesion `<20` (with anti-redrop grace check)
 - Dropped effect: `BannerMovementPenalty.friendly_speed_multiplier = 0.72`
+- Banner follow render offset: banner is rendered with positive Y offset behind commander for visibility.
 - Pickup unlock delay: 10s after drop
 - Pickup channel: 5s while friendly unit is within recovery radius
 - Successful recovery:
@@ -312,7 +316,10 @@ Friendly combined outgoing multiplier has lower clamp:
 - progress strips (rescue + banner pickup)
 - bottom-left vertical bars (average morale + cohesion)
 - world-space health bars
-- bottom-right minimap prototype with periodic blip refresh (commander/friendlies/enemies)
+- bottom-right minimap prototype with periodic blip refresh
+  - commander/friendlies/enemies
+  - rescuable retinue markers
+  - dropped-banner marker
 
 ### `upgrades.rs`
 - XP thresholds and in-run auto-pick upgrade flow (no state pause on level-up)
