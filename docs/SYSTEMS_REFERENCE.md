@@ -61,6 +61,14 @@ Use this for entity/component/system lookup without scanning all source files.
 - Active tier-0 rescue pool entries: `christian_peasant_infantry`, `christian_peasant_archer`, `christian_peasant_priest`.
 - Added rescuable-priest variant mapping so priest rescues flow through the same recruit pipeline.
 - Recruit events now preserve rescued unit type so formation/combat/collision pipelines auto-handle both variants.
+- Wired equipment bonuses into combat runtime:
+  - melee-weapon slot `base_bonus` applies to melee damage only by default,
+  - ranged-weapon slot `base_bonus` applies to ranged damage only by default,
+  - armor slot `base_bonus` applies to armor only by default,
+  - explicit per-item fields (`melee_damage_bonus`, `ranged_damage_bonus`, `armor_bonus`) add cross-slot effects when desired.
+- Gear effects are tier-targeted:
+  - commander setup affects commander only,
+  - tier setups affect only units in that exact tier.
 - Upgraded ranged combat to a shared unit system (no longer commander-only).
 - Christian Peasant Archer now uses hybrid combat: weak melee profile + stronger projectile ranged profile.
 - Added formation skillbar (bottom-center, 10 slots, keys `1..0`) with exclusive active formation switching.
@@ -501,8 +509,11 @@ Friendly combined outgoing multiplier has lower clamp:
 
 ### `inventory.rs`
 - runtime inventory scaffold resource initialization
-- unit-class equipment setup defaults (weapon/armor/trinket slots)
-- serializable bag/equipment model for future gear drops
+- unit-tier + commander equipment setup defaults
+- serializable bag/equipment model
+- slot-aware gear bonus resolution (`gear_bonuses_for_unit`)
+  - default slot behavior applies `base_bonus` to matching stat only
+  - explicit item bonus fields can add cross-stat effects
 
 ### `archive.rs`
 - builds `ArchiveDataset` entries from live data files
@@ -541,6 +552,9 @@ Friendly combined outgoing multiplier has lower clamp:
 - attack cooldown tick
 - shared unit ranged projectile emission (commander + archer hybrid behavior)
 - in-range targeting + damage emit
+- melee outgoing base damage includes resolved equipment melee bonus
+- ranged outgoing base damage includes resolved equipment ranged bonus
+- friendly armor mitigation includes resolved equipment armor bonus
 - enemy-in-formation vulnerability check (`+20%` friendly damage when inside formation bounds)
 - damage apply + `UnitDamagedEvent` + `DamageTextEvent` (uses final applied damage, not requested pre-clamp amount)
 - death resolve + drop spawn events

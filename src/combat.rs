@@ -4,9 +4,11 @@ use crate::data::GameData;
 use crate::formation::{
     ActiveFormation, FormationModifiers, active_formation_config, formation_contains_position,
 };
+use crate::inventory::{InventoryState, gear_bonuses_for_unit};
 use crate::model::{
     AttackCooldown, AttackProfile, DamageEvent, DamageTextEvent, EnemyUnit, GameState, GlobalBuffs,
     Health, Morale, SpawnExpPackEvent, Team, Unit, UnitDamagedEvent, UnitDiedEvent, UnitKind,
+    UnitTier,
 };
 use crate::morale::CohesionCombatModifiers;
 use crate::projectiles::Projectile;
@@ -112,9 +114,11 @@ fn emit_ranged_projectile_attacks(
     global_buffs: Option<Res<GlobalBuffs>>,
     conditional_effects: Option<Res<ConditionalUpgradeEffects>>,
     commander_motion: Option<Res<CommanderMotionState>>,
+    inventory: Res<InventoryState>,
     mut ranged_attackers: Query<(
         Entity,
         &Unit,
+        Option<&UnitTier>,
         Option<&Morale>,
         &Transform,
         &AttackProfile,
@@ -154,6 +158,7 @@ fn emit_ranged_projectile_attacks(
     for (
         _attacker_entity,
         commander_unit,
+        attacker_tier,
         commander_morale,
         commander_transform,
         melee_profile,
@@ -255,7 +260,18 @@ fn emit_ranged_projectile_attacks(
         } else {
             morale_multiplier
         };
-        let projectile_damage = (ranged_profile.damage * outgoing_multiplier).max(1.0);
+        let ranged_bonus = if attacker_team == Team::Friendly {
+            gear_bonuses_for_unit(
+                &inventory,
+                commander_unit.kind,
+                attacker_tier.copied().map(|tier| tier.0),
+            )
+            .ranged_damage_bonus
+        } else {
+            0.0
+        };
+        let projectile_damage =
+            ((ranged_profile.damage + ranged_bonus).max(0.0) * outgoing_multiplier).max(1.0);
 
         ranged_cooldown.0.reset();
         commands.spawn((
@@ -310,9 +326,11 @@ fn emit_damage_events(
     global_buffs: Option<Res<GlobalBuffs>>,
     conditional_effects: Option<Res<ConditionalUpgradeEffects>>,
     commander_motion: Option<Res<CommanderMotionState>>,
+    inventory: Res<InventoryState>,
     mut attackers: Query<(
         Entity,
         &Unit,
+        Option<&UnitTier>,
         Option<&Morale>,
         &Transform,
         &AttackProfile,
@@ -323,6 +341,7 @@ fn emit_damage_events(
         &Unit,
         &Transform,
         &Health,
+        Option<&UnitTier>,
         Option<&crate::model::Armor>,
     )>,
 ) {
@@ -332,10 +351,17 @@ fn emit_damage_events(
         .unwrap_or(1.0);
     let target_snapshot: Vec<(Entity, Unit, Vec2, f32, f32, f32)> = targets
         .iter()
-        .map(|(entity, unit, transform, health, armor)| {
+        .map(|(entity, unit, transform, health, tier, armor)| {
             let base_armor = armor.map(|value| value.0).unwrap_or(0.0);
             let effective_armor = if unit.team == Team::Friendly {
+                let gear_armor_bonus = gear_bonuses_for_unit(
+                    &inventory,
+                    unit.kind,
+                    tier.copied().map(|value| value.0),
+                )
+                .armor_bonus;
                 let armor_with_buffs = base_armor
+                    + gear_armor_bonus
                     + global_buffs
                         .as_ref()
                         .map(|buff| buff.armor_bonus)
@@ -368,8 +394,15 @@ fn emit_damage_events(
     });
     let formation_context = friendly_formation_context(&formation_targets);
 
-    for (_, attacker_unit, attacker_morale, attacker_transform, attack_profile, mut attack_cd) in
-        &mut attackers
+    for (
+        _,
+        attacker_unit,
+        attacker_tier,
+        attacker_morale,
+        attacker_transform,
+        attack_profile,
+        mut attack_cd,
+    ) in &mut attackers
     {
         if !attack_cd.0.finished() {
             continue;
@@ -465,7 +498,21 @@ fn emit_damage_events(
                 morale_multiplier
             };
 
-            let mut damage = compute_damage(attack_profile.damage, armor, outgoing_multiplier);
+            let melee_bonus = if attacker_unit.team == Team::Friendly {
+                gear_bonuses_for_unit(
+                    &inventory,
+                    attacker_unit.kind,
+                    attacker_tier.copied().map(|tier| tier.0),
+                )
+                .melee_damage_bonus
+            } else {
+                0.0
+            };
+            let mut damage = compute_damage(
+                (attack_profile.damage + melee_bonus).max(0.0),
+                armor,
+                outgoing_multiplier,
+            );
             let execute_threshold = conditional_effects
                 .as_deref()
                 .map(|effects| effects.execute_below_health_ratio)
