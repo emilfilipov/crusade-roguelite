@@ -222,7 +222,7 @@
   - `docs/ASSET_SOURCES.md` (if new icons/assets are added)
 
 ### CRU-066 - Main Menu Flow Overhaul
-- Status: `TODO`
+- Status: `DONE`
 - Type: `UI`
 - Priority: `P0`
 - Depends on: `CRU-065`

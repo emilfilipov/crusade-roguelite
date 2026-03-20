@@ -70,11 +70,15 @@ struct MainMenuRoot;
 
 #[derive(Component, Clone, Copy, Debug, Eq, PartialEq)]
 enum MainMenuAction {
-    Start,
+    PlayOffline,
+    PlayOnline,
     Settings,
     Bestiary,
     Exit,
 }
+
+#[derive(Component, Clone, Copy, Debug)]
+struct DisabledMenuAction;
 
 #[derive(Component, Clone, Copy, Debug)]
 struct SettingsMenuRoot;
@@ -241,7 +245,9 @@ impl Default for MinimapRefreshRuntime {
 const MENU_BACKGROUND: Color = Color::srgb(0.12, 0.1, 0.08);
 const MENU_BUTTON_TEXT_NORMAL: Color = Color::srgb(0.92, 0.88, 0.8);
 const MENU_BUTTON_TEXT_HOVERED: Color = Color::srgb(0.98, 0.96, 0.88);
+const MENU_BUTTON_TEXT_DISABLED: Color = Color::srgba(0.7, 0.66, 0.6, 0.72);
 const MENU_BUTTON_BORDER_HOVERED: Color = Color::srgb(0.86, 0.78, 0.62);
+const MENU_BUTTON_BORDER_DISABLED: Color = Color::srgba(0.62, 0.57, 0.5, 0.2);
 const MENU_FPS_BOX_BORDER: Color = Color::srgba(0.86, 0.78, 0.62, 0.7);
 const HUD_TEXT_COLOR: Color = Color::srgb(0.97, 0.95, 0.9);
 const HUD_BAR_BG: Color = Color::srgba(0.12, 0.1, 0.08, 0.8);
@@ -395,11 +401,30 @@ fn spawn_main_menu(mut commands: Commands) {
                     ..default()
                 })
                 .with_children(|menu_buttons| {
-                    spawn_menu_button(menu_buttons, MainMenuAction::Start, "START");
-                    spawn_menu_button(menu_buttons, MainMenuAction::Settings, "SETTINGS");
-                    spawn_menu_button(menu_buttons, MainMenuAction::Bestiary, "BESTIARY");
-                    spawn_menu_button(menu_buttons, MainMenuAction::Exit, "EXIT");
+                    spawn_menu_button(
+                        menu_buttons,
+                        MainMenuAction::PlayOffline,
+                        "PLAY OFFLINE",
+                        false,
+                    );
+                    spawn_menu_button(
+                        menu_buttons,
+                        MainMenuAction::PlayOnline,
+                        "PLAY ONLINE",
+                        true,
+                    );
+                    spawn_menu_button(menu_buttons, MainMenuAction::Settings, "SETTINGS", false);
+                    spawn_menu_button(menu_buttons, MainMenuAction::Bestiary, "BESTIARY", false);
+                    spawn_menu_button(menu_buttons, MainMenuAction::Exit, "EXIT", false);
                 });
+            parent.spawn(TextBundle::from_section(
+                "Online mode is not available in this build.",
+                TextStyle {
+                    font_size: 16.0,
+                    color: MENU_BUTTON_TEXT_DISABLED,
+                    ..default()
+                },
+            ));
         });
 }
 
@@ -434,34 +459,49 @@ fn spawn_fps_selector(parent: &mut ChildBuilder, selected: FrameRateCap) {
         });
 }
 
-fn spawn_menu_button(parent: &mut ChildBuilder, action: MainMenuAction, label: &str) {
-    parent
-        .spawn((
-            ButtonBundle {
-                style: Style {
-                    width: Val::Px(220.0),
-                    height: Val::Px(56.0),
-                    justify_content: JustifyContent::Center,
-                    align_items: AlignItems::Center,
-                    border: UiRect::all(Val::Px(1.0)),
-                    ..default()
-                },
-                background_color: BackgroundColor(Color::NONE),
-                border_color: BorderColor(Color::NONE),
+fn spawn_menu_button(
+    parent: &mut ChildBuilder,
+    action: MainMenuAction,
+    label: &str,
+    disabled: bool,
+) {
+    let mut entity = parent.spawn((
+        ButtonBundle {
+            style: Style {
+                width: Val::Px(220.0),
+                height: Val::Px(56.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                border: UiRect::all(Val::Px(1.0)),
                 ..default()
             },
-            action,
-        ))
-        .with_children(|button| {
-            button.spawn(TextBundle::from_section(
-                label,
-                TextStyle {
-                    font_size: 28.0,
-                    color: MENU_BUTTON_TEXT_NORMAL,
-                    ..default()
+            background_color: BackgroundColor(Color::NONE),
+            border_color: BorderColor(if disabled {
+                MENU_BUTTON_BORDER_DISABLED
+            } else {
+                Color::NONE
+            }),
+            ..default()
+        },
+        action,
+    ));
+    if disabled {
+        entity.insert(DisabledMenuAction);
+    }
+    entity.with_children(|button| {
+        button.spawn(TextBundle::from_section(
+            label,
+            TextStyle {
+                font_size: 28.0,
+                color: if disabled {
+                    MENU_BUTTON_TEXT_DISABLED
+                } else {
+                    MENU_BUTTON_TEXT_NORMAL
                 },
-            ));
-        });
+                ..default()
+            },
+        ));
+    });
 }
 
 fn spawn_fps_button(parent: &mut ChildBuilder, cap: FrameRateCap, selected: bool) {
@@ -2371,12 +2411,32 @@ pub fn modal_action_for_utility_button(screen: RunModalScreen) -> RunModalAction
     RunModalAction::Toggle(screen)
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MainMenuDispatch {
+    StartOfflineRun,
+    OpenSettings,
+    OpenBestiary,
+    Exit,
+    DisabledOnline,
+}
+
+fn main_menu_dispatch(action: MainMenuAction) -> MainMenuDispatch {
+    match action {
+        MainMenuAction::PlayOffline => MainMenuDispatch::StartOfflineRun,
+        MainMenuAction::PlayOnline => MainMenuDispatch::DisabledOnline,
+        MainMenuAction::Settings => MainMenuDispatch::OpenSettings,
+        MainMenuAction::Bestiary => MainMenuDispatch::OpenBestiary,
+        MainMenuAction::Exit => MainMenuDispatch::Exit,
+    }
+}
+
 #[allow(clippy::type_complexity)]
 fn handle_main_menu_buttons(
     mut buttons: Query<
         (
             &Interaction,
             &MainMenuAction,
+            Option<&DisabledMenuAction>,
             &Children,
             &mut BorderColor,
             &mut BackgroundColor,
@@ -2389,46 +2449,66 @@ fn handle_main_menu_buttons(
     mut start_run_events: EventWriter<StartRunEvent>,
     mut app_exit_events: EventWriter<AppExit>,
 ) {
-    for (interaction, action, children, mut border_color, mut background) in &mut buttons {
+    for (interaction, action, disabled, children, mut border_color, mut background) in &mut buttons
+    {
         if let Some(&text_entity) = children.first()
             && let Ok(mut text) = text_query.get_mut(text_entity)
         {
-            text.sections[0].style.color = match *interaction {
-                Interaction::Hovered | Interaction::Pressed => MENU_BUTTON_TEXT_HOVERED,
-                Interaction::None => MENU_BUTTON_TEXT_NORMAL,
+            text.sections[0].style.color = if disabled.is_some() {
+                MENU_BUTTON_TEXT_DISABLED
+            } else {
+                match *interaction {
+                    Interaction::Hovered | Interaction::Pressed => MENU_BUTTON_TEXT_HOVERED,
+                    Interaction::None => MENU_BUTTON_TEXT_NORMAL,
+                }
             };
         }
         match *interaction {
             Interaction::Pressed => {
-                *border_color = BorderColor(MENU_BUTTON_BORDER_HOVERED);
+                *border_color = BorderColor(if disabled.is_some() {
+                    MENU_BUTTON_BORDER_DISABLED
+                } else {
+                    MENU_BUTTON_BORDER_HOVERED
+                });
                 *background = BackgroundColor(Color::NONE);
-                match action {
-                    MainMenuAction::Start => {
+                match main_menu_dispatch(*action) {
+                    MainMenuDispatch::StartOfflineRun => {
                         info!("Start run requested from MainMenu button.");
                         *run_session = RunSession::default();
                         next_state.set(GameState::InRun);
                         start_run_events.send(StartRunEvent);
                     }
-                    MainMenuAction::Settings => {
+                    MainMenuDispatch::OpenSettings => {
                         info!("Opening Settings screen from MainMenu.");
                         next_state.set(GameState::Settings);
                     }
-                    MainMenuAction::Bestiary => {
+                    MainMenuDispatch::OpenBestiary => {
                         info!("Opening Bestiary screen from MainMenu.");
                         next_state.set(GameState::Archive);
                     }
-                    MainMenuAction::Exit => {
+                    MainMenuDispatch::Exit => {
                         info!("Exit requested from MainMenu button.");
                         app_exit_events.send(AppExit::Success);
+                    }
+                    MainMenuDispatch::DisabledOnline => {
+                        info!("Play Online is disabled in the current build.");
                     }
                 }
             }
             Interaction::Hovered => {
-                *border_color = BorderColor(MENU_BUTTON_BORDER_HOVERED);
+                *border_color = BorderColor(if disabled.is_some() {
+                    MENU_BUTTON_BORDER_DISABLED
+                } else {
+                    MENU_BUTTON_BORDER_HOVERED
+                });
                 *background = BackgroundColor(Color::NONE);
             }
             Interaction::None => {
-                *border_color = BorderColor(Color::NONE);
+                *border_color = BorderColor(if disabled.is_some() {
+                    MENU_BUTTON_BORDER_DISABLED
+                } else {
+                    Color::NONE
+                });
                 *background = BackgroundColor(Color::NONE);
             }
         }
@@ -3252,10 +3332,11 @@ mod tests {
     use crate::map::MapBounds;
     use crate::model::{FrameRateCap, GlobalBuffs, RunModalAction, RunModalScreen};
     use crate::ui::{
-        HudSnapshot, archive_entries_for_category, build_skill_book_panel_data,
-        build_stats_panel_data, displayed_wave_number, find_skill_section, find_stats_row,
-        format_elapsed_mm_ss, frame_cap_label, health_bar_fill_width,
-        modal_action_for_utility_button, rescue_progress_ratio, world_to_minimap_pos,
+        HudSnapshot, MainMenuAction, MainMenuDispatch, archive_entries_for_category,
+        build_skill_book_panel_data, build_stats_panel_data, displayed_wave_number,
+        find_skill_section, find_stats_row, format_elapsed_mm_ss, frame_cap_label,
+        health_bar_fill_width, main_menu_dispatch, modal_action_for_utility_button,
+        rescue_progress_ratio, world_to_minimap_pos,
     };
     use crate::upgrades::{Progression, SkillBookEntry, SkillBookLog, UpgradeCardIcon};
 
@@ -3348,6 +3429,34 @@ mod tests {
             let action = modal_action_for_utility_button(screen);
             assert_eq!(action, RunModalAction::Toggle(screen));
         }
+    }
+
+    #[test]
+    fn main_menu_dispatch_maps_to_expected_actions() {
+        assert_eq!(
+            main_menu_dispatch(MainMenuAction::PlayOffline),
+            MainMenuDispatch::StartOfflineRun
+        );
+        assert_eq!(
+            main_menu_dispatch(MainMenuAction::Settings),
+            MainMenuDispatch::OpenSettings
+        );
+        assert_eq!(
+            main_menu_dispatch(MainMenuAction::Bestiary),
+            MainMenuDispatch::OpenBestiary
+        );
+        assert_eq!(
+            main_menu_dispatch(MainMenuAction::Exit),
+            MainMenuDispatch::Exit
+        );
+    }
+
+    #[test]
+    fn play_online_dispatch_is_explicitly_disabled() {
+        assert_eq!(
+            main_menu_dispatch(MainMenuAction::PlayOnline),
+            MainMenuDispatch::DisabledOnline
+        );
     }
 
     #[test]

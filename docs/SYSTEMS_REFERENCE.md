@@ -12,6 +12,12 @@ Use this for entity/component/system lookup without scanning all source files.
 - Added top-right in-run utility bar with five icon buttons mapped to the same modal requests as hotkeys.
 - Added `ArchivePlugin` + `ArchiveDataset` with generated codex entries (units/enemies/skills/stats/bonuses/drops).
 - Added shared archive renderer used by both in-run `K` modal and main-menu `Bestiary` screen.
+- Main menu flow now exposes:
+  - `Play Offline` (run start)
+  - `Play Online` (disabled placeholder)
+  - `Settings`
+  - `Bestiary`
+  - `Exit`
 - Added inventory scaffold module/resource (`InventoryState`) with serializable bag/equipment setup model.
 - Inventory modal now renders dedicated bag list + per-unit equipment setup sections.
 - Stats modal now renders base/bonus/final rows for commander and global level-up-driven modifiers.
@@ -434,7 +440,7 @@ Friendly combined outgoing multiplier has lower clamp:
 - movement penalty state updates
 
 ### `ui.rs`
-- main menu buttons (`Start`, `Settings`, `Bestiary`, `Exit`)
+- main menu buttons (`Play Offline`, `Play Online` disabled, `Settings`, `Bestiary`, `Exit`)
 - main-menu `Bestiary` screen (same dataset/content source as in-run archive modal)
 - settings screen with FPS selector
 - pause overlay buttons (`Resume`, `Restart`, `Main Menu`)
