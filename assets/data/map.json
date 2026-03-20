@@ -1,4 +1,15 @@
 {
-  "width": 2400.0,
-  "height": 2400.0
+  "maps": [
+    {
+      "id": "desert_battlefield",
+      "name": "Desert Battlefield",
+      "description": "Open sand battlefield intended for the core survival loop.",
+      "width": 2400.0,
+      "height": 2400.0,
+      "allowed_factions": [
+        "christian"
+      ],
+      "spawn_profile_id": "default"
+    }
+  ]
 }

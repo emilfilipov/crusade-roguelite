@@ -25,7 +25,8 @@ impl Plugin for CorePlugin {
             )
             .add_systems(OnEnter(GameState::Settings), set_main_menu_clear_color)
             .add_systems(OnEnter(GameState::Archive), set_main_menu_clear_color)
-            .add_systems(OnExit(GameState::MainMenu), set_in_run_clear_color)
+            .add_systems(OnEnter(GameState::MatchSetup), set_main_menu_clear_color)
+            .add_systems(OnEnter(GameState::InRun), set_in_run_clear_color)
             .add_systems(OnExit(GameState::InRun), clear_run_modal_state)
             .add_systems(
                 Update,

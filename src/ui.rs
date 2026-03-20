@@ -10,9 +10,9 @@ use crate::formation::{ActiveFormation, FormationModifiers, FormationSkillBar, S
 use crate::inventory::{EquipmentUnitType, InventoryState};
 use crate::map::MapBounds;
 use crate::model::{
-    FrameRateCap, FriendlyUnit, GameState, Health, Morale, RescuableUnit, RunModalAction,
-    RunModalRequestEvent, RunModalScreen, RunModalState, RunSession, StartRunEvent, Team, Unit,
-    UnitKind,
+    FrameRateCap, FriendlyUnit, GameState, Health, MatchSetupSelection, Morale, PlayerFaction,
+    RescuableUnit, RunModalAction, RunModalRequestEvent, RunModalScreen, RunModalState, RunSession,
+    StartRunEvent, Team, Unit, UnitKind,
 };
 use crate::morale::{Cohesion, average_morale_ratio};
 use crate::rescue::RescueProgress;
@@ -79,6 +79,28 @@ enum MainMenuAction {
 
 #[derive(Component, Clone, Copy, Debug)]
 struct DisabledMenuAction;
+
+#[derive(Component, Clone, Copy, Debug)]
+struct MatchSetupRoot;
+
+#[derive(Component, Clone, Copy, Debug, Eq, PartialEq)]
+struct MatchSetupFactionButton {
+    faction: PlayerFaction,
+}
+
+#[derive(Component, Clone, Debug, Eq, PartialEq)]
+struct MatchSetupMapButton {
+    map_id: String,
+}
+
+#[derive(Component, Clone, Copy, Debug)]
+struct MatchSetupButtonDisabled;
+
+#[derive(Component, Clone, Copy, Debug, Eq, PartialEq)]
+enum MatchSetupAction {
+    Start,
+    Back,
+}
 
 #[derive(Component, Clone, Copy, Debug)]
 struct SettingsMenuRoot;
@@ -280,6 +302,8 @@ impl Plugin for UiPlugin {
             .init_resource::<MinimapRefreshRuntime>()
             .add_systems(OnEnter(GameState::MainMenu), spawn_main_menu)
             .add_systems(OnExit(GameState::MainMenu), despawn_main_menu)
+            .add_systems(OnEnter(GameState::MatchSetup), spawn_match_setup_menu)
+            .add_systems(OnExit(GameState::MatchSetup), despawn_match_setup_menu)
             .add_systems(OnEnter(GameState::Settings), spawn_settings_menu)
             .add_systems(OnExit(GameState::Settings), despawn_settings_menu)
             .add_systems(OnEnter(GameState::Archive), spawn_archive_menu)
@@ -293,6 +317,7 @@ impl Plugin for UiPlugin {
             .add_systems(OnEnter(GameState::LevelUp), spawn_level_up_menu)
             .add_systems(OnExit(GameState::LevelUp), despawn_level_up_menu)
             .add_systems(OnEnter(GameState::MainMenu), despawn_in_run_hud)
+            .add_systems(OnEnter(GameState::MatchSetup), despawn_in_run_hud)
             .add_systems(OnEnter(GameState::Settings), despawn_in_run_hud)
             .add_systems(OnEnter(GameState::GameOver), despawn_in_run_hud)
             .add_systems(OnEnter(GameState::Victory), despawn_in_run_hud)
@@ -301,6 +326,19 @@ impl Plugin for UiPlugin {
             .add_systems(
                 Update,
                 handle_main_menu_buttons.run_if(in_state(GameState::MainMenu)),
+            )
+            .add_systems(
+                Update,
+                (
+                    handle_match_setup_faction_buttons,
+                    handle_match_setup_map_buttons,
+                    handle_match_setup_action_buttons,
+                    refresh_match_setup_faction_button_visuals,
+                    refresh_match_setup_map_button_visuals,
+                    refresh_match_setup_action_button_visuals,
+                )
+                    .chain()
+                    .run_if(in_state(GameState::MatchSetup)),
             )
             .add_systems(
                 Update,
@@ -544,6 +582,267 @@ fn spawn_fps_button(parent: &mut ChildBuilder, cap: FrameRateCap, selected: bool
 
 fn despawn_main_menu(mut commands: Commands, menu_roots: Query<Entity, With<MainMenuRoot>>) {
     for entity in &menu_roots {
+        commands.entity(entity).despawn_recursive();
+    }
+}
+
+fn spawn_match_setup_menu(
+    mut commands: Commands,
+    data: Res<GameData>,
+    mut setup_selection: ResMut<MatchSetupSelection>,
+) {
+    if (setup_selection.map_id.is_empty() || data.map.find_map(&setup_selection.map_id).is_none())
+        && let Some(first_map) = data.map.first_map()
+    {
+        setup_selection.map_id = first_map.id.clone();
+    }
+    if !can_select_match_setup_faction(setup_selection.faction) {
+        setup_selection.faction = PlayerFaction::Christian;
+    }
+
+    commands
+        .spawn((
+            MatchSetupRoot,
+            NodeBundle {
+                style: Style {
+                    width: Val::Percent(100.0),
+                    height: Val::Percent(100.0),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px(16.0),
+                    padding: UiRect::all(Val::Px(18.0)),
+                    ..default()
+                },
+                background_color: BackgroundColor(MENU_BACKGROUND),
+                z_index: ZIndex::Global(105),
+                ..default()
+            },
+        ))
+        .with_children(|root| {
+            root.spawn(TextBundle::from_section(
+                "MATCH SETUP",
+                TextStyle {
+                    font_size: 42.0,
+                    color: MENU_BUTTON_TEXT_HOVERED,
+                    ..default()
+                },
+            ));
+            root.spawn(TextBundle::from_section(
+                "Choose faction and map before starting an offline run.",
+                TextStyle {
+                    font_size: 16.0,
+                    color: MENU_BUTTON_TEXT_NORMAL,
+                    ..default()
+                },
+            ));
+
+            root.spawn(NodeBundle {
+                style: Style {
+                    width: Val::Px(760.0),
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px(12.0),
+                    ..default()
+                },
+                background_color: BackgroundColor(Color::NONE),
+                ..default()
+            })
+            .with_children(|panel| {
+                panel.spawn(TextBundle::from_section(
+                    "Faction",
+                    TextStyle {
+                        font_size: 22.0,
+                        color: MENU_BUTTON_TEXT_NORMAL,
+                        ..default()
+                    },
+                ));
+                panel
+                    .spawn(NodeBundle {
+                        style: Style {
+                            flex_direction: FlexDirection::Row,
+                            column_gap: Val::Px(10.0),
+                            ..default()
+                        },
+                        background_color: BackgroundColor(Color::NONE),
+                        ..default()
+                    })
+                    .with_children(|row| {
+                        spawn_match_setup_faction_button(row, PlayerFaction::Christian);
+                        spawn_match_setup_faction_button(row, PlayerFaction::Muslim);
+                    });
+
+                panel.spawn(TextBundle::from_section(
+                    "Map",
+                    TextStyle {
+                        font_size: 22.0,
+                        color: MENU_BUTTON_TEXT_NORMAL,
+                        ..default()
+                    },
+                ));
+                panel
+                    .spawn(NodeBundle {
+                        style: Style {
+                            flex_direction: FlexDirection::Column,
+                            row_gap: Val::Px(8.0),
+                            ..default()
+                        },
+                        background_color: BackgroundColor(Color::NONE),
+                        ..default()
+                    })
+                    .with_children(|maps| {
+                        for map in &data.map.maps {
+                            spawn_match_setup_map_button(
+                                maps,
+                                &map.id,
+                                &format!("{} - {}", map.name, map.description),
+                            );
+                        }
+                    });
+            });
+
+            root.spawn(TextBundle::from_section(
+                "Muslim faction is currently disabled (not implemented yet).",
+                TextStyle {
+                    font_size: 15.0,
+                    color: MENU_BUTTON_TEXT_DISABLED,
+                    ..default()
+                },
+            ));
+
+            root.spawn(NodeBundle {
+                style: Style {
+                    flex_direction: FlexDirection::Row,
+                    column_gap: Val::Px(12.0),
+                    margin: UiRect::top(Val::Px(8.0)),
+                    ..default()
+                },
+                background_color: BackgroundColor(Color::NONE),
+                ..default()
+            })
+            .with_children(|actions| {
+                spawn_match_setup_action_button(actions, MatchSetupAction::Start, "START");
+                spawn_match_setup_action_button(actions, MatchSetupAction::Back, "BACK");
+            });
+        });
+}
+
+fn spawn_match_setup_faction_button(parent: &mut ChildBuilder, faction: PlayerFaction) {
+    let disabled = !can_select_match_setup_faction(faction);
+    let mut entity = parent.spawn((
+        ButtonBundle {
+            style: Style {
+                width: Val::Px(190.0),
+                height: Val::Px(52.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                border: UiRect::all(Val::Px(1.0)),
+                ..default()
+            },
+            background_color: BackgroundColor(Color::NONE),
+            border_color: BorderColor(if disabled {
+                MENU_BUTTON_BORDER_DISABLED
+            } else {
+                Color::NONE
+            }),
+            ..default()
+        },
+        MatchSetupFactionButton { faction },
+    ));
+    if disabled {
+        entity.insert(MatchSetupButtonDisabled);
+    }
+    entity.with_children(|button| {
+        button.spawn(TextBundle::from_section(
+            faction.label(),
+            TextStyle {
+                font_size: 24.0,
+                color: if disabled {
+                    MENU_BUTTON_TEXT_DISABLED
+                } else {
+                    MENU_BUTTON_TEXT_NORMAL
+                },
+                ..default()
+            },
+        ));
+    });
+}
+
+fn spawn_match_setup_map_button(parent: &mut ChildBuilder, map_id: &str, label: &str) {
+    parent
+        .spawn((
+            ButtonBundle {
+                style: Style {
+                    width: Val::Px(760.0),
+                    min_height: Val::Px(50.0),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    border: UiRect::all(Val::Px(1.0)),
+                    padding: UiRect::axes(Val::Px(8.0), Val::Px(10.0)),
+                    ..default()
+                },
+                background_color: BackgroundColor(Color::NONE),
+                border_color: BorderColor(Color::NONE),
+                ..default()
+            },
+            MatchSetupMapButton {
+                map_id: map_id.to_string(),
+            },
+        ))
+        .with_children(|button| {
+            button.spawn(TextBundle {
+                style: Style {
+                    max_width: Val::Px(720.0),
+                    ..default()
+                },
+                text: Text::from_section(
+                    label,
+                    TextStyle {
+                        font_size: 18.0,
+                        color: MENU_BUTTON_TEXT_NORMAL,
+                        ..default()
+                    },
+                ),
+                ..default()
+            });
+        });
+}
+
+fn spawn_match_setup_action_button(
+    parent: &mut ChildBuilder,
+    action: MatchSetupAction,
+    label: &str,
+) {
+    parent
+        .spawn((
+            ButtonBundle {
+                style: Style {
+                    width: Val::Px(220.0),
+                    height: Val::Px(56.0),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    border: UiRect::all(Val::Px(1.0)),
+                    ..default()
+                },
+                background_color: BackgroundColor(Color::NONE),
+                border_color: BorderColor(Color::NONE),
+                ..default()
+            },
+            action,
+        ))
+        .with_children(|button| {
+            button.spawn(TextBundle::from_section(
+                label,
+                TextStyle {
+                    font_size: 28.0,
+                    color: MENU_BUTTON_TEXT_NORMAL,
+                    ..default()
+                },
+            ));
+        });
+}
+
+fn despawn_match_setup_menu(mut commands: Commands, roots: Query<Entity, With<MatchSetupRoot>>) {
+    for entity in &roots {
         commands.entity(entity).despawn_recursive();
     }
 }
@@ -2413,7 +2712,7 @@ pub fn modal_action_for_utility_button(screen: RunModalScreen) -> RunModalAction
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum MainMenuDispatch {
-    StartOfflineRun,
+    OpenMatchSetup,
     OpenSettings,
     OpenBestiary,
     Exit,
@@ -2422,7 +2721,7 @@ enum MainMenuDispatch {
 
 fn main_menu_dispatch(action: MainMenuAction) -> MainMenuDispatch {
     match action {
-        MainMenuAction::PlayOffline => MainMenuDispatch::StartOfflineRun,
+        MainMenuAction::PlayOffline => MainMenuDispatch::OpenMatchSetup,
         MainMenuAction::PlayOnline => MainMenuDispatch::DisabledOnline,
         MainMenuAction::Settings => MainMenuDispatch::OpenSettings,
         MainMenuAction::Bestiary => MainMenuDispatch::OpenBestiary,
@@ -2445,8 +2744,6 @@ fn handle_main_menu_buttons(
     >,
     mut text_query: Query<&mut Text>,
     mut next_state: ResMut<NextState<GameState>>,
-    mut run_session: ResMut<RunSession>,
-    mut start_run_events: EventWriter<StartRunEvent>,
     mut app_exit_events: EventWriter<AppExit>,
 ) {
     for (interaction, action, disabled, children, mut border_color, mut background) in &mut buttons
@@ -2472,11 +2769,9 @@ fn handle_main_menu_buttons(
                 });
                 *background = BackgroundColor(Color::NONE);
                 match main_menu_dispatch(*action) {
-                    MainMenuDispatch::StartOfflineRun => {
-                        info!("Start run requested from MainMenu button.");
-                        *run_session = RunSession::default();
-                        next_state.set(GameState::InRun);
-                        start_run_events.send(StartRunEvent);
+                    MainMenuDispatch::OpenMatchSetup => {
+                        info!("Opening Match Setup screen from MainMenu.");
+                        next_state.set(GameState::MatchSetup);
                     }
                     MainMenuDispatch::OpenSettings => {
                         info!("Opening Settings screen from MainMenu.");
@@ -2511,6 +2806,281 @@ fn handle_main_menu_buttons(
                 });
                 *background = BackgroundColor(Color::NONE);
             }
+        }
+    }
+}
+
+fn can_select_match_setup_faction(faction: PlayerFaction) -> bool {
+    matches!(faction, PlayerFaction::Christian)
+}
+
+fn map_allows_faction(map: &crate::data::MapDefinitionConfig, faction: PlayerFaction) -> bool {
+    map.allowed_factions
+        .iter()
+        .any(|allowed| allowed.eq_ignore_ascii_case(faction.config_key()))
+}
+
+fn match_setup_can_start(data: &GameData, setup_selection: &MatchSetupSelection) -> bool {
+    if !can_select_match_setup_faction(setup_selection.faction) {
+        return false;
+    }
+    let Some(map) = data.map.find_map(&setup_selection.map_id) else {
+        return false;
+    };
+    map_allows_faction(map, setup_selection.faction)
+}
+
+#[allow(clippy::type_complexity)]
+fn handle_match_setup_faction_buttons(
+    mut buttons: Query<
+        (
+            &Interaction,
+            &MatchSetupFactionButton,
+            Option<&MatchSetupButtonDisabled>,
+            &Children,
+        ),
+        (Changed<Interaction>, With<Button>),
+    >,
+    mut text_query: Query<&mut Text>,
+    mut setup_selection: ResMut<MatchSetupSelection>,
+) {
+    for (interaction, faction_button, disabled, children) in &mut buttons {
+        if let Some(&text_entity) = children.first()
+            && let Ok(mut text) = text_query.get_mut(text_entity)
+        {
+            text.sections[0].style.color = if disabled.is_some() {
+                MENU_BUTTON_TEXT_DISABLED
+            } else {
+                match *interaction {
+                    Interaction::Hovered | Interaction::Pressed => MENU_BUTTON_TEXT_HOVERED,
+                    Interaction::None => MENU_BUTTON_TEXT_NORMAL,
+                }
+            };
+        }
+        if *interaction != Interaction::Pressed {
+            continue;
+        }
+        if disabled.is_some() || !can_select_match_setup_faction(faction_button.faction) {
+            info!(
+                "Faction '{}' is disabled in current build.",
+                faction_button.faction.label()
+            );
+            continue;
+        }
+        setup_selection.faction = faction_button.faction;
+    }
+}
+
+#[allow(clippy::type_complexity)]
+fn handle_match_setup_map_buttons(
+    mut buttons: Query<(&Interaction, &MatchSetupMapButton), (Changed<Interaction>, With<Button>)>,
+    mut setup_selection: ResMut<MatchSetupSelection>,
+) {
+    for (interaction, map_button) in &mut buttons {
+        if *interaction == Interaction::Pressed {
+            setup_selection.map_id = map_button.map_id.clone();
+            info!("Selected map '{}'.", setup_selection.map_id);
+        }
+    }
+}
+
+#[allow(clippy::type_complexity)]
+fn handle_match_setup_action_buttons(
+    mut buttons: Query<
+        (
+            &Interaction,
+            &MatchSetupAction,
+            &Children,
+            &mut BorderColor,
+            &mut BackgroundColor,
+        ),
+        (Changed<Interaction>, With<Button>),
+    >,
+    mut text_query: Query<&mut Text>,
+    data: Res<GameData>,
+    setup_selection: Res<MatchSetupSelection>,
+    mut next_state: ResMut<NextState<GameState>>,
+    mut run_session: ResMut<RunSession>,
+    mut start_run_events: EventWriter<StartRunEvent>,
+) {
+    let can_start = match_setup_can_start(&data, &setup_selection);
+    for (interaction, action, children, mut border_color, mut background) in &mut buttons {
+        let is_start = matches!(action, MatchSetupAction::Start);
+        let disabled = is_start && !can_start;
+        if let Some(&text_entity) = children.first()
+            && let Ok(mut text) = text_query.get_mut(text_entity)
+        {
+            text.sections[0].style.color = if disabled {
+                MENU_BUTTON_TEXT_DISABLED
+            } else {
+                match *interaction {
+                    Interaction::Hovered | Interaction::Pressed => MENU_BUTTON_TEXT_HOVERED,
+                    Interaction::None => MENU_BUTTON_TEXT_NORMAL,
+                }
+            };
+        }
+
+        match *interaction {
+            Interaction::Pressed => {
+                *border_color = BorderColor(if disabled {
+                    MENU_BUTTON_BORDER_DISABLED
+                } else {
+                    MENU_BUTTON_BORDER_HOVERED
+                });
+                *background = BackgroundColor(Color::NONE);
+                if disabled {
+                    info!("Cannot start match: invalid faction/map selection.");
+                    continue;
+                }
+                match action {
+                    MatchSetupAction::Start => {
+                        *run_session = RunSession::default();
+                        start_run_events.send(StartRunEvent);
+                        next_state.set(GameState::InRun);
+                    }
+                    MatchSetupAction::Back => {
+                        next_state.set(GameState::MainMenu);
+                    }
+                }
+            }
+            Interaction::Hovered => {
+                *border_color = BorderColor(if disabled {
+                    MENU_BUTTON_BORDER_DISABLED
+                } else {
+                    MENU_BUTTON_BORDER_HOVERED
+                });
+                *background = BackgroundColor(Color::NONE);
+            }
+            Interaction::None => {
+                *border_color = BorderColor(if disabled {
+                    MENU_BUTTON_BORDER_DISABLED
+                } else {
+                    Color::NONE
+                });
+                *background = BackgroundColor(Color::NONE);
+            }
+        }
+    }
+}
+
+#[allow(clippy::type_complexity)]
+fn refresh_match_setup_faction_button_visuals(
+    setup_selection: Res<MatchSetupSelection>,
+    mut faction_buttons: Query<
+        (
+            &Interaction,
+            &MatchSetupFactionButton,
+            Option<&MatchSetupButtonDisabled>,
+            &Children,
+            &mut BorderColor,
+            &mut BackgroundColor,
+        ),
+        (With<Button>, With<MatchSetupFactionButton>),
+    >,
+    mut text_query: Query<&mut Text>,
+) {
+    for (interaction, faction_button, disabled, children, mut border, mut background) in
+        &mut faction_buttons
+    {
+        let selected = setup_selection.faction == faction_button.faction;
+        let hovered = matches!(*interaction, Interaction::Hovered | Interaction::Pressed);
+        let is_disabled = disabled.is_some();
+        *border = BorderColor(if is_disabled {
+            MENU_BUTTON_BORDER_DISABLED
+        } else if selected || hovered {
+            MENU_BUTTON_BORDER_HOVERED
+        } else {
+            Color::NONE
+        });
+        *background = BackgroundColor(Color::NONE);
+        if let Some(&text_entity) = children.first()
+            && let Ok(mut text) = text_query.get_mut(text_entity)
+        {
+            text.sections[0].style.color = if is_disabled {
+                MENU_BUTTON_TEXT_DISABLED
+            } else if selected || hovered {
+                MENU_BUTTON_TEXT_HOVERED
+            } else {
+                MENU_BUTTON_TEXT_NORMAL
+            };
+        }
+    }
+}
+
+#[allow(clippy::type_complexity)]
+fn refresh_match_setup_map_button_visuals(
+    setup_selection: Res<MatchSetupSelection>,
+    mut map_buttons: Query<
+        (
+            &Interaction,
+            &MatchSetupMapButton,
+            &Children,
+            &mut BorderColor,
+            &mut BackgroundColor,
+        ),
+        (With<Button>, With<MatchSetupMapButton>),
+    >,
+    mut text_query: Query<&mut Text>,
+) {
+    for (interaction, map_button, children, mut border, mut background) in &mut map_buttons {
+        let selected = setup_selection.map_id == map_button.map_id;
+        let hovered = matches!(*interaction, Interaction::Hovered | Interaction::Pressed);
+        *border = BorderColor(if selected || hovered {
+            MENU_BUTTON_BORDER_HOVERED
+        } else {
+            Color::NONE
+        });
+        *background = BackgroundColor(Color::NONE);
+        if let Some(&text_entity) = children.first()
+            && let Ok(mut text) = text_query.get_mut(text_entity)
+        {
+            text.sections[0].style.color = if selected || hovered {
+                MENU_BUTTON_TEXT_HOVERED
+            } else {
+                MENU_BUTTON_TEXT_NORMAL
+            };
+        }
+    }
+}
+
+#[allow(clippy::type_complexity)]
+fn refresh_match_setup_action_button_visuals(
+    data: Res<GameData>,
+    setup_selection: Res<MatchSetupSelection>,
+    mut action_buttons: Query<
+        (
+            &Interaction,
+            &MatchSetupAction,
+            &Children,
+            &mut BorderColor,
+            &mut BackgroundColor,
+        ),
+        (With<Button>, With<MatchSetupAction>),
+    >,
+    mut text_query: Query<&mut Text>,
+) {
+    let can_start = match_setup_can_start(&data, &setup_selection);
+    for (interaction, action, children, mut border, mut background) in &mut action_buttons {
+        let disabled = matches!(action, MatchSetupAction::Start) && !can_start;
+        let hovered = matches!(*interaction, Interaction::Hovered | Interaction::Pressed);
+        *border = BorderColor(if disabled {
+            MENU_BUTTON_BORDER_DISABLED
+        } else if hovered {
+            MENU_BUTTON_BORDER_HOVERED
+        } else {
+            Color::NONE
+        });
+        *background = BackgroundColor(Color::NONE);
+        if let Some(&text_entity) = children.first()
+            && let Ok(mut text) = text_query.get_mut(text_entity)
+        {
+            text.sections[0].style.color = if disabled {
+                MENU_BUTTON_TEXT_DISABLED
+            } else if hovered {
+                MENU_BUTTON_TEXT_HOVERED
+            } else {
+                MENU_BUTTON_TEXT_NORMAL
+            };
         }
     }
 }
@@ -3330,13 +3900,13 @@ mod tests {
     use crate::enemies::WaveRuntime;
     use crate::formation::{ActiveFormation, FormationModifiers, FormationSkillBar};
     use crate::map::MapBounds;
-    use crate::model::{FrameRateCap, GlobalBuffs, RunModalAction, RunModalScreen};
+    use crate::model::{FrameRateCap, GlobalBuffs, PlayerFaction, RunModalAction, RunModalScreen};
     use crate::ui::{
         HudSnapshot, MainMenuAction, MainMenuDispatch, archive_entries_for_category,
-        build_skill_book_panel_data, build_stats_panel_data, displayed_wave_number,
-        find_skill_section, find_stats_row, format_elapsed_mm_ss, frame_cap_label,
-        health_bar_fill_width, main_menu_dispatch, modal_action_for_utility_button,
-        rescue_progress_ratio, world_to_minimap_pos,
+        build_skill_book_panel_data, build_stats_panel_data, can_select_match_setup_faction,
+        displayed_wave_number, find_skill_section, find_stats_row, format_elapsed_mm_ss,
+        frame_cap_label, health_bar_fill_width, main_menu_dispatch,
+        modal_action_for_utility_button, rescue_progress_ratio, world_to_minimap_pos,
     };
     use crate::upgrades::{Progression, SkillBookEntry, SkillBookLog, UpgradeCardIcon};
 
@@ -3435,7 +4005,7 @@ mod tests {
     fn main_menu_dispatch_maps_to_expected_actions() {
         assert_eq!(
             main_menu_dispatch(MainMenuAction::PlayOffline),
-            MainMenuDispatch::StartOfflineRun
+            MainMenuDispatch::OpenMatchSetup
         );
         assert_eq!(
             main_menu_dispatch(MainMenuAction::Settings),
@@ -3457,6 +4027,12 @@ mod tests {
             main_menu_dispatch(MainMenuAction::PlayOnline),
             MainMenuDispatch::DisabledOnline
         );
+    }
+
+    #[test]
+    fn muslim_faction_selection_is_disabled() {
+        assert!(can_select_match_setup_faction(PlayerFaction::Christian));
+        assert!(!can_select_match_setup_faction(PlayerFaction::Muslim));
     }
 
     #[test]

@@ -246,7 +246,7 @@
   - `docs/SYSTEMS_REFERENCE.md`
 
 ### CRU-067 - Offline Match Setup Screen (Faction + Map Config Scaffold)
-- Status: `TODO`
+- Status: `DONE`
 - Type: `Core`
 - Priority: `P0`
 - Depends on: `CRU-066`

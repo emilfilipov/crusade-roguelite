@@ -118,9 +118,30 @@ pub struct UpgradesConfigFile {
 }
 
 #[derive(Clone, Debug, Deserialize)]
-pub struct MapConfig {
+pub struct MapDefinitionConfig {
+    pub id: String,
+    pub name: String,
+    pub description: String,
     pub width: f32,
     pub height: f32,
+    pub allowed_factions: Vec<String>,
+    #[serde(default)]
+    pub spawn_profile_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct MapConfig {
+    pub maps: Vec<MapDefinitionConfig>,
+}
+
+impl MapConfig {
+    pub fn first_map(&self) -> Option<&MapDefinitionConfig> {
+        self.maps.first()
+    }
+
+    pub fn find_map(&self, map_id: &str) -> Option<&MapDefinitionConfig> {
+        self.maps.iter().find(|map| map.id == map_id)
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -368,8 +389,41 @@ fn validate_upgrades(config: &UpgradesConfigFile) -> Result<()> {
 }
 
 fn validate_map(config: &MapConfig) -> Result<()> {
-    if config.width <= 0.0 || config.height <= 0.0 {
-        bail!("map width and height must be > 0");
+    if config.maps.is_empty() {
+        bail!("map list cannot be empty");
+    }
+    let mut has_christian_map = false;
+    let mut seen_ids = std::collections::HashSet::new();
+    for (index, map) in config.maps.iter().enumerate() {
+        if map.id.trim().is_empty() {
+            bail!("map[{index}] id must be non-empty");
+        }
+        if !seen_ids.insert(map.id.clone()) {
+            bail!("map[{index}] id '{}' is duplicated", map.id);
+        }
+        if map.name.trim().is_empty() {
+            bail!("map[{index}] name must be non-empty");
+        }
+        if map.description.trim().is_empty() {
+            bail!("map[{index}] description must be non-empty");
+        }
+        if map.width <= 0.0 || map.height <= 0.0 {
+            bail!("map[{index}] width and height must be > 0");
+        }
+        if map.allowed_factions.is_empty() {
+            bail!("map[{index}] allowed_factions cannot be empty");
+        }
+        for faction in &map.allowed_factions {
+            if faction != "christian" && faction != "muslim" {
+                bail!("map[{index}] has unknown faction '{faction}'");
+            }
+            if faction == "christian" {
+                has_christian_map = true;
+            }
+        }
+    }
+    if !has_christian_map {
+        bail!("at least one map must allow christian faction");
     }
     Ok(())
 }
@@ -461,7 +515,23 @@ mod tests {
             "upgrades.json",
             r#"{"upgrades":[{"id":"u","kind":"damage","value":1.0}]}"#,
         );
-        write_config(dir, "map.json", r#"{"width":1000.0,"height":1000.0}"#);
+        write_config(
+            dir,
+            "map.json",
+            r#"{
+              "maps":[
+                {
+                  "id":"desert_battlefield",
+                  "name":"Desert Battlefield",
+                  "description":"Open sand arena for early runs.",
+                  "width":1000.0,
+                  "height":1000.0,
+                  "allowed_factions":["christian"],
+                  "spawn_profile_id":"default"
+                }
+              ]
+            }"#,
+        );
         write_config(
             dir,
             "rescue.json",
@@ -522,5 +592,38 @@ mod tests {
         );
         let err = GameData::load_from_dir(tmp.path()).expect_err("expected invalid wave order");
         assert!(err.to_string().contains("strictly increasing"));
+    }
+
+    #[test]
+    fn rejects_map_config_without_entries() {
+        let tmp = TempDir::new().expect("tmp");
+        write_valid_set(tmp.path());
+        write_config(tmp.path(), "map.json", r#"{"maps":[]}"#);
+        let err = GameData::load_from_dir(tmp.path()).expect_err("expected invalid map list");
+        assert!(err.to_string().contains("map list cannot be empty"));
+    }
+
+    #[test]
+    fn rejects_map_with_unknown_allowed_faction() {
+        let tmp = TempDir::new().expect("tmp");
+        write_valid_set(tmp.path());
+        write_config(
+            tmp.path(),
+            "map.json",
+            r#"{
+              "maps":[
+                {
+                  "id":"bad_map",
+                  "name":"Bad Map",
+                  "description":"Invalid faction tag.",
+                  "width":1000.0,
+                  "height":1000.0,
+                  "allowed_factions":["pirates"]
+                }
+              ]
+            }"#,
+        );
+        let err = GameData::load_from_dir(tmp.path()).expect_err("expected invalid faction tag");
+        assert!(err.to_string().contains("unknown faction"));
     }
 }

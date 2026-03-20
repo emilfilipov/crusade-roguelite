@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
 use crate::data::GameData;
-use crate::model::{CommanderUnit, GameState, Unit};
+use crate::model::{CommanderUnit, GameState, MatchSetupSelection, Unit};
 use crate::visuals::ArtAssets;
 
 #[derive(Resource, Clone, Copy, Debug)]
@@ -16,8 +16,14 @@ pub struct MapPlugin;
 impl Plugin for MapPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, spawn_camera_once)
-            .add_systems(OnEnter(GameState::MainMenu), initialize_map_resources)
-            .add_systems(OnEnter(GameState::MainMenu), spawn_background_visual)
+            .add_systems(
+                OnEnter(GameState::MainMenu),
+                (initialize_map_resources, spawn_background_visual),
+            )
+            .add_systems(
+                OnEnter(GameState::InRun),
+                (initialize_map_resources, spawn_background_visual),
+            )
             .add_systems(
                 Update,
                 (
@@ -35,10 +41,21 @@ fn spawn_camera_once(mut commands: Commands) {
     commands.spawn(Camera2dBundle::default());
 }
 
-fn initialize_map_resources(mut commands: Commands, data: Res<GameData>) {
+fn initialize_map_resources(
+    mut commands: Commands,
+    data: Res<GameData>,
+    setup_selection: Res<MatchSetupSelection>,
+) {
+    let map = data
+        .map
+        .find_map(&setup_selection.map_id)
+        .or_else(|| data.map.first_map());
+    let Some(map) = map else {
+        return;
+    };
     commands.insert_resource(MapBounds {
-        half_width: data.map.width * 0.5,
-        half_height: data.map.height * 0.5,
+        half_width: map.width * 0.5,
+        half_height: map.height * 0.5,
     });
 }
 

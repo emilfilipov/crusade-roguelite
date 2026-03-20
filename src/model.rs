@@ -21,6 +21,35 @@ pub struct RunSession {
     pub survived_seconds: f32,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash, Serialize, Deserialize)]
+pub enum PlayerFaction {
+    #[default]
+    Christian,
+    Muslim,
+}
+
+impl PlayerFaction {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Christian => "Christian",
+            Self::Muslim => "Muslim",
+        }
+    }
+
+    pub const fn config_key(self) -> &'static str {
+        match self {
+            Self::Christian => "christian",
+            Self::Muslim => "muslim",
+        }
+    }
+}
+
+#[derive(Resource, Clone, Debug, Default)]
+pub struct MatchSetupSelection {
+    pub faction: PlayerFaction,
+    pub map_id: String,
+}
+
 #[derive(Resource, Clone, Copy, Debug, Eq, PartialEq, Hash, Default, Serialize, Deserialize)]
 pub enum FrameRateCap {
     #[default]

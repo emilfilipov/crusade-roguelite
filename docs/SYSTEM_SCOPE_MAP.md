@@ -32,7 +32,8 @@ It prevents scope creep and makes expansion decisions explicit.
 | Skillbar | 10-slot bottom-center bar; slot `1` starts with `Square`; active skills use keys `1..0` | Click activation, drag-reorder, cooldown overlays | Keyboard activation + slot assignment stable and test-covered |
 | Morale/Cohesion | Per-unit morale + event-driven cohesion with 5 tiers and low-morale retinue pressure | Richer morale events, panic/rout behavior, faction morale traits | Current morale/cohesion loop remains recoverable and readable |
 | Banner | Auto-drop at low cohesion with timed recovery channel and cohesion restore on pickup | Banner traits, relocation rules, enemy banner threats | Auto-drop/recovery loop stable and not abusable |
-| Map Set | 1 map: desert battlefield | Additional biomes/maps and tactical terrain variants | First map supports full run loop cleanly |
+| Map Set | Data-driven map list scaffold with 1 playable entry (`desert_battlefield`); selected from offline match setup before run start | Additional biomes/maps and tactical terrain variants | First map supports full run loop cleanly |
+| Player Factions | Match setup exposes `Christian` (enabled) and `Muslim` (disabled placeholder); only Christian can start a run | Full Muslim faction content + mirrored progression paths | Christian path stable and faction-specific data schema proven |
 | Points of Interest | No active POI in runtime (oasis is deferred/config-only) | Oasis return, shrines, supply carts, event zones | Core loop stable before reintroducing POI interactions |
 | Resource Economy | 1 run currency: XP via collectible XP packs (ambient + enemy drop spawns); effect applies on commander contact | Gold/supplies/reputation meta layers | XP and upgrade cadence balanced |
 | UI | Tactical HUD with wave/level/time, rescue+banner progress strips, and bottom-left morale/cohesion meters | Advanced overlays, breakdown panels, analytics | Core HUD readable during heavy combat |

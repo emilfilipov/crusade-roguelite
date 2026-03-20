@@ -13,11 +13,15 @@ Use this for entity/component/system lookup without scanning all source files.
 - Added `ArchivePlugin` + `ArchiveDataset` with generated codex entries (units/enemies/skills/stats/bonuses/drops).
 - Added shared archive renderer used by both in-run `K` modal and main-menu `Bestiary` screen.
 - Main menu flow now exposes:
-  - `Play Offline` (run start)
+  - `Play Offline` (opens match setup)
   - `Play Online` (disabled placeholder)
   - `Settings`
   - `Bestiary`
   - `Exit`
+- Added `MatchSetup` screen:
+  - faction selection (`Christian` enabled, `Muslim` disabled),
+  - map selection from data-driven map list,
+  - start gate that only allows valid faction/map combinations.
 - Added inventory scaffold module/resource (`InventoryState`) with serializable bag/equipment setup model.
 - Inventory modal now renders dedicated bag list + per-unit equipment setup sections.
 - Stats modal now renders base/bonus/final rows for commander and global level-up-driven modifiers.
@@ -207,9 +211,13 @@ Roll fields:
 - `formation_id`
 
 ### `map.json`
-- `width=2400`
-- `height=2400`
-- Oasis fields removed from active schema.
+- Data-driven map list:
+  - `id`, `name`, `description`
+  - `width`, `height`
+  - `allowed_factions`
+  - optional `spawn_profile_id`
+- Current runtime entry:
+  - `desert_battlefield` (`2400x2400`, `allowed_factions=["christian"]`)
 
 ## ECS Inventory
 
@@ -235,6 +243,7 @@ Roll fields:
 
 ### Resources
 - `RunSession`
+- `MatchSetupSelection`
 - `RunModalState`
 - `FrameRateCap`
 - `GameData`
@@ -368,6 +377,7 @@ Friendly combined outgoing multiplier has lower clamp:
 ### `core.rs`
 - Boot -> menu transition
 - Main menu cleanup
+- menu clear color handling for `MainMenu`, `MatchSetup`, `Settings`, `Archive`
 - in-run modal hotkeys (`I/O/P/K/U`) through reducer-based modal request flow
 - `Escape` behavior priority:
   - close open run modal
@@ -378,8 +388,8 @@ Friendly combined outgoing multiplier has lower clamp:
 
 ### `map.rs`
 - camera spawn
-- map bounds init
-- tiled desert floor spawn
+- map bounds init from selected match-setup map (fallback to first configured map)
+- tiled desert floor spawn (respawned on run start to match selected map bounds)
 - perimeter wall visuals
 - camera follow + camera-only pixel snap + map-edge clamp
 - unit confinement to playable area inside wall inset
@@ -442,6 +452,7 @@ Friendly combined outgoing multiplier has lower clamp:
 ### `ui.rs`
 - main menu buttons (`Play Offline`, `Play Online` disabled, `Settings`, `Bestiary`, `Exit`)
 - main-menu `Bestiary` screen (same dataset/content source as in-run archive modal)
+- `MatchSetup` screen with faction + map selectors and `Start`/`Back` actions
 - settings screen with FPS selector
 - pause overlay buttons (`Resume`, `Restart`, `Main Menu`)
 - level-up overlay (3 mandatory upgrade cards, icon + description, no skip)
