@@ -197,7 +197,7 @@
   - `docs/SYSTEMS_REFERENCE.md`
 
 ### CRU-065 - Archive/Bestiary Data Browser (In-Run + Main Menu)
-- Status: `TODO`
+- Status: `DONE`
 - Type: `UI`
 - Priority: `P1`
 - Depends on: `CRU-060`, `CRU-061`

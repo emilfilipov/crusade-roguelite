@@ -10,6 +10,8 @@ Use this for entity/component/system lookup without scanning all source files.
 - Added modal hotkeys in-run: `I`, `O`, `P`, `K`, `U`; `Escape` closes modal first, otherwise opens pause menu.
 - Added modal overlay scaffold renderer that pauses in-run simulation while open.
 - Added top-right in-run utility bar with five icon buttons mapped to the same modal requests as hotkeys.
+- Added `ArchivePlugin` + `ArchiveDataset` with generated codex entries (units/enemies/skills/stats/bonuses/drops).
+- Added shared archive renderer used by both in-run `K` modal and main-menu `Bestiary` screen.
 - Added inventory scaffold module/resource (`InventoryState`) with serializable bag/equipment setup model.
 - Inventory modal now renders dedicated bag list + per-unit equipment setup sections.
 - Stats modal now renders base/bonus/final rows for commander and global level-up-driven modifiers.
@@ -95,28 +97,30 @@ Use this for entity/component/system lookup without scanning all source files.
 
 ### Plugin Order (`configure_game_app`)
 1. `DataPlugin`
-2. `CorePlugin`
-3. `SettingsPlugin`
-4. `PerformancePlugin`
-5. `VisualPlugin`
-6. `MapPlugin`
-7. `InventoryPlugin`
-8. `SquadPlugin`
-9. `FormationPlugin`
-10. `CollisionPlugin`
-11. `RescuePlugin`
-12. `DropsPlugin`
-13. `EnemyPlugin`
-14. `CombatPlugin`
-15. `ProjectilePlugin`
-16. `MoralePlugin`
-17. `BannerPlugin`
-18. `UpgradePlugin`
-19. `UiPlugin`
-20. `PlatformPlugin`
+2. `ArchivePlugin`
+3. `CorePlugin`
+4. `SettingsPlugin`
+5. `PerformancePlugin`
+6. `VisualPlugin`
+7. `MapPlugin`
+8. `InventoryPlugin`
+9. `SquadPlugin`
+10. `FormationPlugin`
+11. `CollisionPlugin`
+12. `RescuePlugin`
+13. `DropsPlugin`
+14. `EnemyPlugin`
+15. `CombatPlugin`
+16. `ProjectilePlugin`
+17. `MoralePlugin`
+18. `BannerPlugin`
+19. `UpgradePlugin`
+20. `UiPlugin`
+21. `PlatformPlugin`
 
 ### Runtime Note
 - `src/collision.rs` is now registered in app setup.
+- `src/archive.rs` generates and validates bestiary/archive entries from loaded game data.
 
 ### Game States
 - `Boot`
@@ -379,6 +383,11 @@ Friendly combined outgoing multiplier has lower clamp:
 - unit-class equipment setup defaults (weapon/armor/trinket slots)
 - serializable bag/equipment model for future gear drops
 
+### `archive.rs`
+- builds `ArchiveDataset` entries from live data files
+- validates archive entries for required fields (title + description)
+- exposes category groupings reused by main-menu and in-run archive UIs
+
 ### `squad.rs`
 - run start commander spawn
 - commander movement (includes enemy-inside-formation slowdown multiplier)
@@ -425,7 +434,8 @@ Friendly combined outgoing multiplier has lower clamp:
 - movement penalty state updates
 
 ### `ui.rs`
-- main menu buttons (`Start`, `Settings`, `Exit`)
+- main menu buttons (`Start`, `Settings`, `Bestiary`, `Exit`)
+- main-menu `Bestiary` screen (same dataset/content source as in-run archive modal)
 - settings screen with FPS selector
 - pause overlay buttons (`Resume`, `Restart`, `Main Menu`)
 - level-up overlay (3 mandatory upgrade cards, icon + description, no skip)

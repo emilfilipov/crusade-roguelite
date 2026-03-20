@@ -1,6 +1,7 @@
 use bevy::app::AppExit;
 use bevy::prelude::*;
 
+use crate::archive::{ArchiveCategory, ArchiveDataset, ArchiveEntry};
 use crate::banner::{BannerState, banner_pickup_progress_ratio};
 use crate::data::GameData;
 use crate::drops::ExpPack;
@@ -71,6 +72,7 @@ struct MainMenuRoot;
 enum MainMenuAction {
     Start,
     Settings,
+    Bestiary,
     Exit,
 }
 
@@ -79,6 +81,14 @@ struct SettingsMenuRoot;
 
 #[derive(Component, Clone, Copy, Debug, Eq, PartialEq)]
 enum SettingsMenuAction {
+    Back,
+}
+
+#[derive(Component, Clone, Copy, Debug)]
+struct ArchiveMenuRoot;
+
+#[derive(Component, Clone, Copy, Debug, Eq, PartialEq)]
+enum ArchiveMenuAction {
     Back,
 }
 
@@ -266,6 +276,8 @@ impl Plugin for UiPlugin {
             .add_systems(OnExit(GameState::MainMenu), despawn_main_menu)
             .add_systems(OnEnter(GameState::Settings), spawn_settings_menu)
             .add_systems(OnExit(GameState::Settings), despawn_settings_menu)
+            .add_systems(OnEnter(GameState::Archive), spawn_archive_menu)
+            .add_systems(OnExit(GameState::Archive), despawn_archive_menu)
             .add_systems(OnEnter(GameState::GameOver), spawn_game_over_menu)
             .add_systems(OnExit(GameState::GameOver), despawn_game_over_menu)
             .add_systems(OnEnter(GameState::Victory), spawn_victory_menu)
@@ -293,6 +305,10 @@ impl Plugin for UiPlugin {
                 )
                     .chain()
                     .run_if(in_state(GameState::Settings)),
+            )
+            .add_systems(
+                Update,
+                handle_archive_menu_buttons.run_if(in_state(GameState::Archive)),
             )
             .add_systems(
                 Update,
@@ -381,6 +397,7 @@ fn spawn_main_menu(mut commands: Commands) {
                 .with_children(|menu_buttons| {
                     spawn_menu_button(menu_buttons, MainMenuAction::Start, "START");
                     spawn_menu_button(menu_buttons, MainMenuAction::Settings, "SETTINGS");
+                    spawn_menu_button(menu_buttons, MainMenuAction::Bestiary, "BESTIARY");
                     spawn_menu_button(menu_buttons, MainMenuAction::Exit, "EXIT");
                 });
         });
@@ -590,6 +607,76 @@ fn spawn_settings_button(parent: &mut ChildBuilder, action: SettingsMenuAction, 
 }
 
 fn despawn_settings_menu(mut commands: Commands, roots: Query<Entity, With<SettingsMenuRoot>>) {
+    for entity in &roots {
+        commands.entity(entity).despawn_recursive();
+    }
+}
+
+fn spawn_archive_menu(
+    mut commands: Commands,
+    archive: Res<ArchiveDataset>,
+    art: Res<crate::visuals::ArtAssets>,
+) {
+    commands
+        .spawn((
+            ArchiveMenuRoot,
+            NodeBundle {
+                style: Style {
+                    width: Val::Percent(100.0),
+                    height: Val::Percent(100.0),
+                    justify_content: JustifyContent::FlexStart,
+                    align_items: AlignItems::Center,
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px(16.0),
+                    padding: UiRect::all(Val::Px(14.0)),
+                    ..default()
+                },
+                background_color: BackgroundColor(MENU_BACKGROUND),
+                z_index: ZIndex::Global(110),
+                ..default()
+            },
+        ))
+        .with_children(|parent| {
+            parent.spawn(TextBundle::from_section(
+                "BESTIARY",
+                TextStyle {
+                    font_size: 42.0,
+                    color: MENU_BUTTON_TEXT_HOVERED,
+                    ..default()
+                },
+            ));
+            spawn_archive_sections(parent, &archive, &art);
+            parent
+                .spawn((
+                    ButtonBundle {
+                        style: Style {
+                            width: Val::Px(220.0),
+                            height: Val::Px(56.0),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            border: UiRect::all(Val::Px(1.0)),
+                            ..default()
+                        },
+                        background_color: BackgroundColor(Color::NONE),
+                        border_color: BorderColor(Color::NONE),
+                        ..default()
+                    },
+                    ArchiveMenuAction::Back,
+                ))
+                .with_children(|button| {
+                    button.spawn(TextBundle::from_section(
+                        "BACK",
+                        TextStyle {
+                            font_size: 28.0,
+                            color: MENU_BUTTON_TEXT_NORMAL,
+                            ..default()
+                        },
+                    ));
+                });
+        });
+}
+
+fn despawn_archive_menu(mut commands: Commands, roots: Query<Entity, With<ArchiveMenuRoot>>) {
     for entity in &roots {
         commands.entity(entity).despawn_recursive();
     }
@@ -1189,6 +1276,7 @@ fn sync_run_modal_overlay(
     modal_state: Res<RunModalState>,
     inventory: Res<InventoryState>,
     data: Res<GameData>,
+    archive: Res<ArchiveDataset>,
     progression: Res<Progression>,
     buffs: Res<crate::model::GlobalBuffs>,
     skill_book: Res<SkillBookLog>,
@@ -1229,6 +1317,7 @@ fn sync_run_modal_overlay(
                 &inventory,
                 &stats,
                 &skill_book_panel,
+                &archive,
                 &art,
             );
         }
@@ -1247,6 +1336,7 @@ fn spawn_run_modal_overlay(
     inventory: &InventoryState,
     stats: &StatsPanelData,
     skill_book_panel: &SkillBookPanelData,
+    archive: &ArchiveDataset,
     art: &crate::visuals::ArtAssets,
 ) {
     let (title, subtitle) = run_modal_titles(screen);
@@ -1319,6 +1409,9 @@ fn spawn_run_modal_overlay(
                 }
                 if matches!(screen, RunModalScreen::SkillBook) {
                     spawn_skill_book_modal_sections(panel, skill_book_panel, art);
+                }
+                if matches!(screen, RunModalScreen::Archive) {
+                    spawn_archive_sections(panel, archive, art);
                 }
                 panel
                     .spawn((
@@ -1720,6 +1813,122 @@ fn spawn_skill_book_modal_sections(
                             },
                             text: Text::from_section(
                                 format!("{header} - {}", entry.description),
+                                TextStyle {
+                                    font_size: 14.0,
+                                    color: HUD_TEXT_COLOR,
+                                    ..default()
+                                },
+                            ),
+                            ..default()
+                        });
+                    });
+                }
+            }
+        });
+}
+
+fn archive_entries_for_category(
+    archive: &ArchiveDataset,
+    category: ArchiveCategory,
+) -> Vec<&ArchiveEntry> {
+    archive
+        .entries
+        .iter()
+        .filter(|entry| entry.category == category)
+        .collect()
+}
+
+fn spawn_archive_sections(
+    parent: &mut ChildBuilder,
+    archive: &ArchiveDataset,
+    art: &crate::visuals::ArtAssets,
+) {
+    parent
+        .spawn(NodeBundle {
+            style: Style {
+                width: Val::Percent(100.0),
+                min_height: Val::Px(260.0),
+                border: UiRect::all(Val::Px(1.0)),
+                padding: UiRect::all(Val::Px(8.0)),
+                flex_direction: FlexDirection::Column,
+                row_gap: Val::Px(8.0),
+                ..default()
+            },
+            background_color: BackgroundColor(Color::srgba(0.04, 0.04, 0.04, 0.34)),
+            border_color: BorderColor(UTILITY_BAR_BORDER),
+            ..default()
+        })
+        .with_children(|root| {
+            if archive.entries.is_empty() {
+                root.spawn(TextBundle::from_section(
+                    "Archive data not available yet.",
+                    TextStyle {
+                        font_size: 17.0,
+                        color: HUD_TEXT_COLOR,
+                        ..default()
+                    },
+                ));
+                return;
+            }
+
+            for category in ArchiveCategory::all() {
+                let entries = archive_entries_for_category(archive, category);
+                if entries.is_empty() {
+                    continue;
+                }
+                root.spawn(TextBundle::from_section(
+                    category.label(),
+                    TextStyle {
+                        font_size: 19.0,
+                        color: MENU_BUTTON_TEXT_HOVERED,
+                        ..default()
+                    },
+                ));
+                for entry in entries {
+                    root.spawn(NodeBundle {
+                        style: Style {
+                            width: Val::Percent(100.0),
+                            border: UiRect::all(Val::Px(1.0)),
+                            padding: UiRect::all(Val::Px(6.0)),
+                            flex_direction: FlexDirection::Row,
+                            align_items: AlignItems::FlexStart,
+                            column_gap: Val::Px(8.0),
+                            ..default()
+                        },
+                        background_color: BackgroundColor(Color::srgba(0.07, 0.07, 0.07, 0.42)),
+                        border_color: BorderColor(Color::srgba(0.78, 0.72, 0.58, 0.18)),
+                        ..default()
+                    })
+                    .with_children(|row| {
+                        if let Some(icon) = entry.icon {
+                            row.spawn(ImageBundle {
+                                style: Style {
+                                    width: Val::Px(22.0),
+                                    height: Val::Px(22.0),
+                                    ..default()
+                                },
+                                image: UiImage::new(upgrade_icon_for(icon, art)),
+                                background_color: BackgroundColor(Color::NONE),
+                                ..default()
+                            });
+                        } else {
+                            row.spawn(NodeBundle {
+                                style: Style {
+                                    width: Val::Px(22.0),
+                                    height: Val::Px(22.0),
+                                    ..default()
+                                },
+                                background_color: BackgroundColor(Color::NONE),
+                                ..default()
+                            });
+                        }
+                        row.spawn(TextBundle {
+                            style: Style {
+                                max_width: Val::Px(700.0),
+                                ..default()
+                            },
+                            text: Text::from_section(
+                                format!("{} - {}", entry.title, entry.description),
                                 TextStyle {
                                     font_size: 14.0,
                                     color: HUD_TEXT_COLOR,
@@ -2204,6 +2413,10 @@ fn handle_main_menu_buttons(
                         info!("Opening Settings screen from MainMenu.");
                         next_state.set(GameState::Settings);
                     }
+                    MainMenuAction::Bestiary => {
+                        info!("Opening Bestiary screen from MainMenu.");
+                        next_state.set(GameState::Archive);
+                    }
                     MainMenuAction::Exit => {
                         info!("Exit requested from MainMenu button.");
                         app_exit_events.send(AppExit::Success);
@@ -2253,6 +2466,52 @@ fn handle_settings_menu_buttons(
                 match action {
                     SettingsMenuAction::Back => {
                         info!("Returning from Settings to MainMenu.");
+                        next_state.set(GameState::MainMenu);
+                    }
+                }
+            }
+            Interaction::Hovered => {
+                *border_color = BorderColor(MENU_BUTTON_BORDER_HOVERED);
+                *background = BackgroundColor(Color::NONE);
+            }
+            Interaction::None => {
+                *border_color = BorderColor(Color::NONE);
+                *background = BackgroundColor(Color::NONE);
+            }
+        }
+    }
+}
+
+#[allow(clippy::type_complexity)]
+fn handle_archive_menu_buttons(
+    mut buttons: Query<
+        (
+            &Interaction,
+            &ArchiveMenuAction,
+            &Children,
+            &mut BorderColor,
+            &mut BackgroundColor,
+        ),
+        (Changed<Interaction>, With<Button>),
+    >,
+    mut text_query: Query<&mut Text>,
+    mut next_state: ResMut<NextState<GameState>>,
+) {
+    for (interaction, action, children, mut border_color, mut background) in &mut buttons {
+        if let Some(&text_entity) = children.first()
+            && let Ok(mut text) = text_query.get_mut(text_entity)
+        {
+            text.sections[0].style.color = match *interaction {
+                Interaction::Hovered | Interaction::Pressed => MENU_BUTTON_TEXT_HOVERED,
+                Interaction::None => MENU_BUTTON_TEXT_NORMAL,
+            };
+        }
+        match *interaction {
+            Interaction::Pressed => {
+                *border_color = BorderColor(MENU_BUTTON_BORDER_HOVERED);
+                *background = BackgroundColor(Color::NONE);
+                match action {
+                    ArchiveMenuAction::Back => {
                         next_state.set(GameState::MainMenu);
                     }
                 }
@@ -2985,6 +3244,7 @@ pub fn health_bar_fill_width(current: f32, max: f32, full_width: f32) -> f32 {
 mod tests {
     use std::path::Path;
 
+    use crate::archive::{ArchiveCategory, ArchiveDataset, ArchiveEntry};
     use crate::core::hotkey_to_run_modal_screen;
     use crate::data::GameData;
     use crate::enemies::WaveRuntime;
@@ -2992,10 +3252,10 @@ mod tests {
     use crate::map::MapBounds;
     use crate::model::{FrameRateCap, GlobalBuffs, RunModalAction, RunModalScreen};
     use crate::ui::{
-        HudSnapshot, build_skill_book_panel_data, build_stats_panel_data, displayed_wave_number,
-        find_skill_section, find_stats_row, format_elapsed_mm_ss, frame_cap_label,
-        health_bar_fill_width, modal_action_for_utility_button, rescue_progress_ratio,
-        world_to_minimap_pos,
+        HudSnapshot, archive_entries_for_category, build_skill_book_panel_data,
+        build_stats_panel_data, displayed_wave_number, find_skill_section, find_stats_row,
+        format_elapsed_mm_ss, frame_cap_label, health_bar_fill_width,
+        modal_action_for_utility_button, rescue_progress_ratio, world_to_minimap_pos,
     };
     use crate::upgrades::{Progression, SkillBookEntry, SkillBookLog, UpgradeCardIcon};
 
@@ -3217,5 +3477,31 @@ mod tests {
                 .iter()
                 .any(|entry| entry.title == "Authority Aura")
         );
+    }
+
+    #[test]
+    fn archive_filter_returns_same_data_for_modal_and_menu_paths() {
+        let dataset = ArchiveDataset {
+            entries: vec![
+                ArchiveEntry {
+                    category: ArchiveCategory::Skills,
+                    title: "Skill A".to_string(),
+                    description: "Desc".to_string(),
+                    icon: Some(UpgradeCardIcon::Damage),
+                },
+                ArchiveEntry {
+                    category: ArchiveCategory::Units,
+                    title: "Unit A".to_string(),
+                    description: "Desc".to_string(),
+                    icon: None,
+                },
+            ],
+        };
+
+        let modal_view = archive_entries_for_category(&dataset, ArchiveCategory::Skills);
+        let menu_view = archive_entries_for_category(&dataset, ArchiveCategory::Skills);
+        assert_eq!(modal_view.len(), 1);
+        assert_eq!(menu_view.len(), 1);
+        assert_eq!(modal_view[0].title, menu_view[0].title);
     }
 }
