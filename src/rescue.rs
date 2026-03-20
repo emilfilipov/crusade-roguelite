@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use crate::data::GameData;
+use crate::data::{GameData, RescueConfig};
 use crate::map::MapBounds;
 use crate::model::{
     FriendlyUnit, GameState, RecruitEvent, RecruitUnitKind, RescuableUnit, StartRunEvent, Team,
@@ -63,7 +63,7 @@ fn spawn_rescuables_on_run_start(
 
     let count = data.rescue.spawn_count.max(1);
     for idx in 0..count {
-        let recruit_kind = recruit_kind_for_sequence(idx);
+        let recruit_kind = recruit_kind_for_sequence(idx, &data.rescue);
         spawn_rescuable(
             &mut commands,
             rescue_spawn_position(idx, bounds.as_deref().copied()),
@@ -79,6 +79,7 @@ fn spawn_rescuables_on_run_start(
 fn spawn_rescuables_over_time(
     mut commands: Commands,
     time: Res<Time>,
+    data: Res<GameData>,
     art: Res<ArtAssets>,
     bounds: Option<Res<MapBounds>>,
     rescuables: Query<Entity, With<RescuableUnit>>,
@@ -95,7 +96,7 @@ fn spawn_rescuables_over_time(
     }
 
     let spawn_position = rescue_spawn_position(runtime.sequence, bounds.as_deref().copied());
-    let recruit_kind = recruit_kind_for_sequence(runtime.sequence);
+    let recruit_kind = recruit_kind_for_sequence(runtime.sequence, &data.rescue);
     spawn_rescuable(&mut commands, spawn_position, recruit_kind, &art);
     runtime.sequence = runtime.sequence.saturating_add(1);
 }
@@ -199,9 +200,13 @@ fn spawn_rescuable(
     ));
 }
 
-fn recruit_kind_for_sequence(sequence: u32) -> RecruitUnitKind {
-    let _ = sequence;
-    RecruitUnitKind::ChristianPeasantInfantry
+fn recruit_kind_for_sequence(sequence: u32, config: &RescueConfig) -> RecruitUnitKind {
+    let len = config.recruit_pool.len();
+    if len == 0 {
+        return RecruitUnitKind::ChristianPeasantInfantry;
+    }
+    let index = (sequence as usize) % len;
+    config.recruit_pool[index].as_recruit_unit_kind()
 }
 
 fn rescue_spawn_position(sequence: u32, bounds: Option<MapBounds>) -> Vec2 {
@@ -231,6 +236,7 @@ pub fn advance_rescue_progress(
 mod tests {
     use bevy::prelude::Vec2;
 
+    use crate::data::{RescueConfig, RescueRecruitKindConfig};
     use crate::map::MapBounds;
     use crate::model::RecruitUnitKind;
     use crate::rescue::{
@@ -278,17 +284,23 @@ mod tests {
     }
 
     #[test]
-    fn rescue_spawn_sequence_alternates_recruit_kinds() {
+    fn rescue_spawn_sequence_uses_tier0_pool_entries() {
+        let config = RescueConfig {
+            spawn_count: 1,
+            rescue_radius: 10.0,
+            rescue_duration_secs: 1.0,
+            recruit_pool: vec![RescueRecruitKindConfig::ChristianPeasantInfantry],
+        };
         assert_eq!(
-            recruit_kind_for_sequence(0),
+            recruit_kind_for_sequence(0, &config),
             RecruitUnitKind::ChristianPeasantInfantry
         );
         assert_eq!(
-            recruit_kind_for_sequence(1),
+            recruit_kind_for_sequence(1, &config),
             RecruitUnitKind::ChristianPeasantInfantry
         );
         assert_eq!(
-            recruit_kind_for_sequence(2),
+            recruit_kind_for_sequence(2, &config),
             RecruitUnitKind::ChristianPeasantInfantry
         );
     }

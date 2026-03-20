@@ -376,7 +376,7 @@
   - `docs/SYSTEMS_REFERENCE.md`
 
 ### CRU-072 - Tiered Rescue Rules (Tier-0-Only Rescue Spawns)
-- Status: `TODO`
+- Status: `DONE`
 - Type: `Gameplay`
 - Priority: `P1`
 - Depends on: `CRU-067`, `CRU-068`

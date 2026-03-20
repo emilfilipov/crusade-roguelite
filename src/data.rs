@@ -5,7 +5,7 @@ use anyhow::{Context, Result, bail};
 use bevy::prelude::*;
 use serde::Deserialize;
 
-use crate::model::GameState;
+use crate::model::{GameState, RecruitUnitKind};
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct UnitStatsConfig {
@@ -149,6 +149,31 @@ pub struct RescueConfig {
     pub spawn_count: u32,
     pub rescue_radius: f32,
     pub rescue_duration_secs: f32,
+    #[serde(default = "default_rescue_recruit_pool")]
+    pub recruit_pool: Vec<RescueRecruitKindConfig>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum RescueRecruitKindConfig {
+    ChristianPeasantInfantry,
+    ChristianPeasantArcher,
+}
+
+impl RescueRecruitKindConfig {
+    pub const fn as_recruit_unit_kind(self) -> RecruitUnitKind {
+        match self {
+            Self::ChristianPeasantInfantry => RecruitUnitKind::ChristianPeasantInfantry,
+            Self::ChristianPeasantArcher => RecruitUnitKind::ChristianPeasantArcher,
+        }
+    }
+
+    pub const fn tier(self) -> u8 {
+        match self {
+            Self::ChristianPeasantInfantry => 0,
+            Self::ChristianPeasantArcher => 1,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -214,6 +239,10 @@ fn read_json<T: for<'de> Deserialize<'de>>(path: PathBuf) -> Result<T> {
 
 fn default_multiplier() -> f32 {
     1.0
+}
+
+fn default_rescue_recruit_pool() -> Vec<RescueRecruitKindConfig> {
+    vec![RescueRecruitKindConfig::ChristianPeasantInfantry]
 }
 
 fn validate_unit_stats(unit: &UnitStatsConfig, label: &str) -> Result<()> {
@@ -435,6 +464,14 @@ fn validate_rescue(config: &RescueConfig) -> Result<()> {
     if config.rescue_radius <= 0.0 || config.rescue_duration_secs <= 0.0 {
         bail!("rescue radius/duration must be > 0");
     }
+    if config.recruit_pool.is_empty() {
+        bail!("rescue recruit_pool must contain at least one entry");
+    }
+    for (index, recruit_kind) in config.recruit_pool.iter().enumerate() {
+        if recruit_kind.tier() != 0 {
+            bail!("rescue recruit_pool[{index}] must be a tier-0 recruit");
+        }
+    }
     Ok(())
 }
 
@@ -535,7 +572,12 @@ mod tests {
         write_config(
             dir,
             "rescue.json",
-            r#"{"spawn_count":1,"rescue_radius":10.0,"rescue_duration_secs":1.0}"#,
+            r#"{
+              "spawn_count":1,
+              "rescue_radius":10.0,
+              "rescue_duration_secs":1.0,
+              "recruit_pool":["christian_peasant_infantry"]
+            }"#,
         );
         write_config(
             dir,
@@ -625,5 +667,23 @@ mod tests {
         );
         let err = GameData::load_from_dir(tmp.path()).expect_err("expected invalid faction tag");
         assert!(err.to_string().contains("unknown faction"));
+    }
+
+    #[test]
+    fn rejects_rescue_pool_with_non_tier0_entries() {
+        let tmp = TempDir::new().expect("tmp");
+        write_valid_set(tmp.path());
+        write_config(
+            tmp.path(),
+            "rescue.json",
+            r#"{
+              "spawn_count":2,
+              "rescue_radius":30.0,
+              "rescue_duration_secs":1.5,
+              "recruit_pool":["christian_peasant_archer"]
+            }"#,
+        );
+        let err = GameData::load_from_dir(tmp.path()).expect_err("expected non-tier0 rejection");
+        assert!(err.to_string().contains("tier-0"));
     }
 }

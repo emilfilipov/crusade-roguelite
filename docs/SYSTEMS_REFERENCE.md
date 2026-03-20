@@ -39,6 +39,7 @@ Use this for entity/component/system lookup without scanning all source files.
 - Enemy wave runtime now uses continuous units-per-second scheduling with staggered batch emission.
 - Wave progression is finite at `100` waves; victory triggers only when wave-100 spawning is finished and all enemies are cleared.
 - HUD commander level text now renders `current/allowed` and appends a lock marker when progression is budget-locked.
+- Rescue config now includes `recruit_pool` and validator rejects non-tier0 rescue entries.
 - Added inventory scaffold module/resource (`InventoryState`) with serializable bag/equipment setup model.
 - Inventory modal now renders dedicated bag list + per-unit equipment setup sections.
 - Stats modal now renders base/bonus/final rows for commander and global level-up-driven modifiers.
@@ -49,7 +50,7 @@ Use this for entity/component/system lookup without scanning all source files.
   - formation active/inactive indicators
 - Renamed the old recruit `Infantry/Knight` to `Christian Peasant Infantry`.
 - Added `Christian Peasant Archer` as a second recruitable retinue unit.
-- Rescue spawns now carry recruit type metadata and alternate infantry/archer by spawn sequence.
+- Rescue spawns now use a data-driven recruit pool and are currently constrained to tier-0 entries only.
 - Recruit events now preserve rescued unit type so formation/combat/collision pipelines auto-handle both variants.
 - Upgraded ranged combat to a shared unit system (no longer commander-only).
 - Christian Peasant Archer now uses hybrid combat: weak melee profile + stronger projectile ranged profile.
@@ -206,6 +207,7 @@ Procedural continuation:
 - `spawn_count=14`
 - `rescue_radius=60`
 - `rescue_duration_secs=2.2`
+- `recruit_pool=["christian_peasant_infantry"]` (tier-0 validation enforced)
 
 ### `upgrades.json`
 - `unlock_formation_diamond` (`one_time`, `adds_to_skillbar`, `formation_id=diamond`)
@@ -467,11 +469,11 @@ Friendly combined outgoing multiplier has lower clamp:
 
 ### `rescue.rs`
 - start spawn + timed respawn of rescuables
-- typed rescuable metadata (`Christian Peasant Infantry` / `Christian Peasant Archer`)
+- typed rescuable metadata driven by `rescue.recruit_pool` (tier-0-only entries accepted by config validator)
 - any-friendly rescue channel logic
 
 ### `enemies.rs`
-- scripted + infinite waves
+- finite 100-wave runtime with units-per-second spawning
 - queued enemy batch spawning with wave-scaled batch sizes/intervals
 - pseudo-random spawn points within playable map bounds
 - chase AI (retinue-prioritized targeting)
