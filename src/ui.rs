@@ -8,8 +8,9 @@ use crate::enemies::WaveRuntime;
 use crate::formation::{FormationSkillBar, SkillBarSkillKind};
 use crate::map::MapBounds;
 use crate::model::{
-    FrameRateCap, FriendlyUnit, GameState, Health, Morale, RescuableUnit, RunSession,
-    StartRunEvent, Team, Unit, UnitKind,
+    FrameRateCap, FriendlyUnit, GameState, Health, Morale, RescuableUnit, RunModalAction,
+    RunModalRequestEvent, RunModalScreen, RunModalState, RunSession, StartRunEvent, Team, Unit,
+    UnitKind,
 };
 use crate::morale::{Cohesion, average_morale_ratio};
 use crate::rescue::RescueProgress;
@@ -89,6 +90,15 @@ enum GameOverMenuAction {
 }
 
 #[derive(Component, Clone, Copy, Debug)]
+struct VictoryMenuRoot;
+
+#[derive(Component, Clone, Copy, Debug, Eq, PartialEq)]
+enum VictoryMenuAction {
+    Restart,
+    MainMenu,
+}
+
+#[derive(Component, Clone, Copy, Debug)]
 struct PauseMenuRoot;
 
 #[derive(Component, Clone, Copy, Debug, Eq, PartialEq)]
@@ -151,6 +161,16 @@ struct SkillBarSlotIcon {
     index: usize,
 }
 
+#[derive(Component, Clone, Copy, Debug, Eq, PartialEq)]
+struct RunModalRoot {
+    screen: RunModalScreen,
+}
+
+#[derive(Component, Clone, Copy, Debug, Eq, PartialEq)]
+enum RunModalButtonAction {
+    Close,
+}
+
 #[derive(Resource, Clone, Debug)]
 struct MinimapRefreshRuntime {
     timer: Timer,
@@ -202,6 +222,8 @@ impl Plugin for UiPlugin {
             .add_systems(OnExit(GameState::Settings), despawn_settings_menu)
             .add_systems(OnEnter(GameState::GameOver), spawn_game_over_menu)
             .add_systems(OnExit(GameState::GameOver), despawn_game_over_menu)
+            .add_systems(OnEnter(GameState::Victory), spawn_victory_menu)
+            .add_systems(OnExit(GameState::Victory), despawn_victory_menu)
             .add_systems(OnEnter(GameState::Paused), spawn_pause_menu)
             .add_systems(OnExit(GameState::Paused), despawn_pause_menu)
             .add_systems(OnEnter(GameState::LevelUp), spawn_level_up_menu)
@@ -209,7 +231,9 @@ impl Plugin for UiPlugin {
             .add_systems(OnEnter(GameState::MainMenu), despawn_in_run_hud)
             .add_systems(OnEnter(GameState::Settings), despawn_in_run_hud)
             .add_systems(OnEnter(GameState::GameOver), despawn_in_run_hud)
+            .add_systems(OnEnter(GameState::Victory), despawn_in_run_hud)
             .add_systems(OnEnter(GameState::InRun), spawn_in_run_hud)
+            .add_systems(OnExit(GameState::InRun), despawn_run_modal_overlay)
             .add_systems(
                 Update,
                 handle_main_menu_buttons.run_if(in_state(GameState::MainMenu)),
@@ -230,6 +254,10 @@ impl Plugin for UiPlugin {
             )
             .add_systems(
                 Update,
+                handle_victory_buttons.run_if(in_state(GameState::Victory)),
+            )
+            .add_systems(
+                Update,
                 handle_pause_menu_buttons.run_if(in_state(GameState::Paused)),
             )
             .add_systems(
@@ -239,6 +267,12 @@ impl Plugin for UiPlugin {
             .add_systems(
                 Update,
                 refresh_hud_snapshot.run_if(in_state(GameState::InRun)),
+            )
+            .add_systems(
+                Update,
+                (sync_run_modal_overlay, handle_run_modal_buttons)
+                    .chain()
+                    .run_if(in_state(GameState::InRun)),
             )
             .add_systems(
                 Update,
@@ -593,6 +627,88 @@ fn despawn_game_over_menu(mut commands: Commands, roots: Query<Entity, With<Game
     }
 }
 
+fn spawn_victory_menu(mut commands: Commands) {
+    commands
+        .spawn((
+            VictoryMenuRoot,
+            NodeBundle {
+                style: Style {
+                    width: Val::Percent(100.0),
+                    height: Val::Percent(100.0),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px(16.0),
+                    ..default()
+                },
+                background_color: BackgroundColor(Color::srgba(0.03, 0.03, 0.03, 0.55)),
+                z_index: ZIndex::Global(110),
+                ..default()
+            },
+        ))
+        .with_children(|parent| {
+            parent.spawn(TextBundle::from_section(
+                "VICTORY",
+                TextStyle {
+                    font_size: 44.0,
+                    color: MENU_BUTTON_TEXT_HOVERED,
+                    ..default()
+                },
+            ));
+            parent
+                .spawn(NodeBundle {
+                    style: Style {
+                        flex_direction: FlexDirection::Column,
+                        align_items: AlignItems::Center,
+                        row_gap: Val::Px(14.0),
+                        ..default()
+                    },
+                    background_color: BackgroundColor(Color::NONE),
+                    ..default()
+                })
+                .with_children(|buttons| {
+                    spawn_victory_button(buttons, VictoryMenuAction::Restart, "RESTART");
+                    spawn_victory_button(buttons, VictoryMenuAction::MainMenu, "MAIN MENU");
+                });
+        });
+}
+
+fn spawn_victory_button(parent: &mut ChildBuilder, action: VictoryMenuAction, label: &str) {
+    parent
+        .spawn((
+            ButtonBundle {
+                style: Style {
+                    width: Val::Px(240.0),
+                    height: Val::Px(56.0),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    border: UiRect::all(Val::Px(1.0)),
+                    ..default()
+                },
+                background_color: BackgroundColor(Color::NONE),
+                border_color: BorderColor(Color::NONE),
+                ..default()
+            },
+            action,
+        ))
+        .with_children(|button| {
+            button.spawn(TextBundle::from_section(
+                label,
+                TextStyle {
+                    font_size: 28.0,
+                    color: MENU_BUTTON_TEXT_NORMAL,
+                    ..default()
+                },
+            ));
+        });
+}
+
+fn despawn_victory_menu(mut commands: Commands, roots: Query<Entity, With<VictoryMenuRoot>>) {
+    for entity in &roots {
+        commands.entity(entity).despawn_recursive();
+    }
+}
+
 fn spawn_pause_menu(mut commands: Commands) {
     commands
         .spawn((
@@ -829,6 +945,9 @@ fn upgrade_icon_for(icon_kind: UpgradeCardIcon, art: &crate::visuals::ArtAssets)
         UpgradeCardIcon::HospitalierAura => art.upgrade_hospitalier_icon.clone(),
         UpgradeCardIcon::FormationSquare => art.formation_square_icon.clone(),
         UpgradeCardIcon::FormationDiamond => art.formation_diamond_icon.clone(),
+        UpgradeCardIcon::MobFury => art.upgrade_damage_icon.clone(),
+        UpgradeCardIcon::MobJustice => art.upgrade_attack_speed_icon.clone(),
+        UpgradeCardIcon::MobMercy => art.upgrade_pickup_radius_icon.clone(),
     }
 }
 
@@ -1010,6 +1129,157 @@ fn spawn_in_run_hud(
 fn despawn_in_run_hud(mut commands: Commands, roots: Query<Entity, With<InRunHudRoot>>) {
     for entity in &roots {
         commands.entity(entity).despawn_recursive();
+    }
+}
+
+fn sync_run_modal_overlay(
+    mut commands: Commands,
+    modal_state: Res<RunModalState>,
+    roots: Query<(Entity, &RunModalRoot)>,
+) {
+    let existing = roots.get_single().ok();
+    match *modal_state {
+        RunModalState::None => {
+            if let Some((entity, _)) = existing {
+                commands.entity(entity).despawn_recursive();
+            }
+        }
+        RunModalState::Open(screen) => {
+            if let Some((_, root)) = existing
+                && root.screen == screen
+            {
+                return;
+            }
+            if let Some((entity, _)) = existing {
+                commands.entity(entity).despawn_recursive();
+            }
+            spawn_run_modal_overlay(&mut commands, screen);
+        }
+    }
+}
+
+fn despawn_run_modal_overlay(mut commands: Commands, roots: Query<Entity, With<RunModalRoot>>) {
+    for entity in &roots {
+        commands.entity(entity).despawn_recursive();
+    }
+}
+
+fn spawn_run_modal_overlay(commands: &mut Commands, screen: RunModalScreen) {
+    let (title, subtitle) = run_modal_titles(screen);
+    commands
+        .spawn((
+            RunModalRoot { screen },
+            NodeBundle {
+                style: Style {
+                    position_type: PositionType::Absolute,
+                    left: Val::Px(0.0),
+                    top: Val::Px(0.0),
+                    width: Val::Percent(100.0),
+                    height: Val::Percent(100.0),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                background_color: BackgroundColor(Color::srgba(0.02, 0.02, 0.02, 0.55)),
+                z_index: ZIndex::Global(112),
+                ..default()
+            },
+        ))
+        .with_children(|root| {
+            root.spawn(NodeBundle {
+                style: Style {
+                    width: Val::Px(580.0),
+                    min_height: Val::Px(320.0),
+                    border: UiRect::all(Val::Px(1.0)),
+                    flex_direction: FlexDirection::Column,
+                    justify_content: JustifyContent::SpaceBetween,
+                    align_items: AlignItems::Center,
+                    row_gap: Val::Px(16.0),
+                    padding: UiRect::all(Val::Px(16.0)),
+                    ..default()
+                },
+                background_color: BackgroundColor(Color::srgba(0.08, 0.07, 0.06, 0.95)),
+                border_color: BorderColor(MINIMAP_BORDER),
+                ..default()
+            })
+            .with_children(|panel| {
+                panel.spawn(TextBundle::from_section(
+                    title,
+                    TextStyle {
+                        font_size: 34.0,
+                        color: MENU_BUTTON_TEXT_HOVERED,
+                        ..default()
+                    },
+                ));
+                panel.spawn(TextBundle {
+                    style: Style {
+                        max_width: Val::Px(520.0),
+                        ..default()
+                    },
+                    text: Text::from_section(
+                        subtitle,
+                        TextStyle {
+                            font_size: 18.0,
+                            color: HUD_TEXT_COLOR,
+                            ..default()
+                        },
+                    )
+                    .with_justify(JustifyText::Center),
+                    ..default()
+                });
+                panel
+                    .spawn((
+                        ButtonBundle {
+                            style: Style {
+                                width: Val::Px(180.0),
+                                height: Val::Px(50.0),
+                                justify_content: JustifyContent::Center,
+                                align_items: AlignItems::Center,
+                                border: UiRect::all(Val::Px(1.0)),
+                                ..default()
+                            },
+                            background_color: BackgroundColor(Color::NONE),
+                            border_color: BorderColor(Color::NONE),
+                            ..default()
+                        },
+                        RunModalButtonAction::Close,
+                    ))
+                    .with_children(|button| {
+                        button.spawn(TextBundle::from_section(
+                            "CLOSE",
+                            TextStyle {
+                                font_size: 24.0,
+                                color: MENU_BUTTON_TEXT_NORMAL,
+                                ..default()
+                            },
+                        ));
+                    });
+            });
+        });
+}
+
+fn run_modal_titles(screen: RunModalScreen) -> (&'static str, &'static str) {
+    match screen {
+        RunModalScreen::Inventory => (
+            "INVENTORY",
+            "Gear drops and equipment layouts are managed here. This screen pauses the run.",
+        ),
+        RunModalScreen::Stats => (
+            "STATS",
+            "Commander and army stat breakdown, including base values and active modifiers.",
+        ),
+        RunModalScreen::SkillBook => (
+            "SKILL BOOK",
+            "Selected formations, auras, and level-up effects appear here.",
+        ),
+        RunModalScreen::Archive => (
+            "ARCHIVE",
+            "Bestiary and codex references for units, skills, drops, and combat rules.",
+        ),
+        RunModalScreen::UnitUpgrade => (
+            "UNIT UPGRADES",
+            "Manage roster promotions and level-cost budget usage.",
+        ),
     }
 }
 
@@ -1372,6 +1642,62 @@ fn handle_game_over_buttons(
 }
 
 #[allow(clippy::type_complexity)]
+fn handle_victory_buttons(
+    mut buttons: Query<
+        (
+            &Interaction,
+            &VictoryMenuAction,
+            &Children,
+            &mut BorderColor,
+            &mut BackgroundColor,
+        ),
+        (Changed<Interaction>, With<Button>),
+    >,
+    mut text_query: Query<&mut Text>,
+    mut next_state: ResMut<NextState<GameState>>,
+    mut run_session: ResMut<RunSession>,
+    mut start_run_events: EventWriter<StartRunEvent>,
+) {
+    for (interaction, action, children, mut border_color, mut background) in &mut buttons {
+        if let Some(&text_entity) = children.first()
+            && let Ok(mut text) = text_query.get_mut(text_entity)
+        {
+            text.sections[0].style.color = match *interaction {
+                Interaction::Hovered | Interaction::Pressed => MENU_BUTTON_TEXT_HOVERED,
+                Interaction::None => MENU_BUTTON_TEXT_NORMAL,
+            };
+        }
+
+        match *interaction {
+            Interaction::Pressed => {
+                *border_color = BorderColor(MENU_BUTTON_BORDER_HOVERED);
+                *background = BackgroundColor(Color::NONE);
+                match action {
+                    VictoryMenuAction::Restart => {
+                        info!("Restart requested from Victory screen.");
+                        *run_session = RunSession::default();
+                        start_run_events.send(StartRunEvent);
+                        next_state.set(GameState::InRun);
+                    }
+                    VictoryMenuAction::MainMenu => {
+                        info!("Returning to MainMenu from Victory screen.");
+                        next_state.set(GameState::MainMenu);
+                    }
+                }
+            }
+            Interaction::Hovered => {
+                *border_color = BorderColor(MENU_BUTTON_BORDER_HOVERED);
+                *background = BackgroundColor(Color::NONE);
+            }
+            Interaction::None => {
+                *border_color = BorderColor(Color::NONE);
+                *background = BackgroundColor(Color::NONE);
+            }
+        }
+    }
+}
+
+#[allow(clippy::type_complexity)]
 fn handle_pause_menu_buttons(
     mut buttons: Query<
         (
@@ -1465,6 +1791,53 @@ fn handle_level_up_buttons(
 }
 
 #[allow(clippy::type_complexity)]
+fn handle_run_modal_buttons(
+    mut buttons: Query<
+        (
+            &Interaction,
+            &RunModalButtonAction,
+            &Children,
+            &mut BorderColor,
+            &mut BackgroundColor,
+        ),
+        (Changed<Interaction>, With<Button>),
+    >,
+    mut text_query: Query<&mut Text>,
+    mut modal_requests: EventWriter<RunModalRequestEvent>,
+) {
+    for (interaction, action, children, mut border_color, mut background_color) in &mut buttons {
+        if let Some(&text_entity) = children.first()
+            && let Ok(mut text) = text_query.get_mut(text_entity)
+        {
+            text.sections[0].style.color = match *interaction {
+                Interaction::Hovered | Interaction::Pressed => MENU_BUTTON_TEXT_HOVERED,
+                Interaction::None => MENU_BUTTON_TEXT_NORMAL,
+            };
+        }
+
+        match *interaction {
+            Interaction::Pressed => {
+                *border_color = BorderColor(MENU_BUTTON_BORDER_HOVERED);
+                *background_color = BackgroundColor(Color::NONE);
+                if matches!(action, RunModalButtonAction::Close) {
+                    modal_requests.send(RunModalRequestEvent {
+                        action: RunModalAction::Close,
+                    });
+                }
+            }
+            Interaction::Hovered => {
+                *border_color = BorderColor(MENU_BUTTON_BORDER_HOVERED);
+                *background_color = BackgroundColor(Color::NONE);
+            }
+            Interaction::None => {
+                *border_color = BorderColor(Color::NONE);
+                *background_color = BackgroundColor(Color::NONE);
+            }
+        }
+    }
+}
+
+#[allow(clippy::type_complexity)]
 fn handle_fps_cap_buttons(
     mut buttons: Query<(&Interaction, &FpsCapButton), (Changed<Interaction>, With<Button>)>,
     mut frame_cap: ResMut<FrameRateCap>,
@@ -1544,7 +1917,7 @@ fn refresh_hud_snapshot(
         level: progression.level,
         xp: progression.xp,
         next_level_xp: progression.next_level_xp,
-        wave_index: waves.next_wave_index,
+        wave_index: waves.current_wave.saturating_sub(1) as usize,
         current_wave: displayed_wave_number(&waves),
         elapsed_seconds: run_session.survived_seconds,
         average_morale_ratio: average_morale_ratio(&morale_ratios),
@@ -1813,8 +2186,7 @@ pub fn rescue_progress_ratio(elapsed: f32, duration: f32) -> Option<f32> {
 }
 
 pub fn displayed_wave_number(runtime: &WaveRuntime) -> u32 {
-    let spawned = runtime.next_wave_index as u32 + runtime.infinite_wave_index;
-    spawned.max(1)
+    runtime.current_wave.max(1)
 }
 
 pub fn format_elapsed_mm_ss(seconds: f32) -> String {
@@ -1945,10 +2317,8 @@ mod tests {
     fn displayed_wave_number_never_below_one() {
         let mut runtime = WaveRuntime::default();
         assert_eq!(displayed_wave_number(&runtime), 1);
-        runtime.next_wave_index = 3;
+        runtime.current_wave = 3;
         assert_eq!(displayed_wave_number(&runtime), 3);
-        runtime.infinite_wave_index = 4;
-        assert_eq!(displayed_wave_number(&runtime), 7);
     }
 
     #[test]

@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use crate::data::GameData;
+use crate::data::{GameData, WavesConfigFile};
 use crate::map::{MapBounds, playable_bounds};
 use crate::model::{
     Armor, AttackCooldown, AttackProfile, ColliderRadius, CommanderUnit, EnemyUnit, FriendlyUnit,
@@ -11,9 +11,11 @@ use crate::visuals::ArtAssets;
 #[derive(Resource, Clone, Debug, Default)]
 pub struct WaveRuntime {
     pub elapsed: f32,
-    pub next_wave_index: usize,
-    pub infinite_wave_index: u32,
-    pub next_infinite_spawn_time: f32,
+    pub current_wave: u32,
+    pub wave_elapsed: f32,
+    pub spawn_accumulator: f32,
+    pub finished_spawning: bool,
+    pub victory_announced: bool,
     pub pending_batches: Vec<PendingEnemyBatch>,
     pub spawn_sequence: u32,
 }
@@ -21,7 +23,7 @@ pub struct WaveRuntime {
 #[derive(Clone, Debug)]
 pub struct PendingEnemyBatch {
     pub remaining: u32,
-    pub wave_seed: u32,
+    pub wave_number: u32,
     pub stat_scale: f32,
     pub next_spawn_time: f32,
 }
@@ -48,10 +50,12 @@ struct EnemyMovementState {
 
 const ENEMY_BASE_SPEED_MULTIPLIER: f32 = 0.72;
 const WAVE_DURATION_SECS: f32 = 30.0;
+pub const MAX_WAVES: u32 = 100;
 const STOP_FACTOR: f32 = 0.82;
 const RESUME_FACTOR: f32 = 0.98;
-const SCRIPTED_WAVE_COUNT_GROWTH: f32 = 1.18;
-const INFINITE_WAVE_COUNT_GROWTH: f32 = 1.22;
+const WAVE_UNITS_MULTIPLIER: f32 = 2.0;
+const POST_SCRIPTED_WAVE_COUNT_GROWTH: f32 = 1.18;
+const WAVE_STAT_GROWTH_PER_WAVE: f32 = 0.08;
 const WAVE_BATCH_SIZE: u32 = 7;
 const WAVE_BATCH_INTERVAL_SECS: f32 = 0.7;
 const ENEMY_SPAWN_MIN_DISTANCE_FROM_COMMANDER: f32 = 200.0;
@@ -87,45 +91,48 @@ fn reset_waves_on_run_start(
         return;
     }
     for _ in start_events.read() {}
-    *wave_runtime = WaveRuntime::default();
+    *wave_runtime = WaveRuntime {
+        current_wave: 1,
+        ..WaveRuntime::default()
+    };
 }
 
 fn spawn_waves(time: Res<Time>, data: Res<GameData>, mut wave_runtime: ResMut<WaveRuntime>) {
-    wave_runtime.elapsed += time.delta_seconds();
-    while let Some(next_wave) = data.waves.waves.get(wave_runtime.next_wave_index) {
-        if wave_runtime.elapsed < next_wave.time_secs {
-            break;
-        }
-        let scripted_index = wave_runtime.next_wave_index as u32;
-        let count = scripted_wave_enemy_count(next_wave.count, scripted_index);
-        enqueue_wave_batch(&mut wave_runtime, count, scripted_index, 1.0);
-        wave_runtime.next_wave_index += 1;
+    let dt = time.delta_seconds();
+    if dt <= 0.0 {
+        return;
+    }
+    if wave_runtime.current_wave == 0 {
+        wave_runtime.current_wave = 1;
     }
 
-    if wave_runtime.next_wave_index < data.waves.waves.len() {
+    wave_runtime.elapsed += dt;
+    if wave_runtime.finished_spawning {
         return;
     }
 
-    if wave_runtime.next_infinite_spawn_time <= 0.0 {
-        wave_runtime.next_infinite_spawn_time = data
-            .waves
-            .waves
-            .last()
-            .map(|wave| wave.time_secs)
-            .unwrap_or(0.0)
-            + infinite_wave_interval_secs();
+    wave_runtime.wave_elapsed += dt;
+    while wave_runtime.wave_elapsed >= WAVE_DURATION_SECS && wave_runtime.current_wave < MAX_WAVES {
+        wave_runtime.wave_elapsed -= WAVE_DURATION_SECS;
+        wave_runtime.current_wave = wave_runtime.current_wave.saturating_add(1);
     }
 
-    let base_count = data.waves.waves.last().map(|wave| wave.count).unwrap_or(3);
-    while wave_runtime.elapsed >= wave_runtime.next_infinite_spawn_time {
-        let procedural_index = wave_runtime.infinite_wave_index;
-        let count = infinite_wave_enemy_count(base_count, procedural_index);
-        let stat_scale = infinite_wave_stat_multiplier(procedural_index);
-        let wave_seed = data.waves.waves.len() as u32 + procedural_index;
-        enqueue_wave_batch(&mut wave_runtime, count, wave_seed, stat_scale);
-        wave_runtime.infinite_wave_index = wave_runtime.infinite_wave_index.saturating_add(1);
-        wave_runtime.next_infinite_spawn_time += infinite_wave_interval_secs();
+    if wave_runtime.current_wave >= MAX_WAVES && wave_runtime.wave_elapsed >= WAVE_DURATION_SECS {
+        wave_runtime.finished_spawning = true;
+        wave_runtime.wave_elapsed = WAVE_DURATION_SECS;
+        return;
     }
+
+    let spawn_rate = units_per_second_for_wave(&data.waves, wave_runtime.current_wave);
+    wave_runtime.spawn_accumulator += spawn_rate * dt;
+    let spawn_count = wave_runtime.spawn_accumulator.floor().max(0.0) as u32;
+    if spawn_count == 0 {
+        return;
+    }
+    wave_runtime.spawn_accumulator -= spawn_count as f32;
+    let wave_number = wave_runtime.current_wave;
+    let stat_scale = wave_stat_multiplier(wave_number);
+    enqueue_wave_batch(&mut wave_runtime, spawn_count, wave_number, stat_scale);
 }
 
 fn spawn_pending_enemy_batches(
@@ -158,7 +165,7 @@ fn spawn_pending_enemy_batches(
             continue;
         }
 
-        let spawn_now = batch_size_for_wave(batch.wave_seed).min(batch.remaining);
+        let spawn_now = batch_size_for_wave(batch.wave_number).min(batch.remaining);
         spawn_enemy_batch(
             &mut commands,
             spawn_now,
@@ -166,13 +173,13 @@ fn spawn_pending_enemy_batches(
             &art,
             spawn_bounds,
             commander_position,
-            batch.wave_seed,
+            batch.wave_number,
             batch.stat_scale,
             &mut spawn_sequence,
         );
         batch.remaining = batch.remaining.saturating_sub(spawn_now);
         if batch.remaining > 0 {
-            batch.next_spawn_time = current_time + batch_interval_secs(batch.wave_seed);
+            batch.next_spawn_time = current_time + batch_interval_secs(batch.wave_number);
             remaining.push(batch);
         }
     }
@@ -188,7 +195,7 @@ fn spawn_enemy_batch(
     art: &ArtAssets,
     bounds: MapBounds,
     commander_position: Vec2,
-    wave_seed: u32,
+    wave_number: u32,
     stat_scale: f32,
     spawn_sequence: &mut u32,
 ) {
@@ -202,7 +209,7 @@ fn spawn_enemy_batch(
     for _ in 0..count {
         let seq = *spawn_sequence;
         *spawn_sequence = spawn_sequence.saturating_add(1);
-        let pos = random_spawn_position(bounds, commander_position, wave_seed, seq);
+        let pos = random_spawn_position(bounds, commander_position, wave_number, seq);
         commands.spawn((
             Unit {
                 team: Team::Enemy,
@@ -242,19 +249,24 @@ fn spawn_enemy_batch(
     }
 }
 
-fn enqueue_wave_batch(wave_runtime: &mut WaveRuntime, count: u32, wave_seed: u32, stat_scale: f32) {
+fn enqueue_wave_batch(
+    wave_runtime: &mut WaveRuntime,
+    count: u32,
+    wave_number: u32,
+    stat_scale: f32,
+) {
     if count == 0 {
         return;
     }
     wave_runtime.pending_batches.push(PendingEnemyBatch {
         remaining: count,
-        wave_seed,
+        wave_number,
         stat_scale,
         next_spawn_time: wave_runtime.elapsed,
     });
 }
 
-fn infinite_wave_interval_secs() -> f32 {
+pub fn wave_duration_secs() -> f32 {
     WAVE_DURATION_SECS
 }
 
@@ -262,20 +274,26 @@ pub fn enemy_move_speed(base_speed: f32) -> f32 {
     base_speed * ENEMY_BASE_SPEED_MULTIPLIER
 }
 
-pub fn infinite_wave_enemy_count(base_count: u32, procedural_wave_index: u32) -> u32 {
-    let exponent = (procedural_wave_index.saturating_add(1)) as f32;
-    let scaled = base_count as f32 * INFINITE_WAVE_COUNT_GROWTH.powf(exponent);
-    scaled.round().max(base_count as f32 + 1.0) as u32
+fn wave_base_count(config: &WavesConfigFile, wave_number: u32) -> f32 {
+    if config.waves.is_empty() {
+        return 1.0;
+    }
+    let index = wave_number.saturating_sub(1) as usize;
+    if let Some(wave) = config.waves.get(index) {
+        return wave.count as f32;
+    }
+    let last_count = config.waves.last().map(|wave| wave.count).unwrap_or(1) as f32;
+    let extra_waves = index.saturating_sub(config.waves.len().saturating_sub(1)) as f32;
+    last_count * POST_SCRIPTED_WAVE_COUNT_GROWTH.powf(extra_waves)
 }
 
-pub fn scripted_wave_enemy_count(configured_count: u32, scripted_wave_index: u32) -> u32 {
-    let exponent = scripted_wave_index as f32;
-    let scaled = configured_count as f32 * SCRIPTED_WAVE_COUNT_GROWTH.powf(exponent);
-    scaled.round().max(configured_count as f32) as u32
+pub fn units_per_second_for_wave(config: &WavesConfigFile, wave_number: u32) -> f32 {
+    let base_count = wave_base_count(config, wave_number);
+    ((base_count * WAVE_UNITS_MULTIPLIER).max(1.0)) / WAVE_DURATION_SECS
 }
 
-pub fn infinite_wave_stat_multiplier(procedural_wave_index: u32) -> f32 {
-    1.0 + (procedural_wave_index.saturating_add(1)) as f32 * 0.08
+pub fn wave_stat_multiplier(wave_number: u32) -> f32 {
+    1.0 + wave_number.saturating_sub(1) as f32 * WAVE_STAT_GROWTH_PER_WAVE
 }
 
 fn default_spawn_bounds() -> MapBounds {
@@ -285,12 +303,19 @@ fn default_spawn_bounds() -> MapBounds {
     }
 }
 
-fn batch_size_for_wave(wave_seed: u32) -> u32 {
-    (WAVE_BATCH_SIZE + wave_seed / 4).clamp(WAVE_BATCH_SIZE, 22)
+fn batch_size_for_wave(wave_number: u32) -> u32 {
+    (WAVE_BATCH_SIZE + wave_number / 4).clamp(WAVE_BATCH_SIZE, 22)
 }
 
-fn batch_interval_secs(wave_seed: u32) -> f32 {
-    (WAVE_BATCH_INTERVAL_SECS - wave_seed as f32 * 0.01).clamp(0.24, WAVE_BATCH_INTERVAL_SECS)
+fn batch_interval_secs(wave_number: u32) -> f32 {
+    (WAVE_BATCH_INTERVAL_SECS - wave_number as f32 * 0.01).clamp(0.24, WAVE_BATCH_INTERVAL_SECS)
+}
+
+pub fn should_trigger_victory(runtime: &WaveRuntime, alive_enemy_count: usize) -> bool {
+    runtime.finished_spawning
+        && runtime.current_wave >= MAX_WAVES
+        && runtime.pending_batches.is_empty()
+        && alive_enemy_count == 0
 }
 
 pub fn random_spawn_position(
@@ -503,11 +528,12 @@ pub fn choose_nearest(origin: Vec2, candidates: &[Vec2]) -> Option<Vec2> {
 mod tests {
     use bevy::prelude::Vec2;
 
+    use crate::data::{WaveConfig, WavesConfigFile};
     use crate::enemies::{
         BanditVisualState, batch_interval_secs, batch_size_for_wave, chase_target_positions,
-        choose_nearest, decide_bandit_visual_state, enemy_move_speed, infinite_wave_enemy_count,
-        infinite_wave_interval_secs, infinite_wave_stat_multiplier, random_spawn_position,
-        scripted_wave_enemy_count, should_move_towards_target,
+        choose_nearest, decide_bandit_visual_state, enemy_move_speed, random_spawn_position,
+        should_move_towards_target, units_per_second_for_wave, wave_duration_secs,
+        wave_stat_multiplier,
     };
     use crate::map::MapBounds;
 
@@ -553,14 +579,27 @@ mod tests {
     }
 
     #[test]
-    fn infinite_wave_progression_scales_count_and_stats() {
-        assert_eq!(infinite_wave_enemy_count(6, 0), 7);
-        assert_eq!(infinite_wave_enemy_count(6, 4), 16);
-        assert_eq!(scripted_wave_enemy_count(8, 0), 8);
-        assert!(scripted_wave_enemy_count(12, 4) > scripted_wave_enemy_count(12, 1));
-        assert_eq!(infinite_wave_interval_secs(), 30.0);
-        assert!((infinite_wave_stat_multiplier(0) - 1.08).abs() < 0.001);
-        assert!(infinite_wave_stat_multiplier(5) > infinite_wave_stat_multiplier(2));
+    fn wave_progression_scales_spawn_rate_and_stats() {
+        let config = WavesConfigFile {
+            waves: vec![
+                WaveConfig {
+                    time_secs: 0.0,
+                    count: 8,
+                },
+                WaveConfig {
+                    time_secs: 30.0,
+                    count: 12,
+                },
+            ],
+        };
+        let first = units_per_second_for_wave(&config, 1);
+        let second = units_per_second_for_wave(&config, 2);
+        let late = units_per_second_for_wave(&config, 10);
+        assert!(second >= first);
+        assert!(late > second);
+        assert_eq!(wave_duration_secs(), 30.0);
+        assert!((wave_stat_multiplier(1) - 1.0).abs() < 0.001);
+        assert!(wave_stat_multiplier(8) > wave_stat_multiplier(3));
         assert!(enemy_move_speed(100.0) < 100.0);
     }
 

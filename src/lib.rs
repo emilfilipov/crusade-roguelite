@@ -31,8 +31,8 @@ use image::imageops::FilterType;
 use tracing_appender::non_blocking::WorkerGuard;
 
 use crate::model::{
-    DamageEvent, GainXpEvent, GameState, RecruitEvent, RunSession, SpawnExpPackEvent,
-    StartRunEvent, UnitDamagedEvent, UnitDiedEvent,
+    DamageEvent, GainXpEvent, GameState, RecruitEvent, RunModalRequestEvent, RunModalState,
+    RunSession, SpawnExpPackEvent, StartRunEvent, UnitDamagedEvent, UnitDiedEvent,
 };
 
 #[derive(Resource)]
@@ -85,6 +85,7 @@ pub fn configure_game_app(app: &mut App) {
     app.init_state::<GameState>()
         .insert_resource(ClearColor(Color::srgb(0.79, 0.68, 0.51)))
         .init_resource::<RunSession>()
+        .init_resource::<RunModalState>()
         .add_event::<StartRunEvent>()
         .add_event::<RecruitEvent>()
         .add_event::<DamageEvent>()
@@ -92,6 +93,7 @@ pub fn configure_game_app(app: &mut App) {
         .add_event::<UnitDiedEvent>()
         .add_event::<GainXpEvent>()
         .add_event::<SpawnExpPackEvent>()
+        .add_event::<RunModalRequestEvent>()
         .add_systems(Update, apply_window_icon_once)
         .add_plugins((
             data::DataPlugin,

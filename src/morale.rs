@@ -5,6 +5,7 @@ use crate::model::{
     CommanderUnit, EnemyUnit, FriendlyUnit, GameState, GlobalBuffs, Health, Morale, StartRunEvent,
     Team, UnitDamagedEvent, UnitDiedEvent, UnitKind,
 };
+use crate::upgrades::ConditionalUpgradeEffects;
 
 const STARTING_COHESION: f32 = 100.0;
 const LOW_MORALE_RATIO_THRESHOLD: f32 = 0.5;
@@ -107,6 +108,7 @@ fn reset_morale_state_on_run_start(
 fn apply_morale_and_cohesion_events(
     data: Res<GameData>,
     buffs: Option<Res<GlobalBuffs>>,
+    conditional_effects: Option<Res<ConditionalUpgradeEffects>>,
     mut damaged_events: EventReader<UnitDamagedEvent>,
     mut death_events: EventReader<UnitDiedEvent>,
     mut cohesion: ResMut<Cohesion>,
@@ -119,6 +121,10 @@ fn apply_morale_and_cohesion_events(
         Query<&mut Morale, With<EnemyUnit>>,
     )>,
 ) {
+    let friendly_loss_immunity = conditional_effects
+        .as_deref()
+        .map(|effects| effects.friendly_loss_immunity)
+        .unwrap_or(false);
     let aura_context = commanders.get_single().ok().map(|transform| {
         (
             transform.translation.truncate(),
@@ -149,9 +155,11 @@ fn apply_morale_and_cohesion_events(
                 } else {
                     1.0
                 };
-            morale.current = (morale.current - morale_loss).clamp(0.0, morale.max);
+            if !(friendly_loss_immunity && event.team == Team::Friendly) {
+                morale.current = (morale.current - morale_loss).clamp(0.0, morale.max);
+            }
         }
-        if event.team == Team::Friendly {
+        if event.team == Team::Friendly && !friendly_loss_immunity {
             cohesion.value -= friendly_cohesion_loss_from_damage(event.amount) * loss_multiplier;
             friendly_morale_loss +=
                 friendly_army_morale_loss_from_damage(event.amount) * loss_multiplier;
@@ -175,10 +183,12 @@ fn apply_morale_and_cohesion_events(
                 let in_aura = in_commander_aura(event.world_position, aura_context);
                 let loss_multiplier =
                     friendly_loss_multiplier_from_authority(in_aura, buffs.as_deref());
-                cohesion.value -=
-                    friendly_death_cohesion_loss(event.max_health, event.kind) * loss_multiplier;
-                friendly_morale_loss +=
-                    friendly_death_morale_loss(event.max_health, event.kind) * loss_multiplier;
+                if !friendly_loss_immunity {
+                    cohesion.value -= friendly_death_cohesion_loss(event.max_health, event.kind)
+                        * loss_multiplier;
+                    friendly_morale_loss +=
+                        friendly_death_morale_loss(event.max_health, event.kind) * loss_multiplier;
+                }
                 enemy_morale_gain += ENEMY_MORALE_GAIN_ON_FRIENDLY_DEATH;
             }
             Team::Neutral => {}
@@ -283,8 +293,16 @@ fn apply_hospitalier_aura_regen(
 fn apply_low_morale_cohesion_pressure(
     time: Res<Time>,
     mut cohesion: ResMut<Cohesion>,
+    conditional_effects: Option<Res<ConditionalUpgradeEffects>>,
     retinue_morale: Query<&Morale, (With<FriendlyUnit>, Without<CommanderUnit>)>,
 ) {
+    if conditional_effects
+        .as_deref()
+        .map(|effects| effects.friendly_loss_immunity)
+        .unwrap_or(false)
+    {
+        return;
+    }
     let ratios: Vec<f32> = retinue_morale.iter().map(|morale| morale.ratio()).collect();
     let low_ratio = low_morale_ratio(&ratios, LOW_MORALE_RATIO_THRESHOLD);
     if low_ratio >= LOW_MORALE_RATIO_THRESHOLD {

@@ -6,6 +6,7 @@ use crate::model::{
     FriendlyUnit, GameState, RecruitEvent, RecruitUnitKind, RescuableUnit, StartRunEvent, Team,
     Unit,
 };
+use crate::upgrades::ConditionalUpgradeEffects;
 use crate::visuals::ArtAssets;
 
 #[derive(Component, Clone, Copy, Debug)]
@@ -103,6 +104,7 @@ fn tick_rescue_progress(
     mut commands: Commands,
     time: Res<Time>,
     data: Res<GameData>,
+    conditional_effects: Option<Res<ConditionalUpgradeEffects>>,
     friendlies: Query<&Transform, With<FriendlyUnit>>,
     mut rescuables: Query<
         (Entity, &Transform, &RescuableUnit, &mut RescueProgress),
@@ -118,7 +120,11 @@ fn tick_rescue_progress(
         return;
     }
     let rescue_radius = data.rescue.rescue_radius;
-    let rescue_duration = data.rescue.rescue_duration_secs;
+    let rescue_duration = data.rescue.rescue_duration_secs
+        * conditional_effects
+            .as_deref()
+            .map(|effects| effects.rescue_time_multiplier)
+            .unwrap_or(1.0);
 
     for (entity, transform, rescuable_unit, mut rescue_progress) in &mut rescuables {
         let in_range = any_friendly_in_rescue_radius(
@@ -194,11 +200,8 @@ fn spawn_rescuable(
 }
 
 fn recruit_kind_for_sequence(sequence: u32) -> RecruitUnitKind {
-    if sequence.is_multiple_of(2) {
-        RecruitUnitKind::ChristianPeasantInfantry
-    } else {
-        RecruitUnitKind::ChristianPeasantArcher
-    }
+    let _ = sequence;
+    RecruitUnitKind::ChristianPeasantInfantry
 }
 
 fn rescue_spawn_position(sequence: u32, bounds: Option<MapBounds>) -> Vec2 {
@@ -282,7 +285,7 @@ mod tests {
         );
         assert_eq!(
             recruit_kind_for_sequence(1),
-            RecruitUnitKind::ChristianPeasantArcher
+            RecruitUnitKind::ChristianPeasantInfantry
         );
         assert_eq!(
             recruit_kind_for_sequence(2),

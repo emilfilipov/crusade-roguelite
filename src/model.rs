@@ -6,11 +6,14 @@ pub enum GameState {
     #[default]
     Boot,
     MainMenu,
+    MatchSetup,
+    Archive,
     Settings,
     InRun,
     LevelUp,
     Paused,
     GameOver,
+    Victory,
 }
 
 #[derive(Resource, Clone, Debug, Default)]
@@ -47,18 +50,19 @@ impl FrameRateCap {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum Team {
     Friendly,
     Enemy,
     Neutral,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum UnitKind {
     Commander,
     ChristianPeasantInfantry,
     ChristianPeasantArcher,
+    ChristianPeasantPriest,
     EnemyBanditRaider,
     RescuableChristianPeasantInfantry,
     RescuableChristianPeasantArcher,
@@ -92,6 +96,9 @@ pub struct Unit {
     pub kind: UnitKind,
     pub level: u32,
 }
+
+#[derive(Component, Clone, Copy, Debug)]
+pub struct UnitTier(pub u8);
 
 #[derive(Component, Clone, Copy, Debug)]
 pub struct Health {
@@ -236,4 +243,44 @@ pub struct SpawnExpPackEvent {
     pub world_position: Vec2,
     pub xp_value_override: Option<f32>,
     pub pickup_delay_secs: Option<f32>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub enum RunModalScreen {
+    Inventory,
+    Stats,
+    SkillBook,
+    Archive,
+    UnitUpgrade,
+}
+
+#[derive(Resource, Clone, Copy, Debug, Eq, PartialEq, Default)]
+pub enum RunModalState {
+    #[default]
+    None,
+    Open(RunModalScreen),
+}
+
+impl RunModalState {
+    pub const fn is_open(self) -> bool {
+        matches!(self, Self::Open(_))
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RunModalAction {
+    Open(RunModalScreen),
+    Toggle(RunModalScreen),
+    Close,
+}
+
+#[derive(Event, Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RunModalRequestEvent {
+    pub action: RunModalAction,
+}
+
+pub const MAX_COMMANDER_LEVEL: u32 = 200;
+
+pub fn level_cap_from_locked_budget(locked_levels: u32) -> u32 {
+    MAX_COMMANDER_LEVEL.saturating_sub(locked_levels)
 }

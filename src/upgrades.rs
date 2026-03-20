@@ -6,14 +6,22 @@ use bevy::prelude::*;
 use crate::data::{GameData, UpgradeConfig};
 use crate::formation::{ActiveFormation, FormationSkillBar};
 use crate::model::{
-    BaseMaxHealth, FriendlyUnit, GainXpEvent, GameState, GlobalBuffs, Health, StartRunEvent,
+    BaseMaxHealth, FriendlyUnit, GainXpEvent, GameState, GlobalBuffs, Health, MAX_COMMANDER_LEVEL,
+    StartRunEvent,
 };
+use crate::squad::RosterEconomy;
 
 const LEVEL_UP_OPTION_COUNT: usize = 3;
 const DEFAULT_UPGRADE_WEIGHT_EXPONENT: f32 = 2.0;
 const AUTHORITY_ENEMY_MORALE_DRAIN_SCALE: f32 = 6.0;
 const HOSPITALIER_COHESION_REGEN_SCALE: f32 = 0.35;
 const HOSPITALIER_MORALE_REGEN_SCALE: f32 = 0.18;
+
+const MOB_FURY_DAMAGE_BONUS: f32 = 0.18;
+const MOB_FURY_ATTACK_SPEED_BONUS: f32 = 0.18;
+const MOB_FURY_MOVE_SPEED_BONUS: f32 = 24.0;
+const MOB_JUSTICE_EXECUTE_THRESHOLD: f32 = 0.10;
+const MOB_MERCY_RESCUE_TIME_MULTIPLIER: f32 = 0.5;
 
 #[derive(Resource, Clone, Debug)]
 pub struct Progression {
@@ -43,6 +51,44 @@ pub struct OneTimeUpgradeTracker {
     pub acquired_ids: HashSet<String>,
 }
 
+#[derive(Resource, Clone, Debug, Default)]
+pub struct SkillBookLog {
+    pub entries: Vec<String>,
+}
+
+#[derive(Resource, Clone, Copy, Debug, Default)]
+pub struct MobUpgradeOwnership {
+    pub fury_owned: bool,
+    pub fury_required_tier0_share: f32,
+    pub justice_owned: bool,
+    pub justice_required_tier0_share: f32,
+    pub mercy_owned: bool,
+    pub mercy_required_tier0_share: f32,
+}
+
+#[derive(Resource, Clone, Copy, Debug)]
+pub struct ConditionalUpgradeEffects {
+    pub friendly_damage_multiplier: f32,
+    pub friendly_attack_speed_multiplier: f32,
+    pub friendly_move_speed_bonus: f32,
+    pub friendly_loss_immunity: bool,
+    pub execute_below_health_ratio: f32,
+    pub rescue_time_multiplier: f32,
+}
+
+impl Default for ConditionalUpgradeEffects {
+    fn default() -> Self {
+        Self {
+            friendly_damage_multiplier: 1.0,
+            friendly_attack_speed_multiplier: 1.0,
+            friendly_move_speed_bonus: 0.0,
+            friendly_loss_immunity: false,
+            execute_below_health_ratio: 0.0,
+            rescue_time_multiplier: 1.0,
+        }
+    }
+}
+
 #[derive(Event, Clone, Copy, Debug)]
 pub struct SelectUpgradeEvent {
     pub option_index: usize,
@@ -60,6 +106,9 @@ pub enum UpgradeCardIcon {
     HospitalierAura,
     FormationSquare,
     FormationDiamond,
+    MobFury,
+    MobJustice,
+    MobMercy,
 }
 
 #[derive(Resource, Clone, Copy, Debug)]
@@ -121,6 +170,9 @@ impl Plugin for UpgradePlugin {
         app.init_resource::<Progression>()
             .init_resource::<UpgradeDraft>()
             .init_resource::<OneTimeUpgradeTracker>()
+            .init_resource::<SkillBookLog>()
+            .init_resource::<MobUpgradeOwnership>()
+            .init_resource::<ConditionalUpgradeEffects>()
             .init_resource::<LevelPassiveRuntime>()
             .init_resource::<UpgradeRngState>()
             .init_resource::<GlobalBuffs>()
@@ -132,6 +184,7 @@ impl Plugin for UpgradePlugin {
                     gain_xp,
                     open_draft_on_level_up,
                     sync_friendly_level_health_caps,
+                    refresh_conditional_upgrade_effects,
                 )
                     .chain()
                     .run_if(in_state(GameState::InRun)),
@@ -148,11 +201,15 @@ impl Plugin for UpgradePlugin {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn reset_progress_on_run_start(
     mut start_events: EventReader<StartRunEvent>,
     mut progression: ResMut<Progression>,
     mut draft: ResMut<UpgradeDraft>,
     mut one_time_tracker: ResMut<OneTimeUpgradeTracker>,
+    mut skill_book: ResMut<SkillBookLog>,
+    mut mob_owned: ResMut<MobUpgradeOwnership>,
+    mut conditional_effects: ResMut<ConditionalUpgradeEffects>,
     mut passive_runtime: ResMut<LevelPassiveRuntime>,
     mut buffs: ResMut<GlobalBuffs>,
     mut rng: ResMut<UpgradeRngState>,
@@ -164,6 +221,9 @@ fn reset_progress_on_run_start(
     *progression = Progression::default();
     *draft = UpgradeDraft::default();
     *one_time_tracker = OneTimeUpgradeTracker::default();
+    *skill_book = SkillBookLog::default();
+    *mob_owned = MobUpgradeOwnership::default();
+    *conditional_effects = ConditionalUpgradeEffects::default();
     *passive_runtime = LevelPassiveRuntime::default();
     *buffs = GlobalBuffs::default();
     rng.reseed_from_time();
@@ -175,11 +235,13 @@ fn gain_xp(mut progression: ResMut<Progression>, mut xp_events: EventReader<Gain
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn open_draft_on_level_up(
     mut progression: ResMut<Progression>,
     mut draft: ResMut<UpgradeDraft>,
     one_time_tracker: Res<OneTimeUpgradeTracker>,
     skillbar: Res<FormationSkillBar>,
+    roster_economy: Option<Res<RosterEconomy>>,
     data: Res<GameData>,
     mut rng: ResMut<UpgradeRngState>,
     mut next_state: ResMut<NextState<GameState>>,
@@ -188,8 +250,27 @@ fn open_draft_on_level_up(
         return;
     }
 
+    let allowed_max_level = roster_economy
+        .as_deref()
+        .map(|value| value.allowed_max_level)
+        .unwrap_or(MAX_COMMANDER_LEVEL)
+        .min(MAX_COMMANDER_LEVEL);
+    if progression.level >= allowed_max_level {
+        progression.level = allowed_max_level;
+        return;
+    }
+
+    if progression.level >= MAX_COMMANDER_LEVEL {
+        progression.level = MAX_COMMANDER_LEVEL;
+        return;
+    }
+
     if progression.xp >= progression.next_level_xp {
         progression.level += 1;
+        progression.level = progression
+            .level
+            .min(allowed_max_level)
+            .min(MAX_COMMANDER_LEVEL);
         progression.xp -= progression.next_level_xp;
         progression.next_level_xp = xp_required_for_level(progression.level);
         draft.options = roll_upgrade_options(
@@ -207,10 +288,14 @@ fn open_draft_on_level_up(
 }
 
 pub fn xp_required_for_level(level: u32) -> f32 {
+    if level >= MAX_COMMANDER_LEVEL {
+        return f32::INFINITY;
+    }
+
     const BASE_REQUIREMENT: f32 = 30.0;
     const BRACKET_SIZE: u32 = 10;
-    const BRACKET_GROWTH: f32 = 5.5;
-    const INTRA_BRACKET_GROWTH: f32 = 1.18;
+    const BRACKET_GROWTH: f32 = 6.0;
+    const INTRA_BRACKET_GROWTH: f32 = 1.2;
 
     let safe_level = level.max(1);
     let index = safe_level - 1;
@@ -274,10 +359,13 @@ fn queue_upgrade_selection_from_keyboard(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn resolve_upgrade_selection(
     mut draft: ResMut<UpgradeDraft>,
     mut selection_events: EventReader<SelectUpgradeEvent>,
     mut buffs: ResMut<GlobalBuffs>,
+    mut skill_book: ResMut<SkillBookLog>,
+    mut mob_owned: ResMut<MobUpgradeOwnership>,
     mut one_time_tracker: ResMut<OneTimeUpgradeTracker>,
     mut skillbar: ResMut<FormationSkillBar>,
     mut next_state: ResMut<NextState<GameState>>,
@@ -291,7 +379,12 @@ fn resolve_upgrade_selection(
     };
     let index = selection.option_index.min(draft.options.len() - 1);
     let picked = draft.options[index].clone();
-    apply_upgrade(&picked, &mut buffs, &mut skillbar);
+    apply_upgrade(&picked, &mut buffs, &mut mob_owned, &mut skillbar);
+    skill_book.entries.push(format!(
+        "{} - {}",
+        upgrade_display_title(&picked),
+        upgrade_display_description(&picked)
+    ));
     if picked.one_time {
         one_time_tracker.acquired_ids.insert(picked.id.clone());
     }
@@ -406,6 +499,9 @@ pub fn upgrade_card_icon(upgrade: &UpgradeConfig) -> UpgradeCardIcon {
         "authority_aura" => UpgradeCardIcon::AuthorityAura,
         "move_speed" => UpgradeCardIcon::MoveSpeed,
         "hospitalier_aura" => UpgradeCardIcon::HospitalierAura,
+        "mob_fury" => UpgradeCardIcon::MobFury,
+        "mob_justice" => UpgradeCardIcon::MobJustice,
+        "mob_mercy" => UpgradeCardIcon::MobMercy,
         "unlock_formation" => match upgrade.formation_id.as_deref() {
             Some("diamond") => UpgradeCardIcon::FormationDiamond,
             _ => UpgradeCardIcon::FormationSquare,
@@ -424,6 +520,9 @@ pub fn upgrade_display_title(upgrade: &UpgradeConfig) -> &'static str {
         "authority_aura" => "Authority Aura",
         "move_speed" => "Forced March",
         "hospitalier_aura" => "Hospitalier Aura",
+        "mob_fury" => "Mob's Fury",
+        "mob_justice" => "Mob's Justice",
+        "mob_mercy" => "Mob's Mercy",
         "unlock_formation" => match upgrade.formation_id.as_deref() {
             Some("diamond") => "Diamond Formation",
             Some("square") => "Square Formation",
@@ -455,6 +554,9 @@ pub fn upgrade_display_description(upgrade: &UpgradeConfig) -> String {
             upgrade.value * HOSPITALIER_COHESION_REGEN_SCALE,
             upgrade.value * HOSPITALIER_MORALE_REGEN_SCALE
         ),
+        "mob_fury" => "If tier-0 share requirement is met, friendlies become immune to morale/cohesion loss and gain bonus damage, attack speed, and movement speed.".to_string(),
+        "mob_justice" => "If tier-0 share requirement is met, hits execute enemies below 10% HP.".to_string(),
+        "mob_mercy" => "If tier-0 share requirement is met, rescue channel time is reduced by 50%.".to_string(),
         "unlock_formation" => match upgrade.formation_id.as_deref() {
             Some("diamond") => "Unlock Diamond formation on the skill bar: offense bonus while moving, faster movement, lower defense.".to_string(),
             Some("square") => "Unlock Square formation on the skill bar.".to_string(),
@@ -467,6 +569,7 @@ pub fn upgrade_display_description(upgrade: &UpgradeConfig) -> String {
 fn apply_upgrade(
     upgrade: &UpgradeConfig,
     buffs: &mut GlobalBuffs,
+    mob_owned: &mut MobUpgradeOwnership,
     skillbar: &mut FormationSkillBar,
 ) {
     match upgrade.kind.as_str() {
@@ -509,7 +612,80 @@ fn apply_upgrade(
                 skillbar.try_add_formation(formation);
             }
         }
+        "mob_fury" => {
+            mob_owned.fury_owned = true;
+            mob_owned.fury_required_tier0_share = mob_tier0_requirement(upgrade);
+        }
+        "mob_justice" => {
+            mob_owned.justice_owned = true;
+            mob_owned.justice_required_tier0_share = mob_tier0_requirement(upgrade);
+        }
+        "mob_mercy" => {
+            mob_owned.mercy_owned = true;
+            mob_owned.mercy_required_tier0_share = mob_tier0_requirement(upgrade);
+        }
         _ => {}
+    }
+}
+
+fn refresh_conditional_upgrade_effects(
+    mob_owned: Res<MobUpgradeOwnership>,
+    roster: Option<Res<RosterEconomy>>,
+    mut effects: ResMut<ConditionalUpgradeEffects>,
+) {
+    let tier0_share = roster
+        .as_deref()
+        .map(roster_tier0_share)
+        .unwrap_or(0.0)
+        .clamp(0.0, 1.0);
+    let fury_active = mob_owned.fury_owned && tier0_share >= mob_owned.fury_required_tier0_share;
+    let justice_active =
+        mob_owned.justice_owned && tier0_share >= mob_owned.justice_required_tier0_share;
+    let mercy_active = mob_owned.mercy_owned && tier0_share >= mob_owned.mercy_required_tier0_share;
+
+    effects.friendly_damage_multiplier = if fury_active {
+        1.0 + MOB_FURY_DAMAGE_BONUS
+    } else {
+        1.0
+    };
+    effects.friendly_attack_speed_multiplier = if fury_active {
+        1.0 + MOB_FURY_ATTACK_SPEED_BONUS
+    } else {
+        1.0
+    };
+    effects.friendly_move_speed_bonus = if fury_active {
+        MOB_FURY_MOVE_SPEED_BONUS
+    } else {
+        0.0
+    };
+    effects.friendly_loss_immunity = fury_active;
+    effects.execute_below_health_ratio = if justice_active {
+        MOB_JUSTICE_EXECUTE_THRESHOLD
+    } else {
+        0.0
+    };
+    effects.rescue_time_multiplier = if mercy_active {
+        MOB_MERCY_RESCUE_TIME_MULTIPLIER
+    } else {
+        1.0
+    };
+}
+
+fn roster_tier0_share(roster: &RosterEconomy) -> f32 {
+    if roster.total_retinue_count == 0 {
+        return 0.0;
+    }
+    roster.tier0_retinue_count as f32 / roster.total_retinue_count as f32
+}
+
+fn mob_tier0_requirement(upgrade: &UpgradeConfig) -> f32 {
+    if upgrade.requirement_type.as_deref() == Some("tier0_share") {
+        upgrade
+            .requirement_min_tier0_share
+            .unwrap_or(1.0)
+            .clamp(0.0, 1.0)
+    } else {
+        1.0
     }
 }
 
@@ -540,6 +716,8 @@ mod tests {
             one_time: false,
             adds_to_skillbar: false,
             formation_id: None,
+            requirement_type: None,
+            requirement_min_tier0_share: None,
         }
     }
 
@@ -591,6 +769,8 @@ mod tests {
             one_time: true,
             adds_to_skillbar: true,
             formation_id: Some("diamond".to_string()),
+            requirement_type: None,
+            requirement_min_tier0_share: None,
         };
         let pool = vec![formation_upgrade];
         let mut tracker = OneTimeUpgradeTracker::default();
@@ -616,6 +796,8 @@ mod tests {
             one_time: true,
             adds_to_skillbar: true,
             formation_id: Some("diamond".to_string()),
+            requirement_type: None,
+            requirement_min_tier0_share: None,
         };
         let normal_upgrade = upgrade("damage", "damage_up");
         let pool = vec![formation_upgrade, normal_upgrade];
@@ -692,6 +874,8 @@ mod tests {
             one_time: true,
             adds_to_skillbar: true,
             formation_id: Some("diamond".to_string()),
+            requirement_type: None,
+            requirement_min_tier0_share: None,
         };
         assert_eq!(
             upgrade_card_icon(&formation_upgrade),

@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 
 use crate::model::{DamageEvent, GameState, GlobalBuffs, Health, Team, Unit};
+use crate::upgrades::ConditionalUpgradeEffects;
 
 #[derive(Component, Clone, Copy, Debug)]
 pub struct Projectile {
@@ -43,6 +44,7 @@ fn projectile_collisions(
     mut commands: Commands,
     mut damage_events: EventWriter<DamageEvent>,
     buffs: Option<Res<GlobalBuffs>>,
+    conditional_effects: Option<Res<ConditionalUpgradeEffects>>,
     projectiles: Query<(Entity, &Transform, &Projectile)>,
     targets: Query<(
         Entity,
@@ -68,7 +70,20 @@ fn projectile_collisions(
                 } else {
                     base_armor
                 };
-                let damage = (projectile.damage - effective_armor).max(1.0);
+                let execute_threshold = conditional_effects
+                    .as_deref()
+                    .map(|effects| effects.execute_below_health_ratio)
+                    .unwrap_or(0.0);
+                let execute = projectile.source_team == Team::Friendly
+                    && target_unit.team == Team::Enemy
+                    && execute_threshold > 0.0
+                    && target_health.max > 0.0
+                    && (target_health.current / target_health.max) <= execute_threshold;
+                let damage = if execute {
+                    target_health.current + effective_armor + 1.0
+                } else {
+                    (projectile.damage - effective_armor).max(1.0)
+                };
                 damage_events.send(DamageEvent {
                     target: target_entity,
                     source_team: projectile.source_team,

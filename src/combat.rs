@@ -10,8 +10,10 @@ use crate::model::{
 };
 use crate::morale::CohesionCombatModifiers;
 use crate::projectiles::Projectile;
-use crate::squad::CommanderMotionState;
-use crate::upgrades::Progression;
+use crate::squad::{
+    CommanderMotionState, PriestAttackSpeedBlessing, priest_attack_speed_multiplier,
+};
+use crate::upgrades::{ConditionalUpgradeEffects, Progression};
 use crate::visuals::ArtAssets;
 
 pub const MIN_FRIENDLY_COMBAT_MULTIPLIER: f32 = 0.55;
@@ -58,13 +60,19 @@ fn tick_attack_timers(
     cohesion_mods: Res<CohesionCombatModifiers>,
     progression: Option<Res<Progression>>,
     global_buffs: Option<Res<GlobalBuffs>>,
-    mut attackers: Query<(&Unit, Option<&Morale>, &mut AttackCooldown)>,
+    conditional_effects: Option<Res<ConditionalUpgradeEffects>>,
+    mut attackers: Query<(
+        &Unit,
+        Option<&Morale>,
+        Option<&PriestAttackSpeedBlessing>,
+        &mut AttackCooldown,
+    )>,
 ) {
     let level_multiplier = progression
         .as_ref()
         .map(|value| commander_level_combat_multiplier(value.level))
         .unwrap_or(1.0);
-    for (unit, morale, mut cooldown) in &mut attackers {
+    for (unit, morale, priest_blessing, mut cooldown) in &mut attackers {
         let morale_scale = morale
             .copied()
             .map(|value| morale_effect_multiplier(value.ratio()))
@@ -74,6 +82,10 @@ fn tick_attack_timers(
             let mut value = cohesion_mods.attack_speed_multiplier * morale_scale * level_multiplier;
             if let Some(buff) = &global_buffs {
                 value *= buff.attack_speed_multiplier;
+            }
+            value *= priest_attack_speed_multiplier(priest_blessing);
+            if let Some(conditional) = &conditional_effects {
+                value *= conditional.friendly_attack_speed_multiplier;
             }
             value.max(MIN_FRIENDLY_COMBAT_MULTIPLIER)
         } else {
@@ -98,6 +110,7 @@ fn emit_ranged_projectile_attacks(
     cohesion_mods: Res<CohesionCombatModifiers>,
     progression: Option<Res<Progression>>,
     global_buffs: Option<Res<GlobalBuffs>>,
+    conditional_effects: Option<Res<ConditionalUpgradeEffects>>,
     commander_motion: Option<Res<CommanderMotionState>>,
     mut ranged_attackers: Query<(
         Entity,
@@ -114,23 +127,26 @@ fn emit_ranged_projectile_attacks(
         .as_ref()
         .map(|value| commander_level_combat_multiplier(value.level))
         .unwrap_or(1.0);
-    let target_snapshot: Vec<(Entity, Vec2, f32, Unit)> = targets
+    let target_snapshot: Vec<(Entity, Vec2, f32, f32, Unit)> = targets
         .iter()
         .map(|(entity, transform, health, unit)| {
             (
                 entity,
                 transform.translation.truncate(),
                 health.current,
+                health.max,
                 *unit,
             )
         })
         .collect();
-    let has_non_commander_friendlies = target_snapshot.iter().any(|(_, _, health, unit)| {
+    let has_non_commander_friendlies = target_snapshot.iter().any(|(_, _, health, _, unit)| {
         unit.team == Team::Friendly && unit.kind != UnitKind::Commander && *health > 0.0
     });
     let formation_targets: Vec<(Entity, Unit, Vec2, f32, f32)> = target_snapshot
         .iter()
-        .map(|(entity, position, health, unit)| (*entity, *unit, *position, *health, 0.0))
+        .map(|(entity, position, health, _max_health, unit)| {
+            (*entity, *unit, *position, *health, 0.0)
+        })
         .collect();
     let formation_context = friendly_formation_context(&formation_targets);
     let slot_spacing = active_formation_config(&data, *active_formation).slot_spacing;
@@ -178,7 +194,7 @@ fn emit_ranged_projectile_attacks(
         let commander_position = commander_transform.translation.truncate();
 
         let mut best_target: Option<(Vec2, f32, UnitKind)> = None;
-        for (_, target_position, target_health, target_unit) in &target_snapshot {
+        for (_, target_position, target_health, _, target_unit) in &target_snapshot {
             if target_unit.team != opposite_team || *target_health <= 0.0 {
                 continue;
             }
@@ -230,7 +246,12 @@ fn emit_ranged_projectile_attacks(
                 *active_formation,
                 slot_spacing,
             );
-            base_multiplier * formation_multiplier
+            base_multiplier
+                * formation_multiplier
+                * conditional_effects
+                    .as_deref()
+                    .map(|effects| effects.friendly_damage_multiplier)
+                    .unwrap_or(1.0)
         } else {
             morale_multiplier
         };
@@ -287,6 +308,7 @@ fn emit_damage_events(
     cohesion_mods: Res<CohesionCombatModifiers>,
     progression: Option<Res<Progression>>,
     global_buffs: Option<Res<GlobalBuffs>>,
+    conditional_effects: Option<Res<ConditionalUpgradeEffects>>,
     commander_motion: Option<Res<CommanderMotionState>>,
     mut attackers: Query<(
         Entity,
@@ -308,7 +330,7 @@ fn emit_damage_events(
         .as_ref()
         .map(|value| commander_level_combat_multiplier(value.level))
         .unwrap_or(1.0);
-    let target_snapshot: Vec<(Entity, Unit, Vec2, f32, f32)> = targets
+    let target_snapshot: Vec<(Entity, Unit, Vec2, f32, f32, f32)> = targets
         .iter()
         .map(|(entity, unit, transform, health, armor)| {
             let base_armor = armor.map(|value| value.0).unwrap_or(0.0);
@@ -330,14 +352,21 @@ fn emit_damage_events(
                 *unit,
                 transform.translation.truncate(),
                 health.current,
+                health.max,
                 effective_armor,
             )
         })
         .collect();
-    let has_non_commander_friendlies = target_snapshot.iter().any(|(_, unit, _, health, _)| {
+    let formation_targets: Vec<(Entity, Unit, Vec2, f32, f32)> = target_snapshot
+        .iter()
+        .map(|(entity, unit, position, health, _max_health, armor)| {
+            (*entity, *unit, *position, *health, *armor)
+        })
+        .collect();
+    let has_non_commander_friendlies = target_snapshot.iter().any(|(_, unit, _, health, _, _)| {
         unit.team == Team::Friendly && unit.kind != UnitKind::Commander && *health > 0.0
     });
-    let formation_context = friendly_formation_context(&target_snapshot);
+    let formation_context = friendly_formation_context(&formation_targets);
 
     for (_, attacker_unit, attacker_morale, attacker_transform, attack_profile, mut attack_cd) in
         &mut attackers
@@ -353,9 +382,15 @@ fn emit_damage_events(
             Team::Neutral => continue,
         };
 
-        let mut closest_target: Option<(Entity, f32, f32, Vec2, UnitKind)> = None;
-        for (target_entity, target_unit, target_pos, target_health, target_armor) in
-            &target_snapshot
+        let mut closest_target: Option<(Entity, f32, f32, f32, f32, Vec2, UnitKind)> = None;
+        for (
+            target_entity,
+            target_unit,
+            target_pos,
+            target_health,
+            target_max_health,
+            target_armor,
+        ) in &target_snapshot
         {
             if target_unit.team != opposite_team || *target_health <= 0.0 {
                 continue;
@@ -373,17 +408,28 @@ fn emit_damage_events(
                     *target_entity,
                     dist_sq,
                     *target_armor,
+                    *target_health,
+                    *target_max_health,
                     *target_pos,
                     target_unit.kind,
                 );
                 match closest_target {
-                    Some((_, best_dist, _, _, _)) if dist_sq >= best_dist => {}
+                    Some((_, best_dist, _, _, _, _, _)) if dist_sq >= best_dist => {}
                     _ => closest_target = Some(candidate),
                 }
             }
         }
 
-        if let Some((target_entity, _, armor, target_position, target_kind)) = closest_target {
+        if let Some((
+            target_entity,
+            _,
+            armor,
+            target_health,
+            target_max_health,
+            target_position,
+            target_kind,
+        )) = closest_target
+        {
             attack_cd.0.reset();
             let morale_multiplier = attacker_morale
                 .copied()
@@ -411,11 +457,26 @@ fn emit_damage_events(
                     active_formation_config(&data, *active_formation).slot_spacing,
                 );
                 base * inside_multiplier
+                    * conditional_effects
+                        .as_deref()
+                        .map(|effects| effects.friendly_damage_multiplier)
+                        .unwrap_or(1.0)
             } else {
                 morale_multiplier
             };
 
-            let damage = compute_damage(attack_profile.damage, armor, outgoing_multiplier);
+            let mut damage = compute_damage(attack_profile.damage, armor, outgoing_multiplier);
+            let execute_threshold = conditional_effects
+                .as_deref()
+                .map(|effects| effects.execute_below_health_ratio)
+                .unwrap_or(0.0);
+            if attacker_unit.team == Team::Friendly
+                && execute_threshold > 0.0
+                && target_max_health > 0.0
+                && (target_health / target_max_health) <= execute_threshold
+            {
+                damage = target_health + armor + 1.0;
+            }
 
             damage_events.send(DamageEvent {
                 target: target_entity,

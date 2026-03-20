@@ -36,6 +36,7 @@ pub struct UnitsConfigFile {
     pub commander: UnitStatsConfig,
     pub recruit_christian_peasant_infantry: UnitStatsConfig,
     pub recruit_christian_peasant_archer: UnitStatsConfig,
+    pub recruit_christian_peasant_priest: UnitStatsConfig,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -105,6 +106,10 @@ pub struct UpgradeConfig {
     pub adds_to_skillbar: bool,
     #[serde(default)]
     pub formation_id: Option<String>,
+    #[serde(default)]
+    pub requirement_type: Option<String>,
+    #[serde(default)]
+    pub requirement_min_tier0_share: Option<f32>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -232,6 +237,10 @@ fn validate_units(config: &UnitsConfigFile) -> Result<()> {
     validate_unit_stats(
         &config.recruit_christian_peasant_archer,
         "recruit_christian_peasant_archer",
+    )?;
+    validate_unit_stats(
+        &config.recruit_christian_peasant_priest,
+        "recruit_christian_peasant_priest",
     )
 }
 
@@ -339,6 +348,21 @@ fn validate_upgrades(config: &UpgradesConfigFile) -> Result<()> {
         {
             bail!("upgrade[{idx}] weight_exponent must be > 0");
         }
+        if let Some(requirement_kind) = upgrade.requirement_type.as_deref()
+            && !requirement_kind.trim().is_empty()
+        {
+            if requirement_kind != "tier0_share" {
+                bail!("upgrade[{idx}] unknown requirement_type={requirement_kind}");
+            }
+            let Some(share) = upgrade.requirement_min_tier0_share else {
+                bail!(
+                    "upgrade[{idx}] tier0_share requirement requires requirement_min_tier0_share"
+                );
+            };
+            if !(0.0..=1.0).contains(&share) {
+                bail!("upgrade[{idx}] requirement_min_tier0_share must be in [0,1]");
+            }
+        }
     }
     Ok(())
 }
@@ -413,7 +437,8 @@ mod tests {
             r#"{
               "commander":{"id":"c","max_hp":10.0,"armor":1.0,"damage":2.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":100.0,"morale":100.0,"aura_radius":10.0},
               "recruit_christian_peasant_infantry":{"id":"r1","max_hp":9.0,"armor":1.0,"damage":2.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":90.0,"morale":90.0},
-              "recruit_christian_peasant_archer":{"id":"r2","max_hp":7.0,"armor":0.5,"damage":1.5,"attack_cooldown_secs":1.1,"attack_range":80.0,"move_speed":95.0,"morale":85.0}
+              "recruit_christian_peasant_archer":{"id":"r2","max_hp":7.0,"armor":0.5,"damage":1.5,"attack_cooldown_secs":1.1,"attack_range":80.0,"move_speed":95.0,"morale":85.0},
+              "recruit_christian_peasant_priest":{"id":"r3","max_hp":8.0,"armor":0.5,"damage":0.1,"attack_cooldown_secs":1.1,"attack_range":20.0,"move_speed":92.0,"morale":88.0}
             }"#,
         );
         write_config(
@@ -468,7 +493,8 @@ mod tests {
             r#"{
               "commander":{"id":"c","max_hp":10.0,"armor":1.0,"damage":2.0,"attack_cooldown_secs":-1.0,"attack_range":20.0,"move_speed":100.0,"morale":100.0,"aura_radius":10.0},
               "recruit_christian_peasant_infantry":{"id":"r1","max_hp":9.0,"armor":1.0,"damage":2.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":90.0,"morale":90.0},
-              "recruit_christian_peasant_archer":{"id":"r2","max_hp":7.0,"armor":0.5,"damage":1.5,"attack_cooldown_secs":1.1,"attack_range":80.0,"move_speed":95.0,"morale":85.0}
+              "recruit_christian_peasant_archer":{"id":"r2","max_hp":7.0,"armor":0.5,"damage":1.5,"attack_cooldown_secs":1.1,"attack_range":80.0,"move_speed":95.0,"morale":85.0},
+              "recruit_christian_peasant_priest":{"id":"r3","max_hp":8.0,"armor":0.5,"damage":0.1,"attack_cooldown_secs":1.1,"attack_range":20.0,"move_speed":92.0,"morale":88.0}
             }"#,
         );
 

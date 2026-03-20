@@ -276,7 +276,7 @@ fn current_wave_number(waves: Option<&WaveRuntime>) -> u32 {
     let Some(runtime) = waves else {
         return 1;
     };
-    (runtime.next_wave_index as u32 + runtime.infinite_wave_index).max(1)
+    runtime.current_wave.max(1)
 }
 
 fn current_commander_level(progression: Option<&Progression>) -> u32 {

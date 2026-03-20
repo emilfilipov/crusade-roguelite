@@ -4,7 +4,11 @@
 Single-file technical reference for current MVP runtime behavior.
 Use this for entity/component/system lookup without scanning all source files.
 
-## Latest Update (2026-03-19)
+## Latest Update (2026-03-20)
+- Added `RunModalState` state machine for in-run utility screens (`Inventory`, `Stats`, `Skill Book`, `Archive`, `Unit Upgrade`).
+- Added shared modal request event path (`RunModalRequestEvent`) so keyboard and UI button actions use the same reducer logic.
+- Added modal hotkeys in-run: `I`, `O`, `P`, `K`, `U`; `Escape` closes modal first, otherwise opens pause menu.
+- Added modal overlay scaffold renderer that pauses in-run simulation while open.
 - Renamed the old recruit `Infantry/Knight` to `Christian Peasant Infantry`.
 - Added `Christian Peasant Archer` as a second recruitable retinue unit.
 - Rescue spawns now carry recruit type metadata and alternate infantry/archer by spawn sequence.
@@ -107,11 +111,14 @@ Use this for entity/component/system lookup without scanning all source files.
 ### Game States
 - `Boot`
 - `MainMenu`
+- `MatchSetup`
+- `Archive`
 - `Settings`
 - `InRun`
 - `LevelUp` (run is paused until an upgrade card is selected)
 - `Paused`
 - `GameOver` (defeat pauses run and shows overlay actions)
+- `Victory`
 
 ## Data Files and Live Values
 Loaded from `assets/data` by `GameData::load_from_dir`.
@@ -208,6 +215,7 @@ Roll fields:
 
 ### Resources
 - `RunSession`
+- `RunModalState`
 - `FrameRateCap`
 - `GameData`
 - `MapBounds`
@@ -226,6 +234,7 @@ Roll fields:
 
 ### Events
 - `StartRunEvent`
+- `RunModalRequestEvent`
 - `RecruitEvent`
 - `DamageEvent`
 - `UnitDamagedEvent`
@@ -338,7 +347,11 @@ Friendly combined outgoing multiplier has lower clamp:
 ### `core.rs`
 - Boot -> menu transition
 - Main menu cleanup
-- in-run pause trigger (`Escape` -> `Paused`)
+- in-run modal hotkeys (`I/O/P/K/U`) through reducer-based modal request flow
+- `Escape` behavior priority:
+  - close open run modal
+  - otherwise open pause menu
+- virtual time pause/unpause sync while run modal is open
 - survival timer
 - commander-loss transition to `GameOver`
 
@@ -414,6 +427,12 @@ Friendly combined outgoing multiplier has lower clamp:
   - slot `1` default Square formation (active)
   - key labels `1..0`
   - active slot border highlight
+- in-run modal overlay scaffolds for:
+  - `Inventory`
+  - `Stats`
+  - `Skill Book`
+  - `Archive`
+  - `Unit Upgrade`
 
 ### `upgrades.rs`
 - XP thresholds and explicit level-up draft flow (`InRun -> LevelUp -> InRun`)
