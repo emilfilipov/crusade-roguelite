@@ -101,6 +101,10 @@ Use this for entity/component/system lookup without scanning all source files.
 - Rebuilt map floor rendering into tiled desert ground.
 - Increased Christian Peasant Infantry attack range from `32` to `36`.
 - Added drop transit-to-commander flow: friendly pickup starts homing, drop effect triggers only on commander contact.
+- Added floating combat damage text:
+  - `DamageTextEvent` emitted from finalized damage application,
+  - world-space numeric text with rise/fade animation,
+  - per-frame and active-entity caps to prevent text spikes under high hit density.
 - Replaced placeholder `morale_weight` usage with active per-unit `Morale` (friendlies and enemies).
 - Added morale-based combat debuff below 50% morale.
 - Refactored cohesion to event-driven behavior (damage/death/kill events + low-morale pressure).
@@ -291,6 +295,7 @@ Roll fields:
 - `PromoteUnitsEvent`
 - `DamageEvent`
 - `UnitDamagedEvent`
+- `DamageTextEvent`
 - `UnitDiedEvent`
 - `GainXpEvent`
 - `SpawnExpPackEvent`
@@ -484,7 +489,7 @@ Friendly combined outgoing multiplier has lower clamp:
 - shared unit ranged projectile emission (commander + archer hybrid behavior)
 - in-range targeting + damage emit
 - enemy-in-formation vulnerability check (`+20%` friendly damage when inside formation bounds)
-- damage apply + `UnitDamagedEvent`
+- damage apply + `UnitDamagedEvent` + `DamageTextEvent` (uses final applied damage, not requested pre-clamp amount)
 - death resolve + drop spawn events
 
 ### `morale.rs`
@@ -513,6 +518,7 @@ Friendly combined outgoing multiplier has lower clamp:
 - progress strips (rescue + banner pickup)
 - bottom-left vertical bars (average morale + cohesion)
 - world-space health bars
+- world-space floating damage text with timed rise/fade cleanup
 - bottom-right minimap prototype with periodic blip refresh
   - commander/friendlies/enemies
   - XP packs (yellow)

@@ -5,8 +5,8 @@ use crate::formation::{
     ActiveFormation, FormationModifiers, active_formation_config, formation_contains_position,
 };
 use crate::model::{
-    AttackCooldown, AttackProfile, DamageEvent, EnemyUnit, GameState, GlobalBuffs, Health, Morale,
-    SpawnExpPackEvent, Team, Unit, UnitDamagedEvent, UnitDiedEvent, UnitKind,
+    AttackCooldown, AttackProfile, DamageEvent, DamageTextEvent, EnemyUnit, GameState, GlobalBuffs,
+    Health, Morale, SpawnExpPackEvent, Team, Unit, UnitDamagedEvent, UnitDiedEvent, UnitKind,
 };
 use crate::morale::CohesionCombatModifiers;
 use crate::projectiles::Projectile;
@@ -620,16 +620,29 @@ pub fn inside_active_formation_bounds(
 
 fn apply_damage_events(
     mut damage_events: EventReader<DamageEvent>,
+    mut damage_text_events: EventWriter<DamageTextEvent>,
     mut damaged_events: EventWriter<UnitDamagedEvent>,
-    mut health_query: Query<(&mut Health, &Unit)>,
+    mut health_query: Query<(&mut Health, &Unit, &Transform)>,
 ) {
     for event in damage_events.read() {
-        if let Ok((mut health, unit)) = health_query.get_mut(event.target) {
-            health.current -= event.amount;
+        if event.amount <= 0.0 {
+            continue;
+        }
+        if let Ok((mut health, unit, transform)) = health_query.get_mut(event.target) {
+            let applied_damage = event.amount.min(health.current.max(0.0));
+            if applied_damage <= 0.0 {
+                continue;
+            }
+            health.current -= applied_damage;
             damaged_events.send(UnitDamagedEvent {
                 target: event.target,
                 team: unit.team,
-                amount: event.amount,
+                amount: applied_damage,
+            });
+            damage_text_events.send(DamageTextEvent {
+                world_position: transform.translation.truncate(),
+                target_team: unit.team,
+                amount: applied_damage,
             });
         }
     }

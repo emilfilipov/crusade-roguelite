@@ -11,9 +11,9 @@ use crate::formation::{ActiveFormation, FormationModifiers, FormationSkillBar, S
 use crate::inventory::{EquipmentUnitType, InventoryState};
 use crate::map::MapBounds;
 use crate::model::{
-    FrameRateCap, FriendlyUnit, GameState, Health, MatchSetupSelection, Morale, PlayerFaction,
-    RescuableUnit, RunModalAction, RunModalRequestEvent, RunModalScreen, RunModalState, RunSession,
-    StartRunEvent, Team, Unit, UnitKind, level_cap_from_locked_budget,
+    DamageTextEvent, FrameRateCap, FriendlyUnit, GameState, Health, MatchSetupSelection, Morale,
+    PlayerFaction, RescuableUnit, RunModalAction, RunModalRequestEvent, RunModalScreen,
+    RunModalState, RunSession, StartRunEvent, Team, Unit, UnitKind, level_cap_from_locked_budget,
 };
 use crate::morale::{Cohesion, average_morale_ratio};
 use crate::rescue::RescueProgress;
@@ -72,6 +72,17 @@ struct HealthBarFill;
 const HEALTH_BAR_WIDTH: f32 = 22.0;
 const HEALTH_BAR_HEIGHT: f32 = 3.0;
 const HEALTH_BAR_Y_OFFSET: f32 = 24.0;
+
+#[derive(Component, Clone, Copy, Debug)]
+struct FloatingDamageText;
+
+#[derive(Component, Clone, Copy, Debug)]
+struct FloatingDamageTextRuntime {
+    age_secs: f32,
+    lifetime_secs: f32,
+    rise_speed: f32,
+    base_rgb: Vec3,
+}
 
 #[derive(Component, Clone, Copy, Debug)]
 struct MainMenuRoot;
@@ -331,6 +342,13 @@ impl Default for MinimapRefreshRuntime {
     }
 }
 
+#[derive(Clone, Debug)]
+struct FloatingDamageTextSpawnData {
+    translation: Vec3,
+    text: String,
+    base_rgb: Vec3,
+}
+
 #[derive(SystemParam)]
 struct RunModalOverlayDeps<'w, 's> {
     inventory: Res<'w, InventoryState>,
@@ -379,6 +397,13 @@ const SKILL_BAR_SLOT_BORDER: Color = Color::srgba(0.78, 0.72, 0.58, 0.4);
 const SKILL_BAR_SLOT_ACTIVE_BORDER: Color = Color::srgb(0.94, 0.82, 0.43);
 const UTILITY_BAR_BG: Color = Color::srgba(0.05, 0.045, 0.04, 0.72);
 const UTILITY_BAR_BORDER: Color = Color::srgba(0.78, 0.72, 0.58, 0.35);
+const FLOATING_DAMAGE_TEXT_START_Y_OFFSET: f32 = 24.0;
+const FLOATING_DAMAGE_TEXT_Z: f32 = 60.0;
+const FLOATING_DAMAGE_TEXT_FONT_SIZE: f32 = 18.0;
+const FLOATING_DAMAGE_TEXT_LIFETIME_SECS: f32 = 0.72;
+const FLOATING_DAMAGE_TEXT_RISE_SPEED: f32 = 44.0;
+const FLOATING_DAMAGE_TEXT_MAX_ACTIVE: usize = 320;
+const FLOATING_DAMAGE_TEXT_MAX_SPAWNS_PER_FRAME: usize = 56;
 
 pub struct UiPlugin;
 
@@ -409,7 +434,10 @@ impl Plugin for UiPlugin {
             .add_systems(OnEnter(GameState::GameOver), despawn_in_run_hud)
             .add_systems(OnEnter(GameState::Victory), despawn_in_run_hud)
             .add_systems(OnEnter(GameState::InRun), spawn_in_run_hud)
-            .add_systems(OnExit(GameState::InRun), despawn_run_modal_overlay)
+            .add_systems(
+                OnExit(GameState::InRun),
+                (despawn_run_modal_overlay, despawn_floating_damage_text),
+            )
             .add_systems(
                 Update,
                 handle_main_menu_buttons.run_if(in_state(GameState::MainMenu)),
@@ -487,6 +515,12 @@ impl Plugin for UiPlugin {
             .add_systems(
                 Update,
                 update_minimap_hud.run_if(in_state(GameState::InRun)),
+            )
+            .add_systems(
+                Update,
+                (spawn_floating_damage_text, animate_floating_damage_text)
+                    .chain()
+                    .run_if(in_state(GameState::InRun)),
             )
             .add_systems(
                 Update,
@@ -4594,6 +4628,140 @@ fn update_health_bar_fills(
     }
 }
 
+fn spawn_floating_damage_text(
+    mut commands: Commands,
+    mut damage_text_events: EventReader<DamageTextEvent>,
+    active_texts: Query<Entity, With<FloatingDamageText>>,
+) {
+    let mut active_count = active_texts.iter().len();
+    let mut spawned_this_frame = 0usize;
+    for event in damage_text_events.read() {
+        if event.amount <= 0.0 {
+            continue;
+        }
+        if active_count >= FLOATING_DAMAGE_TEXT_MAX_ACTIVE {
+            continue;
+        }
+        if spawned_this_frame >= FLOATING_DAMAGE_TEXT_MAX_SPAWNS_PER_FRAME {
+            continue;
+        }
+        let spawn_data = floating_damage_text_spawn_data(event, spawned_this_frame);
+        commands.spawn((
+            FloatingDamageText,
+            FloatingDamageTextRuntime {
+                age_secs: 0.0,
+                lifetime_secs: FLOATING_DAMAGE_TEXT_LIFETIME_SECS,
+                rise_speed: FLOATING_DAMAGE_TEXT_RISE_SPEED,
+                base_rgb: spawn_data.base_rgb,
+            },
+            Text2dBundle {
+                text: Text::from_section(
+                    spawn_data.text,
+                    TextStyle {
+                        font_size: FLOATING_DAMAGE_TEXT_FONT_SIZE,
+                        color: Color::srgba(
+                            spawn_data.base_rgb.x,
+                            spawn_data.base_rgb.y,
+                            spawn_data.base_rgb.z,
+                            1.0,
+                        ),
+                        ..default()
+                    },
+                ),
+                transform: Transform::from_translation(spawn_data.translation),
+                text_anchor: bevy::sprite::Anchor::Center,
+                ..default()
+            },
+        ));
+        active_count += 1;
+        spawned_this_frame += 1;
+    }
+}
+
+fn animate_floating_damage_text(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut floating_texts: Query<
+        (
+            Entity,
+            &mut FloatingDamageTextRuntime,
+            &mut Transform,
+            &mut Text,
+        ),
+        With<FloatingDamageText>,
+    >,
+) {
+    let delta_secs = time.delta_seconds();
+    for (entity, mut runtime, mut transform, mut text) in &mut floating_texts {
+        runtime.age_secs += delta_secs;
+        if floating_damage_text_is_expired(runtime.age_secs, runtime.lifetime_secs) {
+            commands.entity(entity).despawn_recursive();
+            continue;
+        }
+        transform.translation.y += runtime.rise_speed * delta_secs;
+        let alpha = floating_damage_text_alpha(runtime.age_secs, runtime.lifetime_secs);
+        text.sections[0].style.color = Color::srgba(
+            runtime.base_rgb.x,
+            runtime.base_rgb.y,
+            runtime.base_rgb.z,
+            alpha,
+        );
+    }
+}
+
+fn despawn_floating_damage_text(
+    mut commands: Commands,
+    floating_texts: Query<Entity, With<FloatingDamageText>>,
+) {
+    for entity in &floating_texts {
+        commands.entity(entity).despawn_recursive();
+    }
+}
+
+fn floating_damage_text_spawn_data(
+    event: &DamageTextEvent,
+    spawn_index: usize,
+) -> FloatingDamageTextSpawnData {
+    const X_JITTER_LANES: [f32; 5] = [-10.0, -5.0, 0.0, 5.0, 10.0];
+    let lane_index = spawn_index % X_JITTER_LANES.len();
+    let row = ((spawn_index / X_JITTER_LANES.len()) % 3) as f32;
+    let x_offset = X_JITTER_LANES[lane_index];
+    let y_offset = FLOATING_DAMAGE_TEXT_START_Y_OFFSET + row * 4.0;
+    FloatingDamageTextSpawnData {
+        translation: Vec3::new(
+            event.world_position.x + x_offset,
+            event.world_position.y + y_offset,
+            FLOATING_DAMAGE_TEXT_Z,
+        ),
+        text: format_damage_text_amount(event.amount),
+        base_rgb: floating_damage_text_team_rgb(event.target_team),
+    }
+}
+
+fn format_damage_text_amount(amount: f32) -> String {
+    let rounded = amount.max(1.0).round();
+    format!("{}", rounded as u32)
+}
+
+fn floating_damage_text_team_rgb(team: Team) -> Vec3 {
+    match team {
+        Team::Friendly => Vec3::new(0.96, 0.33, 0.25),
+        Team::Enemy => Vec3::new(0.98, 0.88, 0.23),
+        Team::Neutral => Vec3::new(0.84, 0.84, 0.8),
+    }
+}
+
+fn floating_damage_text_alpha(age_secs: f32, lifetime_secs: f32) -> f32 {
+    if lifetime_secs <= 0.0 {
+        return 0.0;
+    }
+    (1.0 - age_secs / lifetime_secs).clamp(0.0, 1.0)
+}
+
+fn floating_damage_text_is_expired(age_secs: f32, lifetime_secs: f32) -> bool {
+    age_secs >= lifetime_secs
+}
+
 fn health_bar_team_color(team: Team) -> Color {
     match team {
         Team::Friendly => Color::srgb(0.2, 0.75, 0.24),
@@ -4619,14 +4787,19 @@ mod tests {
     use crate::enemies::WaveRuntime;
     use crate::formation::{ActiveFormation, FormationModifiers, FormationSkillBar};
     use crate::map::MapBounds;
-    use crate::model::{FrameRateCap, GlobalBuffs, PlayerFaction, RunModalAction, RunModalScreen};
+    use crate::model::{
+        DamageTextEvent, FrameRateCap, GlobalBuffs, PlayerFaction, RunModalAction, RunModalScreen,
+        Team,
+    };
     use crate::ui::{
         HudSnapshot, MainMenuAction, MainMenuDispatch, UnitUpgradeQuantity,
         archive_entries_for_category, build_skill_book_panel_data, build_stats_panel_data,
         can_select_match_setup_faction, displayed_wave_number, find_skill_section, find_stats_row,
-        format_commander_level_text, format_elapsed_mm_ss, frame_cap_label, health_bar_fill_width,
-        main_menu_dispatch, max_affordable_promotions, modal_action_for_utility_button,
-        requested_promotion_count, rescue_progress_ratio, world_to_minimap_pos,
+        floating_damage_text_alpha, floating_damage_text_is_expired,
+        floating_damage_text_spawn_data, format_commander_level_text, format_elapsed_mm_ss,
+        frame_cap_label, health_bar_fill_width, main_menu_dispatch, max_affordable_promotions,
+        modal_action_for_utility_button, requested_promotion_count, rescue_progress_ratio,
+        world_to_minimap_pos,
     };
     use crate::upgrades::{Progression, SkillBookEntry, SkillBookLog, UpgradeCardIcon};
 
@@ -4656,6 +4829,30 @@ mod tests {
         assert_eq!(health_bar_fill_width(100.0, 100.0, 22.0), 22.0);
         assert_eq!(health_bar_fill_width(150.0, 100.0, 22.0), 22.0);
         assert_eq!(health_bar_fill_width(-10.0, 100.0, 22.0), 0.0);
+    }
+
+    #[test]
+    fn damage_text_spawn_data_maps_event_payload() {
+        let event = DamageTextEvent {
+            world_position: bevy::prelude::Vec2::new(100.0, -50.0),
+            target_team: Team::Enemy,
+            amount: 12.6,
+        };
+        let data = floating_damage_text_spawn_data(&event, 0);
+        assert_eq!(data.text, "13");
+        assert!((data.translation.x - 90.0).abs() < 0.001);
+        assert!((data.translation.y - -26.0).abs() < 0.001);
+        assert!((data.translation.z - 60.0).abs() < 0.001);
+        assert!((data.base_rgb.x - 0.98).abs() < 0.001);
+    }
+
+    #[test]
+    fn floating_damage_text_cleanup_logic_expires_at_lifetime() {
+        assert!((floating_damage_text_alpha(0.0, 1.0) - 1.0).abs() < 0.001);
+        assert!((floating_damage_text_alpha(0.5, 1.0) - 0.5).abs() < 0.001);
+        assert_eq!(floating_damage_text_alpha(2.0, 1.0), 0.0);
+        assert!(!floating_damage_text_is_expired(0.69, 0.7));
+        assert!(floating_damage_text_is_expired(0.7, 0.7));
     }
 
     #[test]

@@ -401,7 +401,7 @@
   - `docs/SYSTEM_SCOPE_MAP.md`
 
 ### CRU-073 - Floating Damage Text
-- Status: `TODO`
+- Status: `DONE`
 - Type: `UI`
 - Priority: `P1`
 - Depends on: `none`

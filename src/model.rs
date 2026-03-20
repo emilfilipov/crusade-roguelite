@@ -257,6 +257,13 @@ pub struct UnitDamagedEvent {
 }
 
 #[derive(Event, Clone, Copy, Debug)]
+pub struct DamageTextEvent {
+    pub world_position: Vec2,
+    pub target_team: Team,
+    pub amount: f32,
+}
+
+#[derive(Event, Clone, Copy, Debug)]
 pub struct UnitDiedEvent {
     pub team: Team,
     pub kind: UnitKind,
