@@ -10,6 +10,8 @@ Use this for entity/component/system lookup without scanning all source files.
 - Added modal hotkeys in-run: `I`, `O`, `P`, `K`, `U`; `Escape` closes modal first, otherwise opens pause menu.
 - Added modal overlay scaffold renderer that pauses in-run simulation while open.
 - Added top-right in-run utility bar with five icon buttons mapped to the same modal requests as hotkeys.
+- Added inventory scaffold module/resource (`InventoryState`) with serializable bag/equipment setup model.
+- Inventory modal now renders dedicated bag list + per-unit equipment setup sections.
 - Renamed the old recruit `Infantry/Knight` to `Christian Peasant Infantry`.
 - Added `Christian Peasant Archer` as a second recruitable retinue unit.
 - Rescue spawns now carry recruit type metadata and alternate infantry/archer by spawn sequence.
@@ -92,19 +94,20 @@ Use this for entity/component/system lookup without scanning all source files.
 4. `PerformancePlugin`
 5. `VisualPlugin`
 6. `MapPlugin`
-7. `SquadPlugin`
-8. `FormationPlugin`
-9. `CollisionPlugin`
-10. `RescuePlugin`
-11. `DropsPlugin`
-12. `EnemyPlugin`
-13. `CombatPlugin`
-14. `ProjectilePlugin`
-15. `MoralePlugin`
-16. `BannerPlugin`
-17. `UpgradePlugin`
-18. `UiPlugin`
-19. `PlatformPlugin`
+7. `InventoryPlugin`
+8. `SquadPlugin`
+9. `FormationPlugin`
+10. `CollisionPlugin`
+11. `RescuePlugin`
+12. `DropsPlugin`
+13. `EnemyPlugin`
+14. `CombatPlugin`
+15. `ProjectilePlugin`
+16. `MoralePlugin`
+17. `BannerPlugin`
+18. `UpgradePlugin`
+19. `UiPlugin`
+20. `PlatformPlugin`
 
 ### Runtime Note
 - `src/collision.rs` is now registered in app setup.
@@ -220,6 +223,7 @@ Roll fields:
 - `FrameRateCap`
 - `GameData`
 - `MapBounds`
+- `InventoryState`
 - `SquadRoster`
 - `ActiveFormation`, `FormationModifiers`
 - `FormationSkillBar`
@@ -364,6 +368,11 @@ Friendly combined outgoing multiplier has lower clamp:
 - camera follow + camera-only pixel snap + map-edge clamp
 - unit confinement to playable area inside wall inset
 
+### `inventory.rs`
+- runtime inventory scaffold resource initialization
+- unit-class equipment setup defaults (weapon/armor/trinket slots)
+- serializable bag/equipment model for future gear drops
+
 ### `squad.rs`
 - run start commander spawn
 - commander movement (includes enemy-inside-formation slowdown multiplier)
@@ -434,6 +443,9 @@ Friendly combined outgoing multiplier has lower clamp:
   - `Skill Book`
   - `Archive`
   - `Unit Upgrade`
+- inventory modal content:
+  - bag drops panel with empty-state fallback
+  - equipment setup panel for commander + current friendly unit classes
 - top-right utility icon bar:
   - `Inventory` (`I`)
   - `Stats` (`O`)

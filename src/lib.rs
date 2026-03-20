@@ -6,6 +6,7 @@ pub mod data;
 pub mod drops;
 pub mod enemies;
 pub mod formation;
+pub mod inventory;
 pub mod map;
 pub mod model;
 pub mod morale;
@@ -102,6 +103,7 @@ pub fn configure_game_app(app: &mut App) {
             performance::PerformancePlugin,
             visuals::VisualPlugin,
             map::MapPlugin,
+            inventory::InventoryPlugin,
             squad::SquadPlugin,
             formation::FormationPlugin,
             collision::CollisionPlugin,

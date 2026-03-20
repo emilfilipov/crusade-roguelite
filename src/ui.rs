@@ -6,6 +6,7 @@ use crate::data::GameData;
 use crate::drops::ExpPack;
 use crate::enemies::WaveRuntime;
 use crate::formation::{FormationSkillBar, SkillBarSkillKind};
+use crate::inventory::{EquipmentUnitType, InventoryState};
 use crate::map::MapBounds;
 use crate::model::{
     FrameRateCap, FriendlyUnit, GameState, Health, Morale, RescuableUnit, RunModalAction,
@@ -1150,6 +1151,7 @@ fn despawn_in_run_hud(mut commands: Commands, roots: Query<Entity, With<InRunHud
 fn sync_run_modal_overlay(
     mut commands: Commands,
     modal_state: Res<RunModalState>,
+    inventory: Res<InventoryState>,
     roots: Query<(Entity, &RunModalRoot)>,
 ) {
     let existing = roots.get_single().ok();
@@ -1168,7 +1170,7 @@ fn sync_run_modal_overlay(
             if let Some((entity, _)) = existing {
                 commands.entity(entity).despawn_recursive();
             }
-            spawn_run_modal_overlay(&mut commands, screen);
+            spawn_run_modal_overlay(&mut commands, screen, &inventory);
         }
     }
 }
@@ -1179,7 +1181,11 @@ fn despawn_run_modal_overlay(mut commands: Commands, roots: Query<Entity, With<R
     }
 }
 
-fn spawn_run_modal_overlay(commands: &mut Commands, screen: RunModalScreen) {
+fn spawn_run_modal_overlay(
+    commands: &mut Commands,
+    screen: RunModalScreen,
+    inventory: &InventoryState,
+) {
     let (title, subtitle) = run_modal_titles(screen);
     commands
         .spawn((
@@ -1242,6 +1248,9 @@ fn spawn_run_modal_overlay(commands: &mut Commands, screen: RunModalScreen) {
                     .with_justify(JustifyText::Center),
                     ..default()
                 });
+                if matches!(screen, RunModalScreen::Inventory) {
+                    spawn_inventory_modal_sections(panel, inventory);
+                }
                 panel
                     .spawn((
                         ButtonBundle {
@@ -1296,6 +1305,120 @@ fn run_modal_titles(screen: RunModalScreen) -> (&'static str, &'static str) {
             "Manage roster promotions and level-cost budget usage.",
         ),
     }
+}
+
+fn spawn_inventory_modal_sections(parent: &mut ChildBuilder, inventory: &InventoryState) {
+    parent
+        .spawn(NodeBundle {
+            style: Style {
+                width: Val::Percent(100.0),
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::FlexStart,
+                justify_content: JustifyContent::SpaceBetween,
+                column_gap: Val::Px(10.0),
+                ..default()
+            },
+            background_color: BackgroundColor(Color::NONE),
+            ..default()
+        })
+        .with_children(|layout| {
+            layout
+                .spawn(NodeBundle {
+                    style: Style {
+                        width: Val::Percent(46.0),
+                        min_height: Val::Px(150.0),
+                        border: UiRect::all(Val::Px(1.0)),
+                        padding: UiRect::all(Val::Px(8.0)),
+                        flex_direction: FlexDirection::Column,
+                        row_gap: Val::Px(6.0),
+                        ..default()
+                    },
+                    background_color: BackgroundColor(Color::srgba(0.04, 0.04, 0.04, 0.34)),
+                    border_color: BorderColor(UTILITY_BAR_BORDER),
+                    ..default()
+                })
+                .with_children(|bag| {
+                    bag.spawn(TextBundle::from_section(
+                        "Bag Drops",
+                        TextStyle {
+                            font_size: 20.0,
+                            color: MENU_BUTTON_TEXT_HOVERED,
+                            ..default()
+                        },
+                    ));
+                    if inventory.bag.is_empty() {
+                        bag.spawn(TextBundle::from_section(
+                            "No gear drops collected yet.",
+                            TextStyle {
+                                font_size: 16.0,
+                                color: HUD_TEXT_COLOR,
+                                ..default()
+                            },
+                        ));
+                    } else {
+                        for item in inventory.bag.iter().take(12) {
+                            bag.spawn(TextBundle::from_section(
+                                format!("{} - {}", item.name, item.description),
+                                TextStyle {
+                                    font_size: 14.0,
+                                    color: HUD_TEXT_COLOR,
+                                    ..default()
+                                },
+                            ));
+                        }
+                    }
+                });
+
+            layout
+                .spawn(NodeBundle {
+                    style: Style {
+                        width: Val::Percent(52.0),
+                        min_height: Val::Px(150.0),
+                        border: UiRect::all(Val::Px(1.0)),
+                        padding: UiRect::all(Val::Px(8.0)),
+                        flex_direction: FlexDirection::Column,
+                        row_gap: Val::Px(8.0),
+                        ..default()
+                    },
+                    background_color: BackgroundColor(Color::srgba(0.04, 0.04, 0.04, 0.34)),
+                    border_color: BorderColor(UTILITY_BAR_BORDER),
+                    ..default()
+                })
+                .with_children(|setups| {
+                    setups.spawn(TextBundle::from_section(
+                        "Equipment Setups",
+                        TextStyle {
+                            font_size: 20.0,
+                            color: MENU_BUTTON_TEXT_HOVERED,
+                            ..default()
+                        },
+                    ));
+                    for unit_type in EquipmentUnitType::all() {
+                        let Some(setup) = inventory.setup_for(unit_type) else {
+                            continue;
+                        };
+                        let slot_labels: Vec<String> = setup
+                            .slots
+                            .iter()
+                            .map(|slot| {
+                                if let Some(item_id) = &slot.item_id {
+                                    format!("{}: {item_id}", slot.display_name)
+                                } else {
+                                    format!("{}: Empty", slot.display_name)
+                                }
+                            })
+                            .collect();
+                        setups.spawn(TextBundle::from_section(
+                            format!("{} | {}", unit_type.label(), slot_labels.join(" | ")),
+                            TextStyle {
+                                font_size: 14.0,
+                                color: HUD_TEXT_COLOR,
+                                ..default()
+                            },
+                        ));
+                    }
+                });
+        });
 }
 
 fn spawn_vertical_meter<T: Component + Clone>(

@@ -124,7 +124,7 @@
   - `docs/ASSET_SOURCES.md`
 
 ### CRU-062 - Inventory Screen Scaffold (Gear + Equipment Layout)
-- Status: `TODO`
+- Status: `DONE`
 - Type: `UI`
 - Priority: `P1`
 - Depends on: `CRU-060`, `CRU-061`
