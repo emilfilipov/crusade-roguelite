@@ -106,30 +106,31 @@ fn dispatch_run_modal_hotkeys(
             next_state.set(GameState::Paused);
         }
     }
-    if keys.just_pressed(KeyCode::KeyI) {
-        modal_requests.send(RunModalRequestEvent {
-            action: RunModalAction::Toggle(RunModalScreen::Inventory),
-        });
+    for key in [
+        KeyCode::KeyI,
+        KeyCode::KeyO,
+        KeyCode::KeyP,
+        KeyCode::KeyK,
+        KeyCode::KeyU,
+    ] {
+        if keys.just_pressed(key)
+            && let Some(screen) = hotkey_to_run_modal_screen(key)
+        {
+            modal_requests.send(RunModalRequestEvent {
+                action: RunModalAction::Toggle(screen),
+            });
+        }
     }
-    if keys.just_pressed(KeyCode::KeyO) {
-        modal_requests.send(RunModalRequestEvent {
-            action: RunModalAction::Toggle(RunModalScreen::Stats),
-        });
-    }
-    if keys.just_pressed(KeyCode::KeyP) {
-        modal_requests.send(RunModalRequestEvent {
-            action: RunModalAction::Toggle(RunModalScreen::SkillBook),
-        });
-    }
-    if keys.just_pressed(KeyCode::KeyK) {
-        modal_requests.send(RunModalRequestEvent {
-            action: RunModalAction::Toggle(RunModalScreen::Archive),
-        });
-    }
-    if keys.just_pressed(KeyCode::KeyU) {
-        modal_requests.send(RunModalRequestEvent {
-            action: RunModalAction::Toggle(RunModalScreen::UnitUpgrade),
-        });
+}
+
+pub fn hotkey_to_run_modal_screen(key: KeyCode) -> Option<RunModalScreen> {
+    match key {
+        KeyCode::KeyI => Some(RunModalScreen::Inventory),
+        KeyCode::KeyO => Some(RunModalScreen::Stats),
+        KeyCode::KeyP => Some(RunModalScreen::SkillBook),
+        KeyCode::KeyK => Some(RunModalScreen::Archive),
+        KeyCode::KeyU => Some(RunModalScreen::UnitUpgrade),
+        _ => None,
     }
 }
 
@@ -229,7 +230,7 @@ mod tests {
     use bevy::prelude::*;
 
     use crate::configure_game_app;
-    use crate::core::reduce_run_modal_state;
+    use crate::core::{hotkey_to_run_modal_screen, reduce_run_modal_state};
     use crate::model::{
         CommanderUnit, GameState, RunModalAction, RunModalScreen, RunModalState, StartRunEvent,
     };
@@ -327,5 +328,30 @@ mod tests {
                 reduce_run_modal_state(RunModalState::None, RunModalAction::Open(screen), true);
             assert_eq!(state, RunModalState::Open(screen));
         }
+    }
+
+    #[test]
+    fn modal_hotkeys_map_to_expected_screens() {
+        assert_eq!(
+            hotkey_to_run_modal_screen(KeyCode::KeyI),
+            Some(RunModalScreen::Inventory)
+        );
+        assert_eq!(
+            hotkey_to_run_modal_screen(KeyCode::KeyO),
+            Some(RunModalScreen::Stats)
+        );
+        assert_eq!(
+            hotkey_to_run_modal_screen(KeyCode::KeyP),
+            Some(RunModalScreen::SkillBook)
+        );
+        assert_eq!(
+            hotkey_to_run_modal_screen(KeyCode::KeyK),
+            Some(RunModalScreen::Archive)
+        );
+        assert_eq!(
+            hotkey_to_run_modal_screen(KeyCode::KeyU),
+            Some(RunModalScreen::UnitUpgrade)
+        );
+        assert_eq!(hotkey_to_run_modal_screen(KeyCode::Escape), None);
     }
 }

@@ -171,6 +171,14 @@ enum RunModalButtonAction {
     Close,
 }
 
+#[derive(Component, Clone, Copy, Debug)]
+struct UtilityBarRoot;
+
+#[derive(Component, Clone, Copy, Debug, Eq, PartialEq)]
+struct UtilityBarButton {
+    screen: RunModalScreen,
+}
+
 #[derive(Resource, Clone, Debug)]
 struct MinimapRefreshRuntime {
     timer: Timer,
@@ -209,6 +217,8 @@ const MINIMAP_MAX_EXP_BLIPS: usize = 320;
 const SKILL_BAR_SLOT_BG: Color = Color::srgba(0.05, 0.045, 0.04, 0.82);
 const SKILL_BAR_SLOT_BORDER: Color = Color::srgba(0.78, 0.72, 0.58, 0.4);
 const SKILL_BAR_SLOT_ACTIVE_BORDER: Color = Color::srgb(0.94, 0.82, 0.43);
+const UTILITY_BAR_BG: Color = Color::srgba(0.05, 0.045, 0.04, 0.72);
+const UTILITY_BAR_BORDER: Color = Color::srgba(0.78, 0.72, 0.58, 0.35);
 
 pub struct UiPlugin;
 
@@ -270,7 +280,11 @@ impl Plugin for UiPlugin {
             )
             .add_systems(
                 Update,
-                (sync_run_modal_overlay, handle_run_modal_buttons)
+                (
+                    sync_run_modal_overlay,
+                    handle_run_modal_buttons,
+                    handle_utility_bar_buttons,
+                )
                     .chain()
                     .run_if(in_state(GameState::InRun)),
             )
@@ -1121,6 +1135,7 @@ fn spawn_in_run_hud(
                 );
             });
 
+            spawn_utility_bar(root, &art);
             spawn_minimap(root);
             spawn_skill_bar(root, &art);
         });
@@ -1478,6 +1493,117 @@ fn skillbar_icon_handle(kind: SkillBarSkillKind, art: &crate::visuals::ArtAssets
     }
 }
 
+fn spawn_utility_bar(parent: &mut ChildBuilder, art: &crate::visuals::ArtAssets) {
+    parent
+        .spawn((
+            UtilityBarRoot,
+            NodeBundle {
+                style: Style {
+                    position_type: PositionType::Absolute,
+                    right: Val::Px(12.0),
+                    top: Val::Px(12.0),
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    column_gap: Val::Px(4.0),
+                    border: UiRect::all(Val::Px(1.0)),
+                    padding: UiRect::all(Val::Px(4.0)),
+                    ..default()
+                },
+                background_color: BackgroundColor(UTILITY_BAR_BG),
+                border_color: BorderColor(UTILITY_BAR_BORDER),
+                ..default()
+            },
+        ))
+        .with_children(|bar| {
+            for screen in [
+                RunModalScreen::Inventory,
+                RunModalScreen::Stats,
+                RunModalScreen::SkillBook,
+                RunModalScreen::Archive,
+                RunModalScreen::UnitUpgrade,
+            ] {
+                spawn_utility_bar_button(bar, screen, art);
+            }
+        });
+}
+
+fn spawn_utility_bar_button(
+    parent: &mut ChildBuilder,
+    screen: RunModalScreen,
+    art: &crate::visuals::ArtAssets,
+) {
+    parent
+        .spawn((
+            ButtonBundle {
+                style: Style {
+                    width: Val::Px(32.0),
+                    height: Val::Px(32.0),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    border: UiRect::all(Val::Px(1.0)),
+                    ..default()
+                },
+                background_color: BackgroundColor(Color::NONE),
+                border_color: BorderColor(Color::NONE),
+                ..default()
+            },
+            UtilityBarButton { screen },
+        ))
+        .with_children(|button| {
+            button.spawn(ImageBundle {
+                style: Style {
+                    width: Val::Px(20.0),
+                    height: Val::Px(20.0),
+                    ..default()
+                },
+                image: UiImage::new(utility_bar_icon(screen, art)),
+                background_color: BackgroundColor(Color::NONE),
+                ..default()
+            });
+            button.spawn(TextBundle {
+                style: Style {
+                    position_type: PositionType::Absolute,
+                    left: Val::Px(1.0),
+                    bottom: Val::Px(0.0),
+                    ..default()
+                },
+                text: Text::from_section(
+                    utility_bar_hotkey_label(screen),
+                    TextStyle {
+                        font_size: 9.0,
+                        color: Color::srgba(0.95, 0.93, 0.86, 0.82),
+                        ..default()
+                    },
+                ),
+                ..default()
+            });
+        });
+}
+
+fn utility_bar_icon(screen: RunModalScreen, art: &crate::visuals::ArtAssets) -> Handle<Image> {
+    match screen {
+        RunModalScreen::Inventory => art.upgrade_armor_icon.clone(),
+        RunModalScreen::Stats => art.upgrade_damage_icon.clone(),
+        RunModalScreen::SkillBook => art.upgrade_hospitalier_icon.clone(),
+        RunModalScreen::Archive => art.upgrade_authority_icon.clone(),
+        RunModalScreen::UnitUpgrade => art.upgrade_attack_speed_icon.clone(),
+    }
+}
+
+fn utility_bar_hotkey_label(screen: RunModalScreen) -> &'static str {
+    match screen {
+        RunModalScreen::Inventory => "I",
+        RunModalScreen::Stats => "O",
+        RunModalScreen::SkillBook => "P",
+        RunModalScreen::Archive => "K",
+        RunModalScreen::UnitUpgrade => "U",
+    }
+}
+
+pub fn modal_action_for_utility_button(screen: RunModalScreen) -> RunModalAction {
+    RunModalAction::Toggle(screen)
+}
+
 #[allow(clippy::type_complexity)]
 fn handle_main_menu_buttons(
     mut buttons: Query<
@@ -1828,6 +1954,40 @@ fn handle_run_modal_buttons(
             Interaction::Hovered => {
                 *border_color = BorderColor(MENU_BUTTON_BORDER_HOVERED);
                 *background_color = BackgroundColor(Color::NONE);
+            }
+            Interaction::None => {
+                *border_color = BorderColor(Color::NONE);
+                *background_color = BackgroundColor(Color::NONE);
+            }
+        }
+    }
+}
+
+#[allow(clippy::type_complexity)]
+fn handle_utility_bar_buttons(
+    mut buttons: Query<
+        (
+            &Interaction,
+            &UtilityBarButton,
+            &mut BorderColor,
+            &mut BackgroundColor,
+        ),
+        (Changed<Interaction>, With<Button>),
+    >,
+    mut modal_requests: EventWriter<RunModalRequestEvent>,
+) {
+    for (interaction, button, mut border_color, mut background_color) in &mut buttons {
+        match *interaction {
+            Interaction::Pressed => {
+                *border_color = BorderColor(MENU_BUTTON_BORDER_HOVERED);
+                *background_color = BackgroundColor(Color::srgba(0.15, 0.12, 0.09, 0.58));
+                modal_requests.send(RunModalRequestEvent {
+                    action: modal_action_for_utility_button(button.screen),
+                });
+            }
+            Interaction::Hovered => {
+                *border_color = BorderColor(MENU_BUTTON_BORDER_HOVERED);
+                *background_color = BackgroundColor(Color::srgba(0.11, 0.09, 0.08, 0.46));
             }
             Interaction::None => {
                 *border_color = BorderColor(Color::NONE);
@@ -2265,12 +2425,15 @@ pub fn health_bar_fill_width(current: f32, max: f32, full_width: f32) -> f32 {
 
 #[cfg(test)]
 mod tests {
+    use crate::core::hotkey_to_run_modal_screen;
     use crate::enemies::WaveRuntime;
     use crate::map::MapBounds;
     use crate::model::FrameRateCap;
+    use crate::model::{RunModalAction, RunModalScreen};
     use crate::ui::{
         HudSnapshot, displayed_wave_number, format_elapsed_mm_ss, frame_cap_label,
-        health_bar_fill_width, rescue_progress_ratio, world_to_minimap_pos,
+        health_bar_fill_width, modal_action_for_utility_button, rescue_progress_ratio,
+        world_to_minimap_pos,
     };
 
     #[test]
@@ -2339,5 +2502,28 @@ mod tests {
             .expect("center should be visible");
         assert!((pos.x - 85.0).abs() < 0.01);
         assert!((pos.y - 85.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn utility_button_dispatch_matches_modal_toggle_contract() {
+        let action = modal_action_for_utility_button(RunModalScreen::Inventory);
+        assert_eq!(action, RunModalAction::Toggle(RunModalScreen::Inventory));
+    }
+
+    #[test]
+    fn utility_buttons_and_hotkeys_target_same_modal_screens() {
+        for key in [
+            bevy::prelude::KeyCode::KeyI,
+            bevy::prelude::KeyCode::KeyO,
+            bevy::prelude::KeyCode::KeyP,
+            bevy::prelude::KeyCode::KeyK,
+            bevy::prelude::KeyCode::KeyU,
+        ] {
+            let Some(screen) = hotkey_to_run_modal_screen(key) else {
+                panic!("expected modal screen mapping for key: {key:?}");
+            };
+            let action = modal_action_for_utility_button(screen);
+            assert_eq!(action, RunModalAction::Toggle(screen));
+        }
     }
 }

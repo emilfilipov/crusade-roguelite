@@ -9,6 +9,7 @@ Use this for entity/component/system lookup without scanning all source files.
 - Added shared modal request event path (`RunModalRequestEvent`) so keyboard and UI button actions use the same reducer logic.
 - Added modal hotkeys in-run: `I`, `O`, `P`, `K`, `U`; `Escape` closes modal first, otherwise opens pause menu.
 - Added modal overlay scaffold renderer that pauses in-run simulation while open.
+- Added top-right in-run utility bar with five icon buttons mapped to the same modal requests as hotkeys.
 - Renamed the old recruit `Infantry/Knight` to `Christian Peasant Infantry`.
 - Added `Christian Peasant Archer` as a second recruitable retinue unit.
 - Rescue spawns now carry recruit type metadata and alternate infantry/archer by spawn sequence.
@@ -433,6 +434,12 @@ Friendly combined outgoing multiplier has lower clamp:
   - `Skill Book`
   - `Archive`
   - `Unit Upgrade`
+- top-right utility icon bar:
+  - `Inventory` (`I`)
+  - `Stats` (`O`)
+  - `Skill Book` (`P`)
+  - `Archive` (`K`)
+  - `Unit Upgrade` (`U`)
 
 ### `upgrades.rs`
 - XP thresholds and explicit level-up draft flow (`InRun -> LevelUp -> InRun`)

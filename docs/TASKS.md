@@ -99,7 +99,7 @@
   - `docs/SYSTEMS_REFERENCE.md`
 
 ### CRU-061 - Top-Right Utility Bar + Icon Asset Mapping
-- Status: `TODO`
+- Status: `DONE`
 - Type: `UI`
 - Priority: `P0`
 - Depends on: `CRU-060`

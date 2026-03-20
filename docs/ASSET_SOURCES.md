@@ -16,6 +16,7 @@ Track external art sources, licenses, and current runtime mapping.
   - Rescuable peasant variants
   - `bandit_raider` state sprites (idle/move/attack/hit/dead)
   - Several upgrade icons
+  - In-run utility bar icons (inventory/stats/skill book/archive/unit upgrade)
 
 ### Kenney - Desert Shooter Pack
 - URL: https://kenney.nl/assets/desert-shooter-pack
