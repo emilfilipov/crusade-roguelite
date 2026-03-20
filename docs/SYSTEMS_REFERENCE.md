@@ -31,6 +31,11 @@ Use this for entity/component/system lookup without scanning all source files.
   - `ProgressionLockFeedback` emits reason text when XP leveling is blocked by roster costs,
   - `RosterEconomyFeedback` emits reason text when promotions are rejected by budget/path constraints,
   - Unit Upgrade modal now displays live budget and latest block reason strings.
+- Implemented Unit Upgrade modal runtime:
+  - left roster list with selectable unit source rows,
+  - right promotion tree pane with tier path display and promotion options,
+  - bulk action buttons (`+1`, `+5`, `MAX`) with affordability clamping.
+- Promotion validation now rejects non-upgrade paths (same-tier or invalid-tier conversions).
 - Added inventory scaffold module/resource (`InventoryState`) with serializable bag/equipment setup model.
 - Inventory modal now renders dedicated bag list + per-unit equipment setup sections.
 - Stats modal now renders base/bonus/final rows for commander and global level-up-driven modifiers.
@@ -268,6 +273,7 @@ Roll fields:
 - `ProgressionLockFeedback`
 - `OneTimeUpgradeTracker`
 - `RosterEconomy`, `RosterEconomyFeedback`
+- `UnitUpgradeUiState`
 - `CommanderMotionState`
 - `HudSnapshot`
 - `PlatformRuntime`
@@ -277,6 +283,7 @@ Roll fields:
 - `StartRunEvent`
 - `RunModalRequestEvent`
 - `RecruitEvent`
+- `PromoteUnitsEvent`
 - `DamageEvent`
 - `UnitDamagedEvent`
 - `UnitDiedEvent`
@@ -340,6 +347,14 @@ Friendly combined outgoing multiplier has lower clamp:
   - `allowed_max_level = max(1, 200 - locked_levels)`
 - Promotion guard:
   - a promotion is rejected if it would reduce `allowed_max_level` below current commander level.
+
+### Unit Upgrade Bulk Affordability (`src/ui.rs`)
+- For each promotion row, UI computes:
+  - `step_cost = to_tier - from_tier` (must be `> 0`)
+  - iterate requested count from `1..=source_count`
+  - stop when `level_cap_from_locked_budget(locked_levels + step_cost * requested) < commander_level`
+- `MAX` button uses the computed affordable count.
+- `+5` clamps to affordable count when fewer than 5 promotions are currently valid.
 
 ### Upgrade Roll Formula (`src/upgrades.rs`)
 - Draft picks `3` unique upgrades from the configured pool.

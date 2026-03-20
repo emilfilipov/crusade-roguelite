@@ -1,4 +1,5 @@
 use bevy::app::AppExit;
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
 use crate::archive::{ArchiveCategory, ArchiveDataset, ArchiveEntry};
@@ -12,12 +13,15 @@ use crate::map::MapBounds;
 use crate::model::{
     FrameRateCap, FriendlyUnit, GameState, Health, MatchSetupSelection, Morale, PlayerFaction,
     RescuableUnit, RunModalAction, RunModalRequestEvent, RunModalScreen, RunModalState, RunSession,
-    StartRunEvent, Team, Unit, UnitKind,
+    StartRunEvent, Team, Unit, UnitKind, level_cap_from_locked_budget,
 };
 use crate::morale::{Cohesion, average_morale_ratio};
 use crate::rescue::RescueProgress;
 use crate::settings::AppSettings;
-use crate::squad::{RosterEconomy, RosterEconomyFeedback, SquadRoster};
+use crate::squad::{
+    PromoteUnitsEvent, RosterEconomy, RosterEconomyFeedback, SquadRoster, friendly_tier_for_kind,
+    promotion_step_cost, unit_kind_label,
+};
 use crate::upgrades::{
     Progression, ProgressionLockFeedback, SelectUpgradeEvent, SkillBookLog, UpgradeCardIcon,
     UpgradeDraft, commander_level_hp_bonus, upgrade_card_icon, upgrade_display_description,
@@ -221,6 +225,38 @@ struct UtilityBarButton {
     screen: RunModalScreen,
 }
 
+#[derive(Resource, Clone, Copy, Debug)]
+struct UnitUpgradeUiState {
+    selected_source: UnitKind,
+}
+
+impl Default for UnitUpgradeUiState {
+    fn default() -> Self {
+        Self {
+            selected_source: UnitKind::ChristianPeasantInfantry,
+        }
+    }
+}
+
+#[derive(Component, Clone, Copy, Debug, Eq, PartialEq)]
+struct UnitUpgradeSourceButton {
+    kind: UnitKind,
+}
+
+#[derive(Component, Clone, Copy, Debug, Eq, PartialEq)]
+struct UnitUpgradePromoteButton {
+    from: UnitKind,
+    to: UnitKind,
+    quantity: UnitUpgradeQuantity,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum UnitUpgradeQuantity {
+    One,
+    Five,
+    Max,
+}
+
 #[derive(Clone, Debug)]
 struct StatsPanelData {
     active_formation_label: String,
@@ -255,13 +291,31 @@ struct SkillBookPanelEntry {
     active: Option<bool>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 struct UnitUpgradePanelData {
     commander_level: u32,
     allowed_max_level: u32,
     locked_levels: u32,
+    selected_source: UnitKind,
     blocked_upgrade_reason: Option<String>,
     progression_lock_reason: Option<String>,
+    roster_entries: Vec<UnitUpgradeRosterEntry>,
+    promotion_options: Vec<UnitPromotionOption>,
+}
+
+#[derive(Clone, Debug)]
+struct UnitUpgradeRosterEntry {
+    kind: UnitKind,
+    tier: u8,
+    count: u32,
+}
+
+#[derive(Clone, Debug)]
+struct UnitPromotionOption {
+    to_kind: UnitKind,
+    to_tier: u8,
+    source_count: u32,
+    max_affordable: u32,
 }
 
 #[derive(Resource, Clone, Debug)]
@@ -275,6 +329,25 @@ impl Default for MinimapRefreshRuntime {
             timer: Timer::from_seconds(0.12, TimerMode::Repeating),
         }
     }
+}
+
+#[derive(SystemParam)]
+struct RunModalOverlayDeps<'w, 's> {
+    inventory: Res<'w, InventoryState>,
+    data: Res<'w, GameData>,
+    archive: Res<'w, ArchiveDataset>,
+    progression: Res<'w, Progression>,
+    progression_lock_feedback: Res<'w, ProgressionLockFeedback>,
+    roster_economy: Res<'w, RosterEconomy>,
+    roster_feedback: Res<'w, RosterEconomyFeedback>,
+    unit_upgrade_state: Res<'w, UnitUpgradeUiState>,
+    buffs: Res<'w, crate::model::GlobalBuffs>,
+    skill_book: Res<'w, SkillBookLog>,
+    skillbar: Res<'w, FormationSkillBar>,
+    art: Res<'w, crate::visuals::ArtAssets>,
+    active_formation: Res<'w, ActiveFormation>,
+    formation_modifiers: Res<'w, FormationModifiers>,
+    roots: Query<'w, 's, (Entity, &'static RunModalRoot)>,
 }
 
 const MENU_BACKGROUND: Color = Color::srgb(0.12, 0.1, 0.08);
@@ -313,6 +386,7 @@ impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<HudSnapshot>()
             .init_resource::<MinimapRefreshRuntime>()
+            .init_resource::<UnitUpgradeUiState>()
             .add_systems(OnEnter(GameState::MainMenu), spawn_main_menu)
             .add_systems(OnExit(GameState::MainMenu), despawn_main_menu)
             .add_systems(OnEnter(GameState::MatchSetup), spawn_match_setup_menu)
@@ -386,6 +460,10 @@ impl Plugin for UiPlugin {
             .add_systems(
                 Update,
                 refresh_hud_snapshot.run_if(in_state(GameState::InRun)),
+            )
+            .add_systems(
+                Update,
+                handle_unit_upgrade_buttons.run_if(in_state(GameState::InRun)),
             )
             .add_systems(
                 Update,
@@ -1626,22 +1704,9 @@ fn despawn_in_run_hud(mut commands: Commands, roots: Query<Entity, With<InRunHud
 fn sync_run_modal_overlay(
     mut commands: Commands,
     modal_state: Res<RunModalState>,
-    inventory: Res<InventoryState>,
-    data: Res<GameData>,
-    archive: Res<ArchiveDataset>,
-    progression: Res<Progression>,
-    progression_lock_feedback: Res<ProgressionLockFeedback>,
-    roster_economy: Res<RosterEconomy>,
-    roster_feedback: Res<RosterEconomyFeedback>,
-    buffs: Res<crate::model::GlobalBuffs>,
-    skill_book: Res<SkillBookLog>,
-    skillbar: Res<FormationSkillBar>,
-    art: Res<crate::visuals::ArtAssets>,
-    active_formation: Res<ActiveFormation>,
-    formation_modifiers: Res<FormationModifiers>,
-    roots: Query<(Entity, &RunModalRoot)>,
+    deps: RunModalOverlayDeps,
 ) {
-    let existing = roots.get_single().ok();
+    let existing = deps.roots.get_single().ok();
     match *modal_state {
         RunModalState::None => {
             if let Some((entity, _)) = existing {
@@ -1649,8 +1714,15 @@ fn sync_run_modal_overlay(
             }
         }
         RunModalState::Open(screen) => {
+            let should_refresh_unit_upgrade = screen == RunModalScreen::UnitUpgrade
+                && (deps.roster_economy.is_changed()
+                    || deps.roster_feedback.is_changed()
+                    || deps.progression.is_changed()
+                    || deps.progression_lock_feedback.is_changed()
+                    || deps.unit_upgrade_state.is_changed());
             if let Some((_, root)) = existing
                 && root.screen == screen
+                && !should_refresh_unit_upgrade
             {
                 return;
             }
@@ -1658,29 +1730,34 @@ fn sync_run_modal_overlay(
                 commands.entity(entity).despawn_recursive();
             }
             let stats = build_stats_panel_data(
-                &data,
-                &progression,
-                &buffs,
-                *active_formation,
-                &formation_modifiers,
+                &deps.data,
+                &deps.progression,
+                &deps.buffs,
+                *deps.active_formation,
+                &deps.formation_modifiers,
             );
-            let skill_book_panel =
-                build_skill_book_panel_data(&skill_book, &skillbar, *active_formation, &data);
+            let skill_book_panel = build_skill_book_panel_data(
+                &deps.skill_book,
+                &deps.skillbar,
+                *deps.active_formation,
+                &deps.data,
+            );
             let unit_upgrade_panel = build_unit_upgrade_panel_data(
-                &roster_economy,
-                &roster_feedback,
-                &progression,
-                &progression_lock_feedback,
+                &deps.roster_economy,
+                &deps.roster_feedback,
+                &deps.progression,
+                &deps.progression_lock_feedback,
+                &deps.unit_upgrade_state,
             );
             spawn_run_modal_overlay(
                 &mut commands,
                 screen,
-                &inventory,
+                &deps.inventory,
                 &stats,
                 &skill_book_panel,
                 &unit_upgrade_panel,
-                &archive,
-                &art,
+                &deps.archive,
+                &deps.art,
             );
         }
     }
@@ -1704,6 +1781,11 @@ fn spawn_run_modal_overlay(
     art: &crate::visuals::ArtAssets,
 ) {
     let (title, subtitle) = run_modal_titles(screen);
+    let (panel_width, panel_min_height) = if screen == RunModalScreen::UnitUpgrade {
+        (Val::Px(960.0), Val::Px(520.0))
+    } else {
+        (Val::Px(580.0), Val::Px(320.0))
+    };
     commands
         .spawn((
             RunModalRoot { screen },
@@ -1726,8 +1808,8 @@ fn spawn_run_modal_overlay(
         .with_children(|root| {
             root.spawn(NodeBundle {
                 style: Style {
-                    width: Val::Px(580.0),
-                    min_height: Val::Px(320.0),
+                    width: panel_width,
+                    min_height: panel_min_height,
                     border: UiRect::all(Val::Px(1.0)),
                     flex_direction: FlexDirection::Column,
                     justify_content: JustifyContent::SpaceBetween,
@@ -2437,13 +2519,56 @@ fn build_unit_upgrade_panel_data(
     feedback: &RosterEconomyFeedback,
     progression: &Progression,
     lock_feedback: &ProgressionLockFeedback,
+    ui_state: &UnitUpgradeUiState,
 ) -> UnitUpgradePanelData {
+    let roster_entries = vec![
+        UnitUpgradeRosterEntry {
+            kind: UnitKind::ChristianPeasantInfantry,
+            tier: friendly_tier_for_kind(UnitKind::ChristianPeasantInfantry).unwrap_or(0),
+            count: roster_count_for_kind(economy, UnitKind::ChristianPeasantInfantry),
+        },
+        UnitUpgradeRosterEntry {
+            kind: UnitKind::ChristianPeasantArcher,
+            tier: friendly_tier_for_kind(UnitKind::ChristianPeasantArcher).unwrap_or(0),
+            count: roster_count_for_kind(economy, UnitKind::ChristianPeasantArcher),
+        },
+        UnitUpgradeRosterEntry {
+            kind: UnitKind::ChristianPeasantPriest,
+            tier: friendly_tier_for_kind(UnitKind::ChristianPeasantPriest).unwrap_or(0),
+            count: roster_count_for_kind(economy, UnitKind::ChristianPeasantPriest),
+        },
+    ];
+    let selected_source = resolve_selected_source(ui_state.selected_source, &roster_entries);
+    let source_count = roster_count_for_kind(economy, selected_source);
+    let current_level = progression.level.max(1);
+    let promotion_options = promotion_targets_for(selected_source)
+        .iter()
+        .filter_map(|to_kind| {
+            let to_tier = friendly_tier_for_kind(*to_kind)?;
+            Some(UnitPromotionOption {
+                to_kind: *to_kind,
+                to_tier,
+                source_count,
+                max_affordable: max_affordable_promotions(
+                    current_level,
+                    economy.locked_levels,
+                    source_count,
+                    selected_source,
+                    *to_kind,
+                ),
+            })
+        })
+        .collect();
+
     UnitUpgradePanelData {
-        commander_level: progression.level.max(1),
+        commander_level: current_level,
         allowed_max_level: economy.allowed_max_level,
         locked_levels: economy.locked_levels,
+        selected_source,
         blocked_upgrade_reason: feedback.blocked_upgrade_reason.clone(),
         progression_lock_reason: lock_feedback.message.clone(),
+        roster_entries,
+        promotion_options,
     }
 }
 
@@ -2465,7 +2590,7 @@ fn spawn_unit_upgrade_modal_sections(parent: &mut ChildBuilder, panel_data: &Uni
         .spawn(NodeBundle {
             style: Style {
                 width: Val::Percent(100.0),
-                min_height: Val::Px(190.0),
+                min_height: Val::Px(360.0),
                 border: UiRect::all(Val::Px(1.0)),
                 padding: UiRect::all(Val::Px(8.0)),
                 flex_direction: FlexDirection::Column,
@@ -2488,7 +2613,7 @@ fn spawn_unit_upgrade_modal_sections(parent: &mut ChildBuilder, panel_data: &Uni
             root.spawn(TextBundle::from_section(
                 format!("Upgrade feedback: {upgrade_feedback}"),
                 TextStyle {
-                    font_size: 14.0,
+                    font_size: 13.0,
                     color: HUD_TEXT_COLOR,
                     ..default()
                 },
@@ -2496,20 +2621,330 @@ fn spawn_unit_upgrade_modal_sections(parent: &mut ChildBuilder, panel_data: &Uni
             root.spawn(TextBundle::from_section(
                 format!("Progression feedback: {progression_feedback}"),
                 TextStyle {
-                    font_size: 14.0,
+                    font_size: 13.0,
                     color: HUD_TEXT_COLOR,
                     ..default()
                 },
             ));
             root.spawn(TextBundle::from_section(
-                "Tree layout and bulk promotion controls are tracked by CRU-069.",
+                "Tier I -> Tier II branches. Use +1, +5, or MAX for bulk promotions.",
                 TextStyle {
                     font_size: 13.0,
                     color: MENU_BUTTON_TEXT_DISABLED,
                     ..default()
                 },
             ));
+
+            root.spawn(NodeBundle {
+                style: Style {
+                    width: Val::Percent(100.0),
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::FlexStart,
+                    justify_content: JustifyContent::SpaceBetween,
+                    column_gap: Val::Px(10.0),
+                    ..default()
+                },
+                background_color: BackgroundColor(Color::NONE),
+                ..default()
+            })
+            .with_children(|layout| {
+                layout
+                    .spawn(NodeBundle {
+                        style: Style {
+                            width: Val::Percent(38.0),
+                            border: UiRect::all(Val::Px(1.0)),
+                            padding: UiRect::all(Val::Px(8.0)),
+                            flex_direction: FlexDirection::Column,
+                            row_gap: Val::Px(6.0),
+                            ..default()
+                        },
+                        background_color: BackgroundColor(Color::srgba(0.04, 0.04, 0.04, 0.34)),
+                        border_color: BorderColor(UTILITY_BAR_BORDER),
+                        ..default()
+                    })
+                    .with_children(|roster| {
+                        roster.spawn(TextBundle::from_section(
+                            "Roster",
+                            TextStyle {
+                                font_size: 18.0,
+                                color: MENU_BUTTON_TEXT_HOVERED,
+                                ..default()
+                            },
+                        ));
+                        for entry in &panel_data.roster_entries {
+                            let selected = entry.kind == panel_data.selected_source;
+                            roster
+                                .spawn((
+                                    ButtonBundle {
+                                        style: Style {
+                                            width: Val::Percent(100.0),
+                                            min_height: Val::Px(34.0),
+                                            justify_content: JustifyContent::FlexStart,
+                                            align_items: AlignItems::Center,
+                                            border: UiRect::all(Val::Px(1.0)),
+                                            padding: UiRect::axes(Val::Px(8.0), Val::Px(4.0)),
+                                            ..default()
+                                        },
+                                        background_color: BackgroundColor(Color::srgba(
+                                            0.08, 0.07, 0.06, 0.62,
+                                        )),
+                                        border_color: BorderColor(if selected {
+                                            MENU_BUTTON_BORDER_HOVERED
+                                        } else {
+                                            Color::srgba(0.78, 0.72, 0.58, 0.24)
+                                        }),
+                                        ..default()
+                                    },
+                                    UnitUpgradeSourceButton { kind: entry.kind },
+                                ))
+                                .with_children(|button| {
+                                    button.spawn(TextBundle::from_section(
+                                        format!(
+                                            "{} (Tier {}) x{}",
+                                            unit_kind_label(entry.kind),
+                                            entry.tier,
+                                            entry.count
+                                        ),
+                                        TextStyle {
+                                            font_size: 14.0,
+                                            color: if selected {
+                                                MENU_BUTTON_TEXT_HOVERED
+                                            } else {
+                                                HUD_TEXT_COLOR
+                                            },
+                                            ..default()
+                                        },
+                                    ));
+                                });
+                        }
+                    });
+
+                layout
+                    .spawn(NodeBundle {
+                        style: Style {
+                            width: Val::Percent(60.0),
+                            border: UiRect::all(Val::Px(1.0)),
+                            padding: UiRect::all(Val::Px(8.0)),
+                            flex_direction: FlexDirection::Column,
+                            row_gap: Val::Px(8.0),
+                            ..default()
+                        },
+                        background_color: BackgroundColor(Color::srgba(0.04, 0.04, 0.04, 0.34)),
+                        border_color: BorderColor(UTILITY_BAR_BORDER),
+                        ..default()
+                    })
+                    .with_children(|tree| {
+                        let selected_tier =
+                            friendly_tier_for_kind(panel_data.selected_source).unwrap_or(0);
+                        tree.spawn(TextBundle::from_section(
+                            format!(
+                                "Selected: {} (Tier {})",
+                                unit_kind_label(panel_data.selected_source),
+                                selected_tier
+                            ),
+                            TextStyle {
+                                font_size: 18.0,
+                                color: MENU_BUTTON_TEXT_HOVERED,
+                                ..default()
+                            },
+                        ));
+                        tree.spawn(TextBundle::from_section(
+                            "Tree Columns: I -> II -> III -> IV -> V",
+                            TextStyle {
+                                font_size: 13.0,
+                                color: MENU_BUTTON_TEXT_DISABLED,
+                                ..default()
+                            },
+                        ));
+
+                        if panel_data.promotion_options.is_empty() {
+                            tree.spawn(TextBundle::from_section(
+                                "No higher-tier promotion paths available for this unit.",
+                                TextStyle {
+                                    font_size: 14.0,
+                                    color: HUD_TEXT_COLOR,
+                                    ..default()
+                                },
+                            ));
+                            return;
+                        }
+
+                        for option in &panel_data.promotion_options {
+                            tree.spawn(NodeBundle {
+                                style: Style {
+                                    width: Val::Percent(100.0),
+                                    border: UiRect::all(Val::Px(1.0)),
+                                    padding: UiRect::all(Val::Px(6.0)),
+                                    flex_direction: FlexDirection::Column,
+                                    row_gap: Val::Px(6.0),
+                                    ..default()
+                                },
+                                background_color: BackgroundColor(Color::srgba(
+                                    0.07, 0.07, 0.07, 0.46,
+                                )),
+                                border_color: BorderColor(Color::srgba(0.78, 0.72, 0.58, 0.24)),
+                                ..default()
+                            })
+                            .with_children(|row| {
+                                row.spawn(TextBundle::from_section(
+                                    format!(
+                                        "{} -> {} (Tier {} -> {}) | Available {} | Max now {}",
+                                        unit_kind_label(panel_data.selected_source),
+                                        unit_kind_label(option.to_kind),
+                                        selected_tier,
+                                        option.to_tier,
+                                        option.source_count,
+                                        option.max_affordable
+                                    ),
+                                    TextStyle {
+                                        font_size: 13.0,
+                                        color: HUD_TEXT_COLOR,
+                                        ..default()
+                                    },
+                                ));
+                                row.spawn(NodeBundle {
+                                    style: Style {
+                                        width: Val::Percent(100.0),
+                                        flex_direction: FlexDirection::Row,
+                                        column_gap: Val::Px(6.0),
+                                        ..default()
+                                    },
+                                    background_color: BackgroundColor(Color::NONE),
+                                    ..default()
+                                })
+                                .with_children(|actions| {
+                                    for quantity in [
+                                        UnitUpgradeQuantity::One,
+                                        UnitUpgradeQuantity::Five,
+                                        UnitUpgradeQuantity::Max,
+                                    ] {
+                                        let enabled = option.max_affordable > 0;
+                                        actions
+                                            .spawn((
+                                                ButtonBundle {
+                                                    style: Style {
+                                                        width: Val::Px(64.0),
+                                                        height: Val::Px(28.0),
+                                                        justify_content: JustifyContent::Center,
+                                                        align_items: AlignItems::Center,
+                                                        border: UiRect::all(Val::Px(1.0)),
+                                                        ..default()
+                                                    },
+                                                    background_color: BackgroundColor(
+                                                        Color::srgba(0.08, 0.07, 0.06, 0.7),
+                                                    ),
+                                                    border_color: BorderColor(if enabled {
+                                                        Color::srgba(0.78, 0.72, 0.58, 0.24)
+                                                    } else {
+                                                        MENU_BUTTON_BORDER_DISABLED
+                                                    }),
+                                                    ..default()
+                                                },
+                                                UnitUpgradePromoteButton {
+                                                    from: panel_data.selected_source,
+                                                    to: option.to_kind,
+                                                    quantity,
+                                                },
+                                            ))
+                                            .with_children(|button| {
+                                                button.spawn(TextBundle::from_section(
+                                                    quantity.button_label(),
+                                                    TextStyle {
+                                                        font_size: 13.0,
+                                                        color: if enabled {
+                                                            HUD_TEXT_COLOR
+                                                        } else {
+                                                            MENU_BUTTON_TEXT_DISABLED
+                                                        },
+                                                        ..default()
+                                                    },
+                                                ));
+                                            });
+                                    }
+                                });
+                            });
+                        }
+                    });
+            });
         });
+}
+
+fn roster_count_for_kind(economy: &RosterEconomy, kind: UnitKind) -> u32 {
+    match kind {
+        UnitKind::ChristianPeasantInfantry => economy.infantry_count,
+        UnitKind::ChristianPeasantArcher => economy.archer_count,
+        UnitKind::ChristianPeasantPriest => economy.priest_count,
+        _ => 0,
+    }
+}
+
+fn promotion_targets_for(kind: UnitKind) -> &'static [UnitKind] {
+    const INFANTRY_PROMOTIONS: [UnitKind; 2] = [
+        UnitKind::ChristianPeasantArcher,
+        UnitKind::ChristianPeasantPriest,
+    ];
+    const NO_PROMOTIONS: [UnitKind; 0] = [];
+    match kind {
+        UnitKind::ChristianPeasantInfantry => &INFANTRY_PROMOTIONS,
+        _ => &NO_PROMOTIONS,
+    }
+}
+
+fn resolve_selected_source(
+    requested: UnitKind,
+    roster_entries: &[UnitUpgradeRosterEntry],
+) -> UnitKind {
+    if roster_entries.iter().any(|entry| entry.kind == requested) {
+        return requested;
+    }
+    roster_entries
+        .first()
+        .map(|entry| entry.kind)
+        .unwrap_or(UnitKind::ChristianPeasantInfantry)
+}
+
+fn max_affordable_promotions(
+    current_level: u32,
+    locked_levels: u32,
+    source_count: u32,
+    from_kind: UnitKind,
+    to_kind: UnitKind,
+) -> u32 {
+    let Some(step_cost) = promotion_step_cost(from_kind, to_kind) else {
+        return 0;
+    };
+    if step_cost == 0 || source_count == 0 {
+        return 0;
+    }
+    let level = current_level.max(1);
+    let mut affordable = 0u32;
+    for requested in 1..=source_count {
+        let predicted_locked = locked_levels.saturating_add(step_cost.saturating_mul(requested));
+        if level_cap_from_locked_budget(predicted_locked) < level {
+            break;
+        }
+        affordable = requested;
+    }
+    affordable
+}
+
+fn requested_promotion_count(quantity: UnitUpgradeQuantity, max_affordable: u32) -> u32 {
+    let raw_requested = match quantity {
+        UnitUpgradeQuantity::One => 1,
+        UnitUpgradeQuantity::Five => 5,
+        UnitUpgradeQuantity::Max => max_affordable,
+    };
+    raw_requested.min(max_affordable)
+}
+
+impl UnitUpgradeQuantity {
+    fn button_label(self) -> &'static str {
+        match self {
+            UnitUpgradeQuantity::One => "+1",
+            UnitUpgradeQuantity::Five => "+5",
+            UnitUpgradeQuantity::Max => "MAX",
+        }
+    }
 }
 
 fn spawn_vertical_meter<T: Component + Clone>(
@@ -3491,6 +3926,157 @@ fn handle_level_up_buttons(
     }
 }
 
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+fn handle_unit_upgrade_buttons(
+    modal_state: Res<RunModalState>,
+    mut source_buttons: Query<
+        (
+            &Interaction,
+            &UnitUpgradeSourceButton,
+            &Children,
+            &mut BorderColor,
+            &mut BackgroundColor,
+        ),
+        (
+            Changed<Interaction>,
+            With<Button>,
+            Without<UnitUpgradePromoteButton>,
+        ),
+    >,
+    mut promote_buttons: Query<
+        (
+            &Interaction,
+            &UnitUpgradePromoteButton,
+            &Children,
+            &mut BorderColor,
+            &mut BackgroundColor,
+        ),
+        (
+            Changed<Interaction>,
+            With<Button>,
+            Without<UnitUpgradeSourceButton>,
+        ),
+    >,
+    mut text_query: Query<&mut Text>,
+    mut ui_state: ResMut<UnitUpgradeUiState>,
+    economy: Res<RosterEconomy>,
+    progression: Res<Progression>,
+    mut economy_feedback: ResMut<RosterEconomyFeedback>,
+    mut promote_events: EventWriter<PromoteUnitsEvent>,
+) {
+    if !matches!(
+        *modal_state,
+        RunModalState::Open(RunModalScreen::UnitUpgrade)
+    ) {
+        return;
+    }
+
+    for (interaction, button, children, mut border_color, mut background_color) in
+        &mut source_buttons
+    {
+        let selected = ui_state.selected_source == button.kind;
+        if let Some(&text_entity) = children.first()
+            && let Ok(mut text) = text_query.get_mut(text_entity)
+        {
+            text.sections[0].style.color = if selected
+                || matches!(*interaction, Interaction::Hovered | Interaction::Pressed)
+            {
+                MENU_BUTTON_TEXT_HOVERED
+            } else {
+                HUD_TEXT_COLOR
+            };
+        }
+
+        match *interaction {
+            Interaction::Pressed => {
+                ui_state.selected_source = button.kind;
+                *border_color = BorderColor(MENU_BUTTON_BORDER_HOVERED);
+                *background_color = BackgroundColor(Color::srgba(0.11, 0.09, 0.08, 0.66));
+            }
+            Interaction::Hovered => {
+                *border_color = BorderColor(MENU_BUTTON_BORDER_HOVERED);
+                *background_color = BackgroundColor(Color::srgba(0.1, 0.085, 0.075, 0.62));
+            }
+            Interaction::None => {
+                *border_color = BorderColor(if selected {
+                    MENU_BUTTON_BORDER_HOVERED
+                } else {
+                    Color::srgba(0.78, 0.72, 0.58, 0.24)
+                });
+                *background_color = BackgroundColor(Color::srgba(0.08, 0.07, 0.06, 0.62));
+            }
+        }
+    }
+
+    for (interaction, button, children, mut border_color, mut background_color) in
+        &mut promote_buttons
+    {
+        let source_count = roster_count_for_kind(&economy, button.from);
+        let max_affordable = max_affordable_promotions(
+            progression.level.max(1),
+            economy.locked_levels,
+            source_count,
+            button.from,
+            button.to,
+        );
+        let requested = requested_promotion_count(button.quantity, max_affordable);
+        let enabled = requested > 0;
+
+        if let Some(&text_entity) = children.first()
+            && let Ok(mut text) = text_query.get_mut(text_entity)
+        {
+            text.sections[0].style.color = if enabled {
+                if matches!(*interaction, Interaction::Hovered | Interaction::Pressed) {
+                    MENU_BUTTON_TEXT_HOVERED
+                } else {
+                    HUD_TEXT_COLOR
+                }
+            } else {
+                MENU_BUTTON_TEXT_DISABLED
+            };
+        }
+
+        match *interaction {
+            Interaction::Pressed => {
+                if enabled {
+                    promote_events.send(PromoteUnitsEvent {
+                        from_kind: button.from,
+                        to_kind: button.to,
+                        count: requested,
+                    });
+                    economy_feedback.blocked_upgrade_reason = None;
+                    *border_color = BorderColor(MENU_BUTTON_BORDER_HOVERED);
+                    *background_color = BackgroundColor(Color::srgba(0.11, 0.09, 0.08, 0.7));
+                } else {
+                    economy_feedback.blocked_upgrade_reason = Some(format!(
+                        "Promotion blocked: '{}' -> '{}' has no affordable quantity at current level budget.",
+                        unit_kind_label(button.from),
+                        unit_kind_label(button.to)
+                    ));
+                    *border_color = BorderColor(MENU_BUTTON_BORDER_DISABLED);
+                    *background_color = BackgroundColor(Color::srgba(0.06, 0.055, 0.05, 0.64));
+                }
+            }
+            Interaction::Hovered => {
+                *border_color = BorderColor(if enabled {
+                    MENU_BUTTON_BORDER_HOVERED
+                } else {
+                    MENU_BUTTON_BORDER_DISABLED
+                });
+                *background_color = BackgroundColor(Color::srgba(0.1, 0.085, 0.075, 0.62));
+            }
+            Interaction::None => {
+                *border_color = BorderColor(if enabled {
+                    Color::srgba(0.78, 0.72, 0.58, 0.24)
+                } else {
+                    MENU_BUTTON_BORDER_DISABLED
+                });
+                *background_color = BackgroundColor(Color::srgba(0.08, 0.07, 0.06, 0.62));
+            }
+        }
+    }
+}
+
 #[allow(clippy::type_complexity)]
 fn handle_run_modal_buttons(
     mut buttons: Query<
@@ -4035,11 +4621,12 @@ mod tests {
     use crate::map::MapBounds;
     use crate::model::{FrameRateCap, GlobalBuffs, PlayerFaction, RunModalAction, RunModalScreen};
     use crate::ui::{
-        HudSnapshot, MainMenuAction, MainMenuDispatch, archive_entries_for_category,
-        build_skill_book_panel_data, build_stats_panel_data, can_select_match_setup_faction,
-        displayed_wave_number, find_skill_section, find_stats_row, format_commander_level_text,
-        format_elapsed_mm_ss, frame_cap_label, health_bar_fill_width, main_menu_dispatch,
-        modal_action_for_utility_button, rescue_progress_ratio, world_to_minimap_pos,
+        HudSnapshot, MainMenuAction, MainMenuDispatch, UnitUpgradeQuantity,
+        archive_entries_for_category, build_skill_book_panel_data, build_stats_panel_data,
+        can_select_match_setup_faction, displayed_wave_number, find_skill_section, find_stats_row,
+        format_commander_level_text, format_elapsed_mm_ss, frame_cap_label, health_bar_fill_width,
+        main_menu_dispatch, max_affordable_promotions, modal_action_for_utility_button,
+        requested_promotion_count, rescue_progress_ratio, world_to_minimap_pos,
     };
     use crate::upgrades::{Progression, SkillBookEntry, SkillBookLog, UpgradeCardIcon};
 
@@ -4094,6 +4681,48 @@ mod tests {
         assert_eq!(
             format_commander_level_text(170, 170, true),
             "Commander Lv 170/170 [LOCKED BY ROSTER COST]"
+        );
+    }
+
+    #[test]
+    fn requested_promotion_count_clamps_to_affordable_limit() {
+        assert_eq!(requested_promotion_count(UnitUpgradeQuantity::One, 3), 1);
+        assert_eq!(requested_promotion_count(UnitUpgradeQuantity::Five, 3), 3);
+        assert_eq!(requested_promotion_count(UnitUpgradeQuantity::Max, 3), 3);
+        assert_eq!(requested_promotion_count(UnitUpgradeQuantity::One, 0), 0);
+    }
+
+    #[test]
+    fn max_affordable_promotions_respects_budget_and_path_rules() {
+        assert_eq!(
+            max_affordable_promotions(
+                199,
+                0,
+                10,
+                crate::model::UnitKind::ChristianPeasantInfantry,
+                crate::model::UnitKind::ChristianPeasantArcher
+            ),
+            1
+        );
+        assert_eq!(
+            max_affordable_promotions(
+                150,
+                20,
+                10,
+                crate::model::UnitKind::ChristianPeasantInfantry,
+                crate::model::UnitKind::ChristianPeasantPriest
+            ),
+            10
+        );
+        assert_eq!(
+            max_affordable_promotions(
+                120,
+                0,
+                10,
+                crate::model::UnitKind::ChristianPeasantArcher,
+                crate::model::UnitKind::ChristianPeasantPriest
+            ),
+            0
         );
     }
 

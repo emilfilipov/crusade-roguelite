@@ -455,6 +455,14 @@ fn apply_promotion_events(
             ));
             continue;
         };
+        let Some(min_step_cost) = promotion_step_cost(event.from_kind, event.to_kind) else {
+            feedback.blocked_upgrade_reason = Some(format!(
+                "Promotion blocked: '{}' cannot be promoted into '{}'.",
+                unit_kind_label(event.from_kind),
+                unit_kind_label(event.to_kind)
+            ));
+            continue;
+        };
 
         let mut candidates: Vec<(Entity, Unit, UnitTier)> = friendlies
             .iter()
@@ -470,7 +478,7 @@ fn apply_promotion_events(
             if promoted >= event.count {
                 break;
             }
-            let step_cost = target_tier.saturating_sub(tier.0) as u32;
+            let step_cost = target_tier.saturating_sub(tier.0).max(min_step_cost as u8) as u32;
             if step_cost == 0 {
                 continue;
             }
@@ -679,7 +687,7 @@ fn on_unit_died(mut roster: ResMut<SquadRoster>, mut death_events: EventReader<U
     }
 }
 
-fn friendly_tier_for_kind(kind: UnitKind) -> Option<u8> {
+pub fn friendly_tier_for_kind(kind: UnitKind) -> Option<u8> {
     match kind {
         UnitKind::ChristianPeasantInfantry => Some(0),
         UnitKind::ChristianPeasantArcher | UnitKind::ChristianPeasantPriest => Some(1),
@@ -687,7 +695,13 @@ fn friendly_tier_for_kind(kind: UnitKind) -> Option<u8> {
     }
 }
 
-fn unit_kind_label(kind: UnitKind) -> &'static str {
+pub fn promotion_step_cost(from_kind: UnitKind, to_kind: UnitKind) -> Option<u32> {
+    let from_tier = friendly_tier_for_kind(from_kind)?;
+    let to_tier = friendly_tier_for_kind(to_kind)?;
+    (to_tier > from_tier).then_some((to_tier - from_tier) as u32)
+}
+
+pub fn unit_kind_label(kind: UnitKind) -> &'static str {
     match kind {
         UnitKind::Commander => "Commander",
         UnitKind::ChristianPeasantInfantry => "Christian Peasant Infantry",
@@ -967,5 +981,30 @@ mod tests {
 
         let feedback = app.world().resource::<RosterEconomyFeedback>();
         assert!(feedback.blocked_upgrade_reason.is_some());
+    }
+
+    #[test]
+    fn promotion_step_cost_rejects_non_upgrade_paths() {
+        assert_eq!(
+            crate::squad::promotion_step_cost(
+                UnitKind::ChristianPeasantInfantry,
+                UnitKind::ChristianPeasantArcher
+            ),
+            Some(1)
+        );
+        assert_eq!(
+            crate::squad::promotion_step_cost(
+                UnitKind::ChristianPeasantArcher,
+                UnitKind::ChristianPeasantPriest
+            ),
+            None
+        );
+        assert_eq!(
+            crate::squad::promotion_step_cost(
+                UnitKind::ChristianPeasantInfantry,
+                UnitKind::EnemyBanditRaider
+            ),
+            None
+        );
     }
 }

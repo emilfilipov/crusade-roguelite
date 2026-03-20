@@ -300,7 +300,7 @@
   - `docs/SYSTEM_SCOPE_MAP.md`
 
 ### CRU-069 - Unit Upgrade Screen (Tree Layout + Bulk Upgrade Actions)
-- Status: `TODO`
+- Status: `DONE`
 - Type: `UI`
 - Priority: `P0`
 - Depends on: `CRU-060`, `CRU-061`, `CRU-068`
