@@ -441,14 +441,22 @@ pub fn cohesion_modifiers(value: f32) -> CohesionCombatModifiers {
 
 #[cfg(test)]
 mod tests {
-    use crate::model::UnitKind;
+    use bevy::prelude::*;
+
+    use super::{EnemyKillRewardCounter, apply_morale_and_cohesion_events};
+    use crate::model::{
+        FriendlyUnit, Morale, Team, Unit, UnitDamagedEvent, UnitDiedEvent, UnitKind,
+    };
     use crate::morale::{
         Cohesion, average_morale_ratio, cohesion_modifiers, friendly_army_morale_loss_from_damage,
         friendly_cohesion_loss_from_damage, friendly_death_cohesion_loss,
         friendly_death_morale_loss, friendly_loss_multiplier_from_authority, low_morale_ratio,
         should_apply_enemy_kill_reward, unit_morale_loss_from_damage,
     };
-    use crate::{data::GameData, model::GlobalBuffs, morale::commander_aura_radius};
+    use crate::{
+        data::GameData, model::GlobalBuffs, morale::commander_aura_radius,
+        upgrades::ConditionalUpgradeEffects,
+    };
 
     #[test]
     fn cohesion_starts_full() {
@@ -532,5 +540,56 @@ mod tests {
             ..GlobalBuffs::default()
         };
         assert!(commander_aura_radius(&data, Some(&buffs)) > data.units.commander.aura_radius);
+    }
+
+    #[test]
+    fn fury_immunity_blocks_friendly_morale_and_cohesion_losses_from_damage_events() {
+        let mut app = App::new();
+        app.add_event::<UnitDamagedEvent>();
+        app.add_event::<UnitDiedEvent>();
+        app.insert_resource(
+            GameData::load_from_dir(std::path::Path::new("assets/data")).expect("data"),
+        );
+        app.insert_resource(GlobalBuffs::default());
+        app.insert_resource(ConditionalUpgradeEffects {
+            friendly_loss_immunity: true,
+            ..ConditionalUpgradeEffects::default()
+        });
+        app.insert_resource(Cohesion { value: 100.0 });
+        app.insert_resource(EnemyKillRewardCounter::default());
+        app.add_systems(Update, apply_morale_and_cohesion_events);
+
+        let friendly = app
+            .world_mut()
+            .spawn((
+                FriendlyUnit,
+                Unit {
+                    team: Team::Friendly,
+                    kind: UnitKind::ChristianPeasantInfantry,
+                    level: 1,
+                },
+                Morale::new(100.0),
+                Transform::default(),
+            ))
+            .id();
+
+        app.world_mut()
+            .resource_mut::<Events<UnitDamagedEvent>>()
+            .send(UnitDamagedEvent {
+                target: friendly,
+                team: Team::Friendly,
+                amount: 25.0,
+            });
+        app.update();
+
+        let morale = app
+            .world()
+            .entity(friendly)
+            .get::<Morale>()
+            .copied()
+            .expect("morale");
+        let cohesion = app.world().resource::<Cohesion>().value;
+        assert!((morale.current - 100.0).abs() < 0.001);
+        assert!((cohesion - 100.0).abs() < 0.001);
     }
 }

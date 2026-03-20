@@ -114,6 +114,10 @@ Use this for entity/component/system lookup without scanning all source files.
   - conditional upgrade ownership is tracked generically (not hardwired per-mob-flag),
   - conditional effects are re-evaluated continuously and cleanly revoke when requirements are unmet,
   - Skill Book now surfaces owned conditional upgrades as active/inactive with unmet-requirement messaging.
+- Completed `Mob's Fury` + `Mob's Justice` runtime feedback loop:
+  - `Mob's Fury` active/inactive state now appears in-run in the top-center HUD status line,
+  - `Mob's Justice` execute hits now emit explicit floating `EXECUTE` combat text,
+  - execute resolution uses a shared threshold helper (`<=10%` HP) across melee and projectile hit paths.
 - Replaced placeholder `morale_weight` usage with active per-unit `Morale` (friendlies and enemies).
 - Added morale-based combat debuff below 50% morale.
 - Refactored cohesion to event-driven behavior (damage/death/kill events + low-morale pressure).

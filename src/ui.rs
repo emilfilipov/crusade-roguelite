@@ -197,6 +197,9 @@ struct XpBarFill;
 struct RescueProgressBarsRoot;
 
 #[derive(Component, Clone, Copy, Debug)]
+struct ConditionalStatusHudText;
+
+#[derive(Component, Clone, Copy, Debug)]
 struct MoraleBarFill;
 
 #[derive(Component, Clone, Copy, Debug)]
@@ -1680,6 +1683,19 @@ fn spawn_in_run_hud(
                                 background_color: BackgroundColor(Color::NONE),
                                 ..default()
                             },
+                        ));
+
+                        center.spawn((
+                            ConditionalStatusHudText,
+                            TextBundle::from_section(
+                                "",
+                                TextStyle {
+                                    font_size: 14.0,
+                                    color: Color::srgba(0.78, 0.74, 0.66, 0.95),
+                                    ..default()
+                                },
+                            )
+                            .with_text_justify(JustifyText::Center),
                         ));
                     });
 
@@ -4304,10 +4320,12 @@ fn refresh_hud_snapshot(
 #[allow(clippy::type_complexity)]
 fn update_in_run_hud(
     hud: Res<HudSnapshot>,
+    conditional_status: Res<ConditionalUpgradeStatus>,
     mut texts: ParamSet<(
         Query<&mut Text, With<WaveHudText>>,
         Query<&mut Text, With<TimeHudText>>,
         Query<&mut Text, With<CommanderLevelHudText>>,
+        Query<&mut Text, With<ConditionalStatusHudText>>,
     )>,
     mut bar_styles: ParamSet<(
         Query<&mut Style, With<XpBarFill>>,
@@ -4327,6 +4345,9 @@ fn update_in_run_hud(
             hud.allowed_max_level,
             hud.progression_lock_reason.is_some(),
         );
+    }
+    if let Ok(mut text) = texts.p3().get_single_mut() {
+        text.sections[0].value = conditional_upgrade_hud_status_text(&conditional_status);
     }
     let xp_ratio = if hud.next_level_xp <= 0.0 {
         0.0
@@ -4594,6 +4615,34 @@ pub fn format_elapsed_mm_ss(seconds: f32) -> String {
     format!("{minutes:02}:{secs:02}")
 }
 
+pub fn conditional_upgrade_hud_status_text(status: &ConditionalUpgradeStatus) -> String {
+    let mut entries = Vec::new();
+    if let Some(active) = conditional_upgrade_active_state(status, "mob_fury") {
+        entries.push(if active {
+            "Mob's Fury: ACTIVE".to_string()
+        } else {
+            "Mob's Fury: INACTIVE".to_string()
+        });
+    }
+    if let Some(active) = conditional_upgrade_active_state(status, "mob_justice") {
+        entries.push(if active {
+            "Mob's Justice: EXECUTE <10% HP".to_string()
+        } else {
+            "Mob's Justice: INACTIVE".to_string()
+        });
+    }
+    entries.join(" | ")
+}
+
+fn conditional_upgrade_active_state(status: &ConditionalUpgradeStatus, kind: &str) -> Option<bool> {
+    status
+        .entries
+        .iter()
+        .rev()
+        .find(|entry| entry.kind == kind)
+        .map(|entry| entry.active)
+}
+
 #[allow(clippy::type_complexity)]
 fn attach_health_bars_to_units(
     mut commands: Commands,
@@ -4745,14 +4794,22 @@ fn floating_damage_text_spawn_data(
     let row = ((spawn_index / X_JITTER_LANES.len()) % 3) as f32;
     let x_offset = X_JITTER_LANES[lane_index];
     let y_offset = FLOATING_DAMAGE_TEXT_START_Y_OFFSET + row * 4.0;
+    let (text, base_rgb) = if event.execute {
+        ("EXECUTE".to_string(), Vec3::new(0.98, 0.28, 0.18))
+    } else {
+        (
+            format_damage_text_amount(event.amount),
+            floating_damage_text_team_rgb(event.target_team),
+        )
+    };
     FloatingDamageTextSpawnData {
         translation: Vec3::new(
             event.world_position.x + x_offset,
             event.world_position.y + y_offset,
             FLOATING_DAMAGE_TEXT_Z,
         ),
-        text: format_damage_text_amount(event.amount),
-        base_rgb: floating_damage_text_team_rgb(event.target_team),
+        text,
+        base_rgb,
     }
 }
 
@@ -4812,12 +4869,12 @@ mod tests {
     use crate::ui::{
         HudSnapshot, MainMenuAction, MainMenuDispatch, UnitUpgradeQuantity,
         archive_entries_for_category, build_skill_book_panel_data, build_stats_panel_data,
-        can_select_match_setup_faction, displayed_wave_number, find_skill_section, find_stats_row,
-        floating_damage_text_alpha, floating_damage_text_is_expired,
-        floating_damage_text_spawn_data, format_commander_level_text, format_elapsed_mm_ss,
-        frame_cap_label, health_bar_fill_width, main_menu_dispatch, max_affordable_promotions,
-        modal_action_for_utility_button, requested_promotion_count, rescue_progress_ratio,
-        world_to_minimap_pos,
+        can_select_match_setup_faction, conditional_upgrade_hud_status_text, displayed_wave_number,
+        find_skill_section, find_stats_row, floating_damage_text_alpha,
+        floating_damage_text_is_expired, floating_damage_text_spawn_data,
+        format_commander_level_text, format_elapsed_mm_ss, frame_cap_label, health_bar_fill_width,
+        main_menu_dispatch, max_affordable_promotions, modal_action_for_utility_button,
+        requested_promotion_count, rescue_progress_ratio, world_to_minimap_pos,
     };
     use crate::upgrades::{
         ConditionalUpgradeStatus, ConditionalUpgradeStatusEntry, Progression, SkillBookEntry,
@@ -4858,6 +4915,7 @@ mod tests {
             world_position: bevy::prelude::Vec2::new(100.0, -50.0),
             target_team: Team::Enemy,
             amount: 12.6,
+            execute: false,
         };
         let data = floating_damage_text_spawn_data(&event, 0);
         assert_eq!(data.text, "13");
@@ -4865,6 +4923,21 @@ mod tests {
         assert!((data.translation.y - -26.0).abs() < 0.001);
         assert!((data.translation.z - 60.0).abs() < 0.001);
         assert!((data.base_rgb.x - 0.98).abs() < 0.001);
+    }
+
+    #[test]
+    fn damage_text_spawn_data_uses_execute_feedback_style() {
+        let event = DamageTextEvent {
+            world_position: bevy::prelude::Vec2::new(0.0, 0.0),
+            target_team: Team::Enemy,
+            amount: 999.0,
+            execute: true,
+        };
+        let data = floating_damage_text_spawn_data(&event, 2);
+        assert_eq!(data.text, "EXECUTE");
+        assert!((data.base_rgb.x - 0.98).abs() < 0.001);
+        assert!((data.base_rgb.y - 0.28).abs() < 0.001);
+        assert!((data.base_rgb.z - 0.18).abs() < 0.001);
     }
 
     #[test]
@@ -5202,6 +5275,29 @@ mod tests {
             .expect("fury entry");
         assert_eq!(fury_entry.active, Some(false));
         assert!(fury_entry.description.contains("Requires tier-0 share"));
+    }
+
+    #[test]
+    fn conditional_upgrade_hud_status_text_summarizes_fury_and_justice_state() {
+        let status = ConditionalUpgradeStatus {
+            entries: vec![
+                ConditionalUpgradeStatusEntry {
+                    id: "mob_fury".to_string(),
+                    kind: "mob_fury".to_string(),
+                    active: true,
+                    detail: None,
+                },
+                ConditionalUpgradeStatusEntry {
+                    id: "mob_justice".to_string(),
+                    kind: "mob_justice".to_string(),
+                    active: false,
+                    detail: Some("requires tier-0 share".to_string()),
+                },
+            ],
+        };
+        let text = conditional_upgrade_hud_status_text(&status);
+        assert!(text.contains("Mob's Fury: ACTIVE"));
+        assert!(text.contains("Mob's Justice: INACTIVE"));
     }
 
     #[test]

@@ -1,5 +1,6 @@
 use bevy::prelude::*;
 
+use crate::combat::should_execute_target;
 use crate::model::{DamageEvent, GameState, GlobalBuffs, Health, Team, Unit};
 use crate::upgrades::ConditionalUpgradeEffects;
 
@@ -74,11 +75,13 @@ fn projectile_collisions(
                     .as_deref()
                     .map(|effects| effects.execute_below_health_ratio)
                     .unwrap_or(0.0);
-                let execute = projectile.source_team == Team::Friendly
-                    && target_unit.team == Team::Enemy
-                    && execute_threshold > 0.0
-                    && target_health.max > 0.0
-                    && (target_health.current / target_health.max) <= execute_threshold;
+                let execute = should_execute_target(
+                    projectile.source_team,
+                    target_unit.team,
+                    target_health.current,
+                    target_health.max,
+                    execute_threshold,
+                );
                 let damage = if execute {
                     target_health.current + effective_armor + 1.0
                 } else {
@@ -88,6 +91,7 @@ fn projectile_collisions(
                     target: target_entity,
                     source_team: projectile.source_team,
                     amount: damage,
+                    execute,
                 });
                 hit = true;
                 break;

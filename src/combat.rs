@@ -470,11 +470,19 @@ fn emit_damage_events(
                 .as_deref()
                 .map(|effects| effects.execute_below_health_ratio)
                 .unwrap_or(0.0);
-            if attacker_unit.team == Team::Friendly
-                && execute_threshold > 0.0
-                && target_max_health > 0.0
-                && (target_health / target_max_health) <= execute_threshold
-            {
+            let target_team = if attacker_unit.team == Team::Friendly {
+                Team::Enemy
+            } else {
+                Team::Friendly
+            };
+            let execute = should_execute_target(
+                attacker_unit.team,
+                target_team,
+                target_health,
+                target_max_health,
+                execute_threshold,
+            );
+            if execute {
                 damage = target_health + armor + 1.0;
             }
 
@@ -482,6 +490,7 @@ fn emit_damage_events(
                 target: target_entity,
                 source_team: attacker_unit.team,
                 amount: damage,
+                execute,
             });
         }
     }
@@ -545,6 +554,20 @@ pub fn effective_formation_offense_multiplier(
 
 pub fn compute_damage(base_damage: f32, armor: f32, outgoing_multiplier: f32) -> f32 {
     (base_damage * outgoing_multiplier - armor).max(1.0)
+}
+
+pub fn should_execute_target(
+    source_team: Team,
+    target_team: Team,
+    target_health: f32,
+    target_max_health: f32,
+    execute_threshold: f32,
+) -> bool {
+    source_team == Team::Friendly
+        && target_team == Team::Enemy
+        && execute_threshold > 0.0
+        && target_max_health > 0.0
+        && (target_health / target_max_health) <= execute_threshold
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -643,6 +666,7 @@ fn apply_damage_events(
                 world_position: transform.translation.truncate(),
                 target_team: unit.team,
                 amount: applied_damage,
+                execute: event.execute,
             });
         }
     }
@@ -686,6 +710,7 @@ mod tests {
         effective_formation_offense_multiplier, enemy_target_allowed, friendly_formation_context,
         friendly_outgoing_multiplier, inside_active_formation_bounds,
         inside_formation_damage_multiplier, morale_effect_multiplier, ranged_target_in_window,
+        should_execute_target,
     };
     use crate::formation::{ActiveFormation, FormationModifiers};
     use crate::model::{Team, UnitKind};
@@ -836,5 +861,37 @@ mod tests {
         assert!(!ranged_target_in_window(25.0, 6.0, 12.0));
         assert!(!ranged_target_in_window(225.0, 6.0, 12.0));
         assert!(!ranged_target_in_window(64.0, 10.0, 10.0));
+    }
+
+    #[test]
+    fn justice_execute_requires_enemy_below_threshold() {
+        assert!(should_execute_target(
+            Team::Friendly,
+            Team::Enemy,
+            9.0,
+            100.0,
+            0.10
+        ));
+        assert!(!should_execute_target(
+            Team::Friendly,
+            Team::Enemy,
+            11.0,
+            100.0,
+            0.10
+        ));
+        assert!(!should_execute_target(
+            Team::Friendly,
+            Team::Enemy,
+            9.0,
+            100.0,
+            0.0
+        ));
+        assert!(!should_execute_target(
+            Team::Enemy,
+            Team::Friendly,
+            9.0,
+            100.0,
+            0.10
+        ));
     }
 }

@@ -247,6 +247,7 @@ pub struct DamageEvent {
     pub target: Entity,
     pub source_team: Team,
     pub amount: f32,
+    pub execute: bool,
 }
 
 #[derive(Event, Clone, Copy, Debug)]
@@ -261,6 +262,7 @@ pub struct DamageTextEvent {
     pub world_position: Vec2,
     pub target_team: Team,
     pub amount: f32,
+    pub execute: bool,
 }
 
 #[derive(Event, Clone, Copy, Debug)]

@@ -475,7 +475,7 @@
   - `docs/SYSTEM_SCOPE_MAP.md`
 
 ### CRU-076 - Mob's Fury and Mob's Justice Upgrades
-- Status: `TODO`
+- Status: `DONE`
 - Type: `Gameplay`
 - Priority: `P1`
 - Depends on: `CRU-075`
