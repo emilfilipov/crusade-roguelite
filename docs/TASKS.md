@@ -149,7 +149,7 @@
   - `docs/SYSTEM_SCOPE_MAP.md` (if gear scope is expanded beyond scaffold)
 
 ### CRU-063 - Stats Screen (Base + Level-Up Bonus Breakdown)
-- Status: `TODO`
+- Status: `DONE`
 - Type: `UI`
 - Priority: `P1`
 - Depends on: `CRU-060`, `CRU-061`

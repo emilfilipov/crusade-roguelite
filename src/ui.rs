@@ -5,7 +5,7 @@ use crate::banner::{BannerState, banner_pickup_progress_ratio};
 use crate::data::GameData;
 use crate::drops::ExpPack;
 use crate::enemies::WaveRuntime;
-use crate::formation::{FormationSkillBar, SkillBarSkillKind};
+use crate::formation::{ActiveFormation, FormationModifiers, FormationSkillBar, SkillBarSkillKind};
 use crate::inventory::{EquipmentUnitType, InventoryState};
 use crate::map::MapBounds;
 use crate::model::{
@@ -18,8 +18,8 @@ use crate::rescue::RescueProgress;
 use crate::settings::AppSettings;
 use crate::squad::SquadRoster;
 use crate::upgrades::{
-    Progression, SelectUpgradeEvent, UpgradeCardIcon, UpgradeDraft, upgrade_card_icon,
-    upgrade_display_description, upgrade_display_title,
+    Progression, SelectUpgradeEvent, UpgradeCardIcon, UpgradeDraft, commander_level_hp_bonus,
+    upgrade_card_icon, upgrade_display_description, upgrade_display_title,
 };
 
 #[derive(Resource, Clone, Debug)]
@@ -178,6 +178,20 @@ struct UtilityBarRoot;
 #[derive(Component, Clone, Copy, Debug, Eq, PartialEq)]
 struct UtilityBarButton {
     screen: RunModalScreen,
+}
+
+#[derive(Clone, Debug)]
+struct StatsPanelData {
+    active_formation_label: String,
+    rows: Vec<StatsPanelRow>,
+}
+
+#[derive(Clone, Debug)]
+struct StatsPanelRow {
+    label: &'static str,
+    base: f32,
+    bonus: f32,
+    final_value: f32,
 }
 
 #[derive(Resource, Clone, Debug)]
@@ -1148,10 +1162,16 @@ fn despawn_in_run_hud(mut commands: Commands, roots: Query<Entity, With<InRunHud
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn sync_run_modal_overlay(
     mut commands: Commands,
     modal_state: Res<RunModalState>,
     inventory: Res<InventoryState>,
+    data: Res<GameData>,
+    progression: Res<Progression>,
+    buffs: Res<crate::model::GlobalBuffs>,
+    active_formation: Res<ActiveFormation>,
+    formation_modifiers: Res<FormationModifiers>,
     roots: Query<(Entity, &RunModalRoot)>,
 ) {
     let existing = roots.get_single().ok();
@@ -1170,7 +1190,14 @@ fn sync_run_modal_overlay(
             if let Some((entity, _)) = existing {
                 commands.entity(entity).despawn_recursive();
             }
-            spawn_run_modal_overlay(&mut commands, screen, &inventory);
+            let stats = build_stats_panel_data(
+                &data,
+                &progression,
+                &buffs,
+                *active_formation,
+                &formation_modifiers,
+            );
+            spawn_run_modal_overlay(&mut commands, screen, &inventory, &stats);
         }
     }
 }
@@ -1185,6 +1212,7 @@ fn spawn_run_modal_overlay(
     commands: &mut Commands,
     screen: RunModalScreen,
     inventory: &InventoryState,
+    stats: &StatsPanelData,
 ) {
     let (title, subtitle) = run_modal_titles(screen);
     commands
@@ -1251,6 +1279,9 @@ fn spawn_run_modal_overlay(
                 if matches!(screen, RunModalScreen::Inventory) {
                     spawn_inventory_modal_sections(panel, inventory);
                 }
+                if matches!(screen, RunModalScreen::Stats) {
+                    spawn_stats_modal_sections(panel, stats);
+                }
                 panel
                     .spawn((
                         ButtonBundle {
@@ -1305,6 +1336,178 @@ fn run_modal_titles(screen: RunModalScreen) -> (&'static str, &'static str) {
             "Manage roster promotions and level-cost budget usage.",
         ),
     }
+}
+
+fn build_stats_panel_data(
+    data: &GameData,
+    progression: &Progression,
+    buffs: &crate::model::GlobalBuffs,
+    active_formation: ActiveFormation,
+    formation_modifiers: &FormationModifiers,
+) -> StatsPanelData {
+    let commander = &data.units.commander;
+    let level = progression.level.max(1);
+    let base_attack_speed = if commander.attack_cooldown_secs > 0.0 {
+        1.0 / commander.attack_cooldown_secs
+    } else {
+        0.0
+    };
+    let attack_speed_final = base_attack_speed * buffs.attack_speed_multiplier;
+    let damage_final = commander.damage * buffs.damage_multiplier;
+    let base_move_speed = commander.move_speed;
+    let move_with_upgrades = base_move_speed + buffs.move_speed_bonus;
+    let move_final = move_with_upgrades * formation_modifiers.move_speed_multiplier;
+    let base_pickup = data.drops.pickup_radius;
+    let final_pickup = base_pickup + buffs.pickup_radius_bonus;
+    let base_aura = commander.aura_radius;
+    let final_aura = base_aura + buffs.commander_aura_radius_bonus;
+    let base_hp = commander.max_hp;
+    let final_hp = base_hp + commander_level_hp_bonus(level);
+
+    StatsPanelData {
+        active_formation_label: active_formation.display_name().to_string(),
+        rows: vec![
+            StatsPanelRow {
+                label: "Commander HP",
+                base: base_hp,
+                bonus: final_hp - base_hp,
+                final_value: final_hp,
+            },
+            StatsPanelRow {
+                label: "Damage",
+                base: commander.damage,
+                bonus: damage_final - commander.damage,
+                final_value: damage_final,
+            },
+            StatsPanelRow {
+                label: "Attack Speed (hits/s)",
+                base: base_attack_speed,
+                bonus: attack_speed_final - base_attack_speed,
+                final_value: attack_speed_final,
+            },
+            StatsPanelRow {
+                label: "Armor",
+                base: commander.armor,
+                bonus: buffs.armor_bonus,
+                final_value: commander.armor + buffs.armor_bonus,
+            },
+            StatsPanelRow {
+                label: "Move Speed",
+                base: base_move_speed,
+                bonus: move_final - base_move_speed,
+                final_value: move_final,
+            },
+            StatsPanelRow {
+                label: "Pickup Radius",
+                base: base_pickup,
+                bonus: final_pickup - base_pickup,
+                final_value: final_pickup,
+            },
+            StatsPanelRow {
+                label: "Aura Radius",
+                base: base_aura,
+                bonus: final_aura - base_aura,
+                final_value: final_aura,
+            },
+            StatsPanelRow {
+                label: "Authority Loss Resist",
+                base: 0.0,
+                bonus: buffs.authority_friendly_loss_resistance,
+                final_value: buffs.authority_friendly_loss_resistance,
+            },
+            StatsPanelRow {
+                label: "Authority Enemy Morale Drain/s",
+                base: 0.0,
+                bonus: buffs.authority_enemy_morale_drain_per_sec,
+                final_value: buffs.authority_enemy_morale_drain_per_sec,
+            },
+            StatsPanelRow {
+                label: "Hospitalier HP Regen/s",
+                base: 0.0,
+                bonus: buffs.hospitalier_hp_regen_per_sec,
+                final_value: buffs.hospitalier_hp_regen_per_sec,
+            },
+            StatsPanelRow {
+                label: "Hospitalier Cohesion Regen/s",
+                base: 0.0,
+                bonus: buffs.hospitalier_cohesion_regen_per_sec,
+                final_value: buffs.hospitalier_cohesion_regen_per_sec,
+            },
+            StatsPanelRow {
+                label: "Hospitalier Morale Regen/s",
+                base: 0.0,
+                bonus: buffs.hospitalier_morale_regen_per_sec,
+                final_value: buffs.hospitalier_morale_regen_per_sec,
+            },
+        ],
+    }
+}
+
+fn spawn_stats_modal_sections(parent: &mut ChildBuilder, stats: &StatsPanelData) {
+    parent
+        .spawn(NodeBundle {
+            style: Style {
+                width: Val::Percent(100.0),
+                min_height: Val::Px(180.0),
+                border: UiRect::all(Val::Px(1.0)),
+                padding: UiRect::all(Val::Px(8.0)),
+                flex_direction: FlexDirection::Column,
+                row_gap: Val::Px(6.0),
+                ..default()
+            },
+            background_color: BackgroundColor(Color::srgba(0.04, 0.04, 0.04, 0.34)),
+            border_color: BorderColor(UTILITY_BAR_BORDER),
+            ..default()
+        })
+        .with_children(|stats_root| {
+            stats_root.spawn(TextBundle::from_section(
+                format!("Active Formation: {}", stats.active_formation_label),
+                TextStyle {
+                    font_size: 18.0,
+                    color: MENU_BUTTON_TEXT_HOVERED,
+                    ..default()
+                },
+            ));
+            stats_root.spawn(TextBundle::from_section(
+                "Stat | Base | Bonus | Final",
+                TextStyle {
+                    font_size: 15.0,
+                    color: HUD_TEXT_COLOR,
+                    ..default()
+                },
+            ));
+            for row in &stats.rows {
+                stats_root.spawn(TextBundle::from_section(
+                    format!(
+                        "{} | {} | {} | {}",
+                        row.label,
+                        format_stat_value(row.base),
+                        format_stat_value(row.bonus),
+                        format_stat_value(row.final_value),
+                    ),
+                    TextStyle {
+                        font_size: 14.0,
+                        color: HUD_TEXT_COLOR,
+                        ..default()
+                    },
+                ));
+            }
+        });
+}
+
+fn format_stat_value(value: f32) -> String {
+    if value.abs() >= 100.0 {
+        format!("{value:.1}")
+    } else if value.abs() >= 10.0 {
+        format!("{value:.2}")
+    } else {
+        format!("{value:.3}")
+    }
+}
+
+#[cfg(test)]
+fn find_stats_row<'a>(rows: &'a [StatsPanelRow], label: &str) -> Option<&'a StatsPanelRow> {
+    rows.iter().find(|row| row.label == label)
 }
 
 fn spawn_inventory_modal_sections(parent: &mut ChildBuilder, inventory: &InventoryState) {
@@ -2548,16 +2751,20 @@ pub fn health_bar_fill_width(current: f32, max: f32, full_width: f32) -> f32 {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use crate::core::hotkey_to_run_modal_screen;
+    use crate::data::GameData;
     use crate::enemies::WaveRuntime;
+    use crate::formation::{ActiveFormation, FormationModifiers};
     use crate::map::MapBounds;
-    use crate::model::FrameRateCap;
-    use crate::model::{RunModalAction, RunModalScreen};
+    use crate::model::{FrameRateCap, GlobalBuffs, RunModalAction, RunModalScreen};
     use crate::ui::{
-        HudSnapshot, displayed_wave_number, format_elapsed_mm_ss, frame_cap_label,
-        health_bar_fill_width, modal_action_for_utility_button, rescue_progress_ratio,
-        world_to_minimap_pos,
+        HudSnapshot, build_stats_panel_data, displayed_wave_number, find_stats_row,
+        format_elapsed_mm_ss, frame_cap_label, health_bar_fill_width,
+        modal_action_for_utility_button, rescue_progress_ratio, world_to_minimap_pos,
     };
+    use crate::upgrades::Progression;
 
     #[test]
     fn snapshot_holds_expected_values() {
@@ -2648,5 +2855,69 @@ mod tests {
             let action = modal_action_for_utility_button(screen);
             assert_eq!(action, RunModalAction::Toggle(screen));
         }
+    }
+
+    #[test]
+    fn stats_panel_defaults_show_base_values_without_bonus() {
+        let data = GameData::load_from_dir(Path::new("assets/data")).expect("load data");
+        let progression = Progression::default();
+        let buffs = GlobalBuffs::default();
+        let modifiers = FormationModifiers::default();
+        let panel = build_stats_panel_data(
+            &data,
+            &progression,
+            &buffs,
+            ActiveFormation::Square,
+            &modifiers,
+        );
+
+        assert!(!panel.rows.is_empty());
+        let damage_row = find_stats_row(&panel.rows, "Damage").expect("damage row");
+        assert!((damage_row.base - damage_row.final_value).abs() < 0.001);
+        let hp_row = find_stats_row(&panel.rows, "Commander HP").expect("hp row");
+        assert!((hp_row.bonus - 0.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn stats_panel_applies_level_and_buff_bonuses() {
+        let data = GameData::load_from_dir(Path::new("assets/data")).expect("load data");
+        let progression = Progression {
+            xp: 0.0,
+            level: 8,
+            next_level_xp: 1.0,
+        };
+        let buffs = GlobalBuffs {
+            damage_multiplier: 1.15,
+            armor_bonus: 3.0,
+            attack_speed_multiplier: 1.20,
+            pickup_radius_bonus: 12.0,
+            move_speed_bonus: 18.0,
+            commander_aura_radius_bonus: 25.0,
+            authority_friendly_loss_resistance: 0.0,
+            authority_enemy_morale_drain_per_sec: 0.0,
+            hospitalier_hp_regen_per_sec: 0.0,
+            hospitalier_cohesion_regen_per_sec: 0.0,
+            hospitalier_morale_regen_per_sec: 0.0,
+        };
+        let modifiers = FormationModifiers {
+            offense_multiplier: 1.0,
+            offense_while_moving_multiplier: 1.0,
+            defense_multiplier: 1.0,
+            move_speed_multiplier: 1.08,
+        };
+        let panel = build_stats_panel_data(
+            &data,
+            &progression,
+            &buffs,
+            ActiveFormation::Diamond,
+            &modifiers,
+        );
+
+        let hp_row = find_stats_row(&panel.rows, "Commander HP").expect("hp row");
+        assert!((hp_row.bonus - 7.0).abs() < 0.001);
+        let damage_row = find_stats_row(&panel.rows, "Damage").expect("damage row");
+        assert!(damage_row.final_value > damage_row.base);
+        let move_row = find_stats_row(&panel.rows, "Move Speed").expect("move row");
+        assert!(move_row.final_value > move_row.base);
     }
 }

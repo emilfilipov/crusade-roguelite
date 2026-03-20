@@ -12,6 +12,7 @@ Use this for entity/component/system lookup without scanning all source files.
 - Added top-right in-run utility bar with five icon buttons mapped to the same modal requests as hotkeys.
 - Added inventory scaffold module/resource (`InventoryState`) with serializable bag/equipment setup model.
 - Inventory modal now renders dedicated bag list + per-unit equipment setup sections.
+- Stats modal now renders base/bonus/final rows for commander and global level-up-driven modifiers.
 - Renamed the old recruit `Infantry/Knight` to `Christian Peasant Infantry`.
 - Added `Christian Peasant Archer` as a second recruitable retinue unit.
 - Rescue spawns now carry recruit type metadata and alternate infantry/archer by spawn sequence.
@@ -446,6 +447,9 @@ Friendly combined outgoing multiplier has lower clamp:
 - inventory modal content:
   - bag drops panel with empty-state fallback
   - equipment setup panel for commander + current friendly unit classes
+- stats modal content:
+  - active formation label
+  - base/bonus/final stat rows (HP, damage, attack speed, armor, move speed, pickup radius, aura, aura effects)
 - top-right utility icon bar:
   - `Inventory` (`I`)
   - `Stats` (`O`)
