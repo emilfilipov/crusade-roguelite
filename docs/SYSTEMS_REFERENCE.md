@@ -36,6 +36,9 @@ Use this for entity/component/system lookup without scanning all source files.
   - right promotion tree pane with tier path display and promotion options,
   - bulk action buttons (`+1`, `+5`, `MAX`) with affordability clamping.
 - Promotion validation now rejects non-upgrade paths (same-tier or invalid-tier conversions).
+- Enemy wave runtime now uses continuous units-per-second scheduling with staggered batch emission.
+- Wave progression is finite at `100` waves; victory triggers only when wave-100 spawning is finished and all enemies are cleared.
+- HUD commander level text now renders `current/allowed` and appends a lock marker when progression is budget-locked.
 - Added inventory scaffold module/resource (`InventoryState`) with serializable bag/equipment setup model.
 - Inventory modal now renders dedicated bag list + per-unit equipment setup sections.
 - Stats modal now renders base/bonus/final rows for commander and global level-up-driven modifiers.
@@ -355,6 +358,20 @@ Friendly combined outgoing multiplier has lower clamp:
   - stop when `level_cap_from_locked_budget(locked_levels + step_cost * requested) < commander_level`
 - `MAX` button uses the computed affordable count.
 - `+5` clamps to affordable count when fewer than 5 promotions are currently valid.
+
+### Wave Spawn Rate + Victory Gate (`src/enemies.rs`, `src/core.rs`)
+- Wave duration: `30s`.
+- Spawn pacing:
+  - `units_per_second_for_wave = ((wave_base_count * 2.0).max(1.0)) / 30.0`
+  - spawned units are queued into timed batches (`batch_size` scales by wave, interval shrinks with floor clamp).
+- Wave progression:
+  - `current_wave` increases until `MAX_WAVES = 100`.
+  - spawning stops after wave 100 finishes its duration window.
+- Victory condition:
+  - `finished_spawning == true`
+  - `current_wave >= 100`
+  - `pending_batches` empty
+  - alive enemy count is `0`
 
 ### Upgrade Roll Formula (`src/upgrades.rs`)
 - Draft picks `3` unique upgrades from the configured pool.

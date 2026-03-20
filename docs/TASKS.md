@@ -326,7 +326,7 @@
   - `docs/SYSTEM_SCOPE_MAP.md`
 
 ### CRU-070 - Enemy Spawn Pacing Rework (Units/Second + 100-Wave Cap + Victory)
-- Status: `TODO`
+- Status: `DONE`
 - Type: `Gameplay`
 - Priority: `P0`
 - Depends on: `CRU-067`
@@ -351,7 +351,7 @@
   - `docs/SYSTEM_SCOPE_MAP.md`
 
 ### CRU-071 - XP Curve Steepen + Level Cap 200 + HUD Level Budget Readout
-- Status: `TODO`
+- Status: `DONE`
 - Type: `Balance`
 - Priority: `P0`
 - Depends on: `CRU-068`, `CRU-070`

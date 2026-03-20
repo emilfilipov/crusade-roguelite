@@ -23,6 +23,7 @@ It prevents scope creep and makes expansion decisions explicit.
 | Roster Level Budget | Tier-0 units cost `0`; each tier-step promotion adds `+1` locked level; allowed max commander level = `200 - locked_levels`; unit death refunds its lock | Additional unit-economy dimensions (supply, upkeep, faction doctrine) | Current level-lock loop is readable, test-covered, and does not deadlock run progression |
 | Enemy Roster | 1 enemy type: `bandit_raider` (melee infantry profile) | Archers, cavalry, elites, event waves | Basic wave pacing and melee combat deterministic |
 | Enemy AI | 1 behavior profile: chase + melee | Ranged kiting, cavalry charge, coordinated groups | No AI deadlocks and target selection stable |
+| Wave Runtime | Units-per-second spawning with timed batch emission; 30s waves; capped at 100 waves; run ends in victory when wave 100 is fully cleared | Event waves, bosses, dynamic spawn directors | Current pacing feels continuous and remains stable under long runs |
 | Enemy Visual States | 1 state set for `bandit_raider`: idle/move/attack/hit/dead sprite swaps | Multi-frame animation sets and per-faction visual variants | State mapping remains readable and stable under combat load |
 | Weapon Types | 2 baseline classes in use: melee + projectile ranged (`Commander` + `Christian Peasant Archer`) | Additional ranged classes, spears, anti-armor traits | Current melee+ranged interaction remains stable and readable |
 | Armor Model | 1 armor stat (flat mitigation) | Armor slots, resist types, durability | Damage model stable and readable |
