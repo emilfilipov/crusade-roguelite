@@ -74,14 +74,38 @@ pub struct SkillBookEntry {
     pub formation_id: Option<String>,
 }
 
-#[derive(Resource, Clone, Copy, Debug, Default)]
-pub struct MobUpgradeOwnership {
-    pub fury_owned: bool,
-    pub fury_required_tier0_share: f32,
-    pub justice_owned: bool,
-    pub justice_required_tier0_share: f32,
-    pub mercy_owned: bool,
-    pub mercy_required_tier0_share: f32,
+#[derive(Clone, Debug, PartialEq)]
+pub enum UpgradeRequirement {
+    None,
+    Tier0Share { min_share: f32 },
+    FormationActive { formation: ActiveFormation },
+    MapTag { tag: String },
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct OwnedConditionalUpgrade {
+    pub id: String,
+    pub kind: String,
+    pub requirement: UpgradeRequirement,
+    pub stacks: u32,
+}
+
+#[derive(Resource, Clone, Debug, Default)]
+pub struct ConditionalUpgradeOwnership {
+    pub entries: Vec<OwnedConditionalUpgrade>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ConditionalUpgradeStatusEntry {
+    pub id: String,
+    pub kind: String,
+    pub active: bool,
+    pub detail: Option<String>,
+}
+
+#[derive(Resource, Clone, Debug, Default)]
+pub struct ConditionalUpgradeStatus {
+    pub entries: Vec<ConditionalUpgradeStatusEntry>,
 }
 
 #[derive(Resource, Clone, Copy, Debug)]
@@ -190,7 +214,8 @@ impl Plugin for UpgradePlugin {
             .init_resource::<UpgradeDraft>()
             .init_resource::<OneTimeUpgradeTracker>()
             .init_resource::<SkillBookLog>()
-            .init_resource::<MobUpgradeOwnership>()
+            .init_resource::<ConditionalUpgradeOwnership>()
+            .init_resource::<ConditionalUpgradeStatus>()
             .init_resource::<ConditionalUpgradeEffects>()
             .init_resource::<LevelPassiveRuntime>()
             .init_resource::<UpgradeRngState>()
@@ -228,7 +253,8 @@ fn reset_progress_on_run_start(
     mut draft: ResMut<UpgradeDraft>,
     mut one_time_tracker: ResMut<OneTimeUpgradeTracker>,
     mut skill_book: ResMut<SkillBookLog>,
-    mut mob_owned: ResMut<MobUpgradeOwnership>,
+    mut conditional_ownership: ResMut<ConditionalUpgradeOwnership>,
+    mut conditional_status: ResMut<ConditionalUpgradeStatus>,
     mut conditional_effects: ResMut<ConditionalUpgradeEffects>,
     mut passive_runtime: ResMut<LevelPassiveRuntime>,
     mut buffs: ResMut<GlobalBuffs>,
@@ -243,7 +269,8 @@ fn reset_progress_on_run_start(
     *draft = UpgradeDraft::default();
     *one_time_tracker = OneTimeUpgradeTracker::default();
     *skill_book = SkillBookLog::default();
-    *mob_owned = MobUpgradeOwnership::default();
+    *conditional_ownership = ConditionalUpgradeOwnership::default();
+    *conditional_status = ConditionalUpgradeStatus::default();
     *conditional_effects = ConditionalUpgradeEffects::default();
     *passive_runtime = LevelPassiveRuntime::default();
     *buffs = GlobalBuffs::default();
@@ -400,7 +427,7 @@ fn resolve_upgrade_selection(
     mut selection_events: EventReader<SelectUpgradeEvent>,
     mut buffs: ResMut<GlobalBuffs>,
     mut skill_book: ResMut<SkillBookLog>,
-    mut mob_owned: ResMut<MobUpgradeOwnership>,
+    mut conditional_ownership: ResMut<ConditionalUpgradeOwnership>,
     mut one_time_tracker: ResMut<OneTimeUpgradeTracker>,
     mut skillbar: ResMut<FormationSkillBar>,
     mut next_state: ResMut<NextState<GameState>>,
@@ -414,7 +441,12 @@ fn resolve_upgrade_selection(
     };
     let index = selection.option_index.min(draft.options.len() - 1);
     let picked = draft.options[index].clone();
-    apply_upgrade(&picked, &mut buffs, &mut mob_owned, &mut skillbar);
+    apply_upgrade(
+        &picked,
+        &mut buffs,
+        &mut conditional_ownership,
+        &mut skillbar,
+    );
     record_skill_book_entry(&mut skill_book, &picked);
     if picked.one_time {
         one_time_tracker.acquired_ids.insert(picked.id.clone());
@@ -623,7 +655,7 @@ pub fn upgrade_display_description(upgrade: &UpgradeConfig) -> String {
 fn apply_upgrade(
     upgrade: &UpgradeConfig,
     buffs: &mut GlobalBuffs,
-    mob_owned: &mut MobUpgradeOwnership,
+    conditional_owned: &mut ConditionalUpgradeOwnership,
     skillbar: &mut FormationSkillBar,
 ) {
     match upgrade.kind.as_str() {
@@ -666,63 +698,171 @@ fn apply_upgrade(
                 skillbar.try_add_formation(formation);
             }
         }
-        "mob_fury" => {
-            mob_owned.fury_owned = true;
-            mob_owned.fury_required_tier0_share = mob_tier0_requirement(upgrade);
-        }
-        "mob_justice" => {
-            mob_owned.justice_owned = true;
-            mob_owned.justice_required_tier0_share = mob_tier0_requirement(upgrade);
-        }
-        "mob_mercy" => {
-            mob_owned.mercy_owned = true;
-            mob_owned.mercy_required_tier0_share = mob_tier0_requirement(upgrade);
+        "mob_fury" | "mob_justice" | "mob_mercy" => {
+            register_conditional_upgrade(conditional_owned, upgrade);
         }
         _ => {}
     }
 }
 
+fn register_conditional_upgrade(
+    conditional_owned: &mut ConditionalUpgradeOwnership,
+    upgrade: &UpgradeConfig,
+) {
+    let requirement = parse_upgrade_requirement(upgrade);
+    if let Some(existing) = conditional_owned
+        .entries
+        .iter_mut()
+        .find(|entry| entry.id == upgrade.id)
+    {
+        existing.stacks = existing.stacks.saturating_add(1);
+        existing.requirement = requirement;
+        return;
+    }
+    conditional_owned.entries.push(OwnedConditionalUpgrade {
+        id: upgrade.id.clone(),
+        kind: upgrade.kind.clone(),
+        requirement,
+        stacks: 1,
+    });
+}
+
+pub fn parse_upgrade_requirement(upgrade: &UpgradeConfig) -> UpgradeRequirement {
+    let Some(requirement_type) = upgrade
+        .requirement_type
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return UpgradeRequirement::None;
+    };
+    match requirement_type {
+        "tier0_share" => UpgradeRequirement::Tier0Share {
+            min_share: upgrade
+                .requirement_min_tier0_share
+                .unwrap_or(1.0)
+                .clamp(0.0, 1.0),
+        },
+        "formation_active" => upgrade
+            .requirement_active_formation
+            .as_deref()
+            .and_then(ActiveFormation::from_id)
+            .map(|formation| UpgradeRequirement::FormationActive { formation })
+            .unwrap_or(UpgradeRequirement::None),
+        "map_tag" => UpgradeRequirement::MapTag {
+            tag: upgrade.requirement_map_tag.clone().unwrap_or_default(),
+        },
+        _ => UpgradeRequirement::None,
+    }
+}
+
 fn refresh_conditional_upgrade_effects(
-    mob_owned: Res<MobUpgradeOwnership>,
+    conditional_owned: Res<ConditionalUpgradeOwnership>,
     roster: Option<Res<RosterEconomy>>,
+    active_formation: Res<ActiveFormation>,
     mut effects: ResMut<ConditionalUpgradeEffects>,
+    mut status: ResMut<ConditionalUpgradeStatus>,
 ) {
     let tier0_share = roster
         .as_deref()
         .map(roster_tier0_share)
         .unwrap_or(0.0)
         .clamp(0.0, 1.0);
-    let fury_active = mob_owned.fury_owned && tier0_share >= mob_owned.fury_required_tier0_share;
-    let justice_active =
-        mob_owned.justice_owned && tier0_share >= mob_owned.justice_required_tier0_share;
-    let mercy_active = mob_owned.mercy_owned && tier0_share >= mob_owned.mercy_required_tier0_share;
+    let (next_effects, next_status) =
+        conditional_effects_from_owned(&conditional_owned.entries, tier0_share, *active_formation);
+    *effects = next_effects;
+    status.entries = next_status;
+}
 
-    effects.friendly_damage_multiplier = if fury_active {
-        1.0 + MOB_FURY_DAMAGE_BONUS
-    } else {
-        1.0
-    };
-    effects.friendly_attack_speed_multiplier = if fury_active {
-        1.0 + MOB_FURY_ATTACK_SPEED_BONUS
-    } else {
-        1.0
-    };
-    effects.friendly_move_speed_bonus = if fury_active {
-        MOB_FURY_MOVE_SPEED_BONUS
-    } else {
-        0.0
-    };
-    effects.friendly_loss_immunity = fury_active;
-    effects.execute_below_health_ratio = if justice_active {
-        MOB_JUSTICE_EXECUTE_THRESHOLD
-    } else {
-        0.0
-    };
-    effects.rescue_time_multiplier = if mercy_active {
-        MOB_MERCY_RESCUE_TIME_MULTIPLIER
-    } else {
-        1.0
-    };
+fn conditional_effects_from_owned(
+    entries: &[OwnedConditionalUpgrade],
+    tier0_share: f32,
+    active_formation: ActiveFormation,
+) -> (
+    ConditionalUpgradeEffects,
+    Vec<ConditionalUpgradeStatusEntry>,
+) {
+    let mut effects = ConditionalUpgradeEffects::default();
+    let mut status_entries = Vec::with_capacity(entries.len());
+    let mut applied_ids = HashSet::new();
+
+    for entry in entries {
+        let (active, detail) =
+            evaluate_upgrade_requirement(&entry.requirement, tier0_share, active_formation);
+        status_entries.push(ConditionalUpgradeStatusEntry {
+            id: entry.id.clone(),
+            kind: entry.kind.clone(),
+            active,
+            detail,
+        });
+        if !active {
+            continue;
+        }
+        if !applied_ids.insert(entry.id.clone()) {
+            continue;
+        }
+        match entry.kind.as_str() {
+            "mob_fury" => {
+                effects.friendly_damage_multiplier *= 1.0 + MOB_FURY_DAMAGE_BONUS;
+                effects.friendly_attack_speed_multiplier *= 1.0 + MOB_FURY_ATTACK_SPEED_BONUS;
+                effects.friendly_move_speed_bonus += MOB_FURY_MOVE_SPEED_BONUS;
+                effects.friendly_loss_immunity = true;
+            }
+            "mob_justice" => {
+                effects.execute_below_health_ratio = effects
+                    .execute_below_health_ratio
+                    .max(MOB_JUSTICE_EXECUTE_THRESHOLD);
+            }
+            "mob_mercy" => {
+                effects.rescue_time_multiplier = effects
+                    .rescue_time_multiplier
+                    .min(MOB_MERCY_RESCUE_TIME_MULTIPLIER);
+            }
+            _ => {}
+        }
+    }
+    (effects, status_entries)
+}
+
+pub fn evaluate_upgrade_requirement(
+    requirement: &UpgradeRequirement,
+    tier0_share: f32,
+    active_formation: ActiveFormation,
+) -> (bool, Option<String>) {
+    match requirement {
+        UpgradeRequirement::None => (true, None),
+        UpgradeRequirement::Tier0Share { min_share } => {
+            if tier0_share >= *min_share {
+                (true, None)
+            } else {
+                (
+                    false,
+                    Some(format!(
+                        "Requires tier-0 share >= {:.0}% (current {:.0}%).",
+                        min_share * 100.0,
+                        tier0_share * 100.0
+                    )),
+                )
+            }
+        }
+        UpgradeRequirement::FormationActive { formation } => {
+            if *formation == active_formation {
+                (true, None)
+            } else {
+                (
+                    false,
+                    Some(format!("Requires active formation '{}'.", formation.id())),
+                )
+            }
+        }
+        UpgradeRequirement::MapTag { tag } => (
+            false,
+            Some(format!(
+                "Requires map tag '{}', which is not available in this build yet.",
+                tag
+            )),
+        ),
+    }
 }
 
 fn roster_tier0_share(roster: &RosterEconomy) -> f32 {
@@ -730,17 +870,6 @@ fn roster_tier0_share(roster: &RosterEconomy) -> f32 {
         return 0.0;
     }
     roster.tier0_retinue_count as f32 / roster.total_retinue_count as f32
-}
-
-fn mob_tier0_requirement(upgrade: &UpgradeConfig) -> f32 {
-    if upgrade.requirement_type.as_deref() == Some("tier0_share") {
-        upgrade
-            .requirement_min_tier0_share
-            .unwrap_or(1.0)
-            .clamp(0.0, 1.0)
-    } else {
-        1.0
-    }
 }
 
 #[cfg(test)]
@@ -773,6 +902,8 @@ mod tests {
             formation_id: None,
             requirement_type: None,
             requirement_min_tier0_share: None,
+            requirement_active_formation: None,
+            requirement_map_tag: None,
         }
     }
 
@@ -826,6 +957,8 @@ mod tests {
             formation_id: Some("diamond".to_string()),
             requirement_type: None,
             requirement_min_tier0_share: None,
+            requirement_active_formation: None,
+            requirement_map_tag: None,
         };
         let pool = vec![formation_upgrade];
         let mut tracker = OneTimeUpgradeTracker::default();
@@ -853,6 +986,8 @@ mod tests {
             formation_id: Some("diamond".to_string()),
             requirement_type: None,
             requirement_min_tier0_share: None,
+            requirement_active_formation: None,
+            requirement_map_tag: None,
         };
         let normal_upgrade = upgrade("damage", "damage_up");
         let pool = vec![formation_upgrade, normal_upgrade];
@@ -924,6 +1059,65 @@ mod tests {
     }
 
     #[test]
+    fn requirement_evaluator_handles_tier0_and_formation_conditions() {
+        let tier_gate = super::UpgradeRequirement::Tier0Share { min_share: 0.75 };
+        let (tier_inactive, tier_reason) =
+            super::evaluate_upgrade_requirement(&tier_gate, 0.4, ActiveFormation::Square);
+        assert!(!tier_inactive);
+        assert!(
+            tier_reason
+                .as_deref()
+                .unwrap_or_default()
+                .contains("tier-0 share")
+        );
+
+        let (tier_active, tier_reason_active) =
+            super::evaluate_upgrade_requirement(&tier_gate, 0.9, ActiveFormation::Square);
+        assert!(tier_active);
+        assert!(tier_reason_active.is_none());
+
+        let formation_gate = super::UpgradeRequirement::FormationActive {
+            formation: ActiveFormation::Diamond,
+        };
+        let (formation_inactive, _) =
+            super::evaluate_upgrade_requirement(&formation_gate, 1.0, ActiveFormation::Square);
+        assert!(!formation_inactive);
+        let (formation_active, _) =
+            super::evaluate_upgrade_requirement(&formation_gate, 1.0, ActiveFormation::Diamond);
+        assert!(formation_active);
+    }
+
+    #[test]
+    fn conditional_effects_apply_and_revoke_without_duplicate_stack_bugs() {
+        let entries = vec![
+            super::OwnedConditionalUpgrade {
+                id: "mob_fury".to_string(),
+                kind: "mob_fury".to_string(),
+                requirement: super::UpgradeRequirement::Tier0Share { min_share: 0.8 },
+                stacks: 1,
+            },
+            super::OwnedConditionalUpgrade {
+                id: "mob_fury".to_string(),
+                kind: "mob_fury".to_string(),
+                requirement: super::UpgradeRequirement::Tier0Share { min_share: 0.8 },
+                stacks: 2,
+            },
+        ];
+        let (active_effects, active_status) =
+            super::conditional_effects_from_owned(&entries, 1.0, ActiveFormation::Square);
+        assert!(active_effects.friendly_loss_immunity);
+        assert!((active_effects.friendly_damage_multiplier - 1.18).abs() < 0.001);
+        assert_eq!(active_status.len(), 2);
+        assert!(active_status.iter().all(|entry| entry.active));
+
+        let (inactive_effects, inactive_status) =
+            super::conditional_effects_from_owned(&entries, 0.2, ActiveFormation::Square);
+        assert!(!inactive_effects.friendly_loss_immunity);
+        assert!((inactive_effects.friendly_damage_multiplier - 1.0).abs() < 0.001);
+        assert!(inactive_status.iter().all(|entry| !entry.active));
+    }
+
+    #[test]
     fn upgrade_display_metadata_maps_known_kinds() {
         let damage_upgrade = upgrade("damage", "damage_up");
         assert_eq!(upgrade_card_icon(&damage_upgrade), UpgradeCardIcon::Damage);
@@ -943,6 +1137,8 @@ mod tests {
             formation_id: Some("diamond".to_string()),
             requirement_type: None,
             requirement_min_tier0_share: None,
+            requirement_active_formation: None,
+            requirement_map_tag: None,
         };
         assert_eq!(
             upgrade_card_icon(&formation_upgrade),

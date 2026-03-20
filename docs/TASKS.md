@@ -448,7 +448,7 @@
   - `docs/SYSTEMS_REFERENCE.md`
 
 ### CRU-075 - Per-Upgrade Requirement Framework (Mob Trio Uses Tier-0 Share)
-- Status: `TODO`
+- Status: `DONE`
 - Type: `Core`
 - Priority: `P1`
 - Depends on: `CRU-068`, `CRU-072`

@@ -109,6 +109,11 @@ Use this for entity/component/system lookup without scanning all source files.
   - enemy collision radius is now data-driven (`enemies.bandit_raider.collision_radius`),
   - collision correction now uses frame-time-aware damping + max push clamp,
   - chase movement step is clamped to avoid overshooting into stop distance.
+- Added per-upgrade requirement framework:
+  - data schema now supports typed requirement discriminators (`tier0_share`, `formation_active`, `map_tag`),
+  - conditional upgrade ownership is tracked generically (not hardwired per-mob-flag),
+  - conditional effects are re-evaluated continuously and cleanly revoke when requirements are unmet,
+  - Skill Book now surfaces owned conditional upgrades as active/inactive with unmet-requirement messaging.
 - Replaced placeholder `morale_weight` usage with active per-unit `Morale` (friendlies and enemies).
 - Added morale-based combat debuff below 50% morale.
 - Refactored cohesion to event-driven behavior (damage/death/kill events + low-morale pressure).
@@ -227,6 +232,9 @@ Procedural continuation:
 - `authority_aura`
 - `move_speed`
 - `hospitalier_aura`
+- `mob_fury` (`one_time`, `requirement_type=tier0_share`, `requirement_min_tier0_share=1.0`)
+- `mob_justice` (`one_time`, `requirement_type=tier0_share`, `requirement_min_tier0_share=1.0`)
+- `mob_mercy` (`one_time`, `requirement_type=tier0_share`, `requirement_min_tier0_share=1.0`)
 
 Roll fields:
 - `min_value`
@@ -236,6 +244,11 @@ Roll fields:
 - `one_time`
 - `adds_to_skillbar`
 - `formation_id`
+- requirement fields:
+  - `requirement_type`
+  - `requirement_min_tier0_share`
+  - `requirement_active_formation`
+  - `requirement_map_tag`
 
 ### `map.json`
 - Data-driven map list:
@@ -285,6 +298,8 @@ Roll fields:
 - `Progression`, `UpgradeDraft`, `GlobalBuffs`
 - `ProgressionLockFeedback`
 - `OneTimeUpgradeTracker`
+- `ConditionalUpgradeOwnership`
+- `ConditionalUpgradeStatus`
 - `RosterEconomy`, `RosterEconomyFeedback`
 - `UnitUpgradeUiState`
 - `CommanderMotionState`
@@ -369,6 +384,13 @@ Friendly combined outgoing multiplier has lower clamp:
   - stop when `level_cap_from_locked_budget(locked_levels + step_cost * requested) < commander_level`
 - `MAX` button uses the computed affordable count.
 - `+5` clamps to affordable count when fewer than 5 promotions are currently valid.
+
+### Conditional Upgrade Requirement Evaluation (`src/upgrades.rs`)
+- Owned conditional upgrades are evaluated each frame from live runtime context:
+  - `tier0_share` compares roster tier-0 ratio against configured minimum.
+  - `formation_active` checks currently active formation id.
+  - `map_tag` is schema-supported; currently reports unmet in runtime until map tags are introduced.
+- Effects are rebuilt from scratch each refresh and deduplicated by upgrade id, preventing duplicate-frame stacking bugs.
 
 ### Wave Spawn Rate + Victory Gate (`src/enemies.rs`, `src/core.rs`)
 - Wave duration: `30s`.
@@ -553,6 +575,7 @@ Friendly combined outgoing multiplier has lower clamp:
   - grouped sections (`Formations`, `Auras`, `Combat`, `Utility`)
   - icon-backed entries with stacked counts
   - active/inactive markers for mutually exclusive formation skills
+  - active/inactive markers + unmet-requirement detail for owned conditional upgrades
 - top-right utility icon bar:
   - `Inventory` (`I`)
   - `Stats` (`O`)
@@ -567,6 +590,8 @@ Friendly combined outgoing multiplier has lower clamp:
 - additive stacked upgrade effects
 - passive commander level scaling
 - level-up full-heal sync for friendlies
+- generic conditional-upgrade ownership + typed requirement parsing/evaluation
+- runtime conditional status snapshot used by Skill Book UI
 
 ### `steam.rs`
 - feature-gated platform runtime (`standalone`/`steam`)

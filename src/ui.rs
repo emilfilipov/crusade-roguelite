@@ -23,9 +23,9 @@ use crate::squad::{
     promotion_step_cost, unit_kind_label,
 };
 use crate::upgrades::{
-    Progression, ProgressionLockFeedback, SelectUpgradeEvent, SkillBookLog, UpgradeCardIcon,
-    UpgradeDraft, commander_level_hp_bonus, upgrade_card_icon, upgrade_display_description,
-    upgrade_display_title,
+    ConditionalUpgradeStatus, Progression, ProgressionLockFeedback, SelectUpgradeEvent,
+    SkillBookLog, UpgradeCardIcon, UpgradeDraft, commander_level_hp_bonus, upgrade_card_icon,
+    upgrade_display_description, upgrade_display_title,
 };
 
 #[derive(Resource, Clone, Debug)]
@@ -361,6 +361,7 @@ struct RunModalOverlayDeps<'w, 's> {
     unit_upgrade_state: Res<'w, UnitUpgradeUiState>,
     buffs: Res<'w, crate::model::GlobalBuffs>,
     skill_book: Res<'w, SkillBookLog>,
+    conditional_status: Res<'w, ConditionalUpgradeStatus>,
     skillbar: Res<'w, FormationSkillBar>,
     art: Res<'w, crate::visuals::ArtAssets>,
     active_formation: Res<'w, ActiveFormation>,
@@ -1772,6 +1773,7 @@ fn sync_run_modal_overlay(
             );
             let skill_book_panel = build_skill_book_panel_data(
                 &deps.skill_book,
+                &deps.conditional_status,
                 &deps.skillbar,
                 *deps.active_formation,
                 &deps.data,
@@ -2126,6 +2128,7 @@ fn find_stats_row<'a>(rows: &'a [StatsPanelRow], label: &str) -> Option<&'a Stat
 
 fn build_skill_book_panel_data(
     skill_book: &SkillBookLog,
+    conditional_status: &ConditionalUpgradeStatus,
     skillbar: &FormationSkillBar,
     active_formation: ActiveFormation,
     data: &GameData,
@@ -2154,12 +2157,27 @@ fn build_skill_book_panel_data(
         if entry.kind == "unlock_formation" {
             continue;
         }
+        let status = conditional_status
+            .entries
+            .iter()
+            .find(|status| status.id == entry.id);
+        let mut description = entry.description.clone();
+        let mut active = None;
+        if let Some(status) = status {
+            active = Some(status.active);
+            if !status.active
+                && let Some(detail) = status.detail.as_deref()
+            {
+                description.push(' ');
+                description.push_str(detail);
+            }
+        }
         let mapped = SkillBookPanelEntry {
             title: entry.title.clone(),
-            description: entry.description.clone(),
+            description,
             icon: entry.icon,
             stacks: entry.stacks,
-            active: None,
+            active,
         };
         match skill_book_category(entry.kind.as_str()) {
             "Auras" => auras.push(mapped),
@@ -4801,7 +4819,10 @@ mod tests {
         modal_action_for_utility_button, requested_promotion_count, rescue_progress_ratio,
         world_to_minimap_pos,
     };
-    use crate::upgrades::{Progression, SkillBookEntry, SkillBookLog, UpgradeCardIcon};
+    use crate::upgrades::{
+        ConditionalUpgradeStatus, ConditionalUpgradeStatusEntry, Progression, SkillBookEntry,
+        SkillBookLog, UpgradeCardIcon,
+    };
 
     #[test]
     fn snapshot_holds_expected_values() {
@@ -5102,8 +5123,13 @@ mod tests {
             formation_id: None,
         });
 
-        let panel =
-            build_skill_book_panel_data(&skill_book, &skillbar, ActiveFormation::Diamond, &data);
+        let panel = build_skill_book_panel_data(
+            &skill_book,
+            &ConditionalUpgradeStatus::default(),
+            &skillbar,
+            ActiveFormation::Diamond,
+            &data,
+        );
         let formation_section =
             find_skill_section(&panel, "Formations").expect("formation section");
         assert!(
@@ -5135,6 +5161,47 @@ mod tests {
                 .iter()
                 .any(|entry| entry.title == "Authority Aura")
         );
+    }
+
+    #[test]
+    fn skill_book_panel_marks_owned_conditional_upgrades_inactive_with_reason() {
+        let data = GameData::load_from_dir(Path::new("assets/data")).expect("load data");
+        let skillbar = FormationSkillBar::default();
+        let mut skill_book = SkillBookLog::default();
+        skill_book.entries.push(SkillBookEntry {
+            id: "mob_fury".to_string(),
+            kind: "mob_fury".to_string(),
+            title: "Mob's Fury".to_string(),
+            description: "Conditional buff.".to_string(),
+            icon: UpgradeCardIcon::MobFury,
+            stacks: 1,
+            one_time: false,
+            adds_to_skillbar: false,
+            formation_id: None,
+        });
+        let conditional_status = ConditionalUpgradeStatus {
+            entries: vec![ConditionalUpgradeStatusEntry {
+                id: "mob_fury".to_string(),
+                kind: "mob_fury".to_string(),
+                active: false,
+                detail: Some("Requires tier-0 share >= 100%.".to_string()),
+            }],
+        };
+        let panel = build_skill_book_panel_data(
+            &skill_book,
+            &conditional_status,
+            &skillbar,
+            ActiveFormation::Square,
+            &data,
+        );
+        let combat_section = find_skill_section(&panel, "Combat").expect("combat section");
+        let fury_entry = combat_section
+            .entries
+            .iter()
+            .find(|entry| entry.title == "Mob's Fury")
+            .expect("fury entry");
+        assert_eq!(fury_entry.active, Some(false));
+        assert!(fury_entry.description.contains("Requires tier-0 share"));
     }
 
     #[test]

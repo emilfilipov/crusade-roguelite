@@ -112,6 +112,10 @@ pub struct UpgradeConfig {
     pub requirement_type: Option<String>,
     #[serde(default)]
     pub requirement_min_tier0_share: Option<f32>,
+    #[serde(default)]
+    pub requirement_active_formation: Option<String>,
+    #[serde(default)]
+    pub requirement_map_tag: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -407,12 +411,23 @@ fn validate_upgrades(config: &UpgradesConfigFile) -> Result<()> {
         {
             bail!("upgrade[{idx}] weight_exponent must be > 0");
         }
-        if let Some(requirement_kind) = upgrade.requirement_type.as_deref()
-            && !requirement_kind.trim().is_empty()
-        {
-            if requirement_kind != "tier0_share" {
-                bail!("upgrade[{idx}] unknown requirement_type={requirement_kind}");
-            }
+        validate_upgrade_requirement(idx, upgrade)?;
+    }
+    Ok(())
+}
+
+fn validate_upgrade_requirement(idx: usize, upgrade: &UpgradeConfig) -> Result<()> {
+    let Some(requirement_kind) = upgrade
+        .requirement_type
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(());
+    };
+
+    match requirement_kind {
+        "tier0_share" => {
             let Some(share) = upgrade.requirement_min_tier0_share else {
                 bail!(
                     "upgrade[{idx}] tier0_share requirement requires requirement_min_tier0_share"
@@ -422,6 +437,29 @@ fn validate_upgrades(config: &UpgradesConfigFile) -> Result<()> {
                 bail!("upgrade[{idx}] requirement_min_tier0_share must be in [0,1]");
             }
         }
+        "formation_active" => {
+            let Some(formation_id) = upgrade.requirement_active_formation.as_deref() else {
+                bail!(
+                    "upgrade[{idx}] formation_active requirement requires requirement_active_formation"
+                );
+            };
+            if !matches!(formation_id, "square" | "diamond") {
+                bail!(
+                    "upgrade[{idx}] unknown requirement_active_formation '{formation_id}', expected 'square' or 'diamond'"
+                );
+            }
+        }
+        "map_tag" => {
+            let Some(tag) = upgrade.requirement_map_tag.as_deref() else {
+                bail!("upgrade[{idx}] map_tag requirement requires requirement_map_tag");
+            };
+            if tag.trim().is_empty() {
+                bail!("upgrade[{idx}] requirement_map_tag must be non-empty");
+            }
+        }
+        other => bail!(
+            "upgrade[{idx}] unknown requirement_type={other}; supported: tier0_share, formation_active, map_tag"
+        ),
     }
     Ok(())
 }
@@ -694,5 +732,57 @@ mod tests {
         );
         let err = GameData::load_from_dir(tmp.path()).expect_err("expected non-tier0 rejection");
         assert!(err.to_string().contains("tier-0"));
+    }
+
+    #[test]
+    fn rejects_upgrade_with_unknown_requirement_type() {
+        let tmp = TempDir::new().expect("tmp");
+        write_valid_set(tmp.path());
+        write_config(
+            tmp.path(),
+            "upgrades.json",
+            r#"{
+              "upgrades":[
+                {
+                  "id":"mob_custom",
+                  "kind":"mob_fury",
+                  "value":1.0,
+                  "requirement_type":"unknown_gate"
+                }
+              ]
+            }"#,
+        );
+        let err = GameData::load_from_dir(tmp.path()).expect_err("expected bad requirement type");
+        assert!(
+            err.to_string()
+                .contains("supported: tier0_share, formation_active, map_tag")
+        );
+    }
+
+    #[test]
+    fn rejects_upgrade_with_unknown_formation_requirement() {
+        let tmp = TempDir::new().expect("tmp");
+        write_valid_set(tmp.path());
+        write_config(
+            tmp.path(),
+            "upgrades.json",
+            r#"{
+              "upgrades":[
+                {
+                  "id":"formation_gate",
+                  "kind":"mob_fury",
+                  "value":1.0,
+                  "requirement_type":"formation_active",
+                  "requirement_active_formation":"wedge"
+                }
+              ]
+            }"#,
+        );
+        let err =
+            GameData::load_from_dir(tmp.path()).expect_err("expected bad formation requirement");
+        assert!(
+            err.to_string()
+                .contains("unknown requirement_active_formation")
+        );
     }
 }

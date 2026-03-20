@@ -71,6 +71,30 @@
       "max_value": 2.4,
       "value_step": 0.2,
       "weight_exponent": 2.1
+    },
+    {
+      "id": "mob_fury",
+      "kind": "mob_fury",
+      "value": 1.0,
+      "one_time": true,
+      "requirement_type": "tier0_share",
+      "requirement_min_tier0_share": 1.0
+    },
+    {
+      "id": "mob_justice",
+      "kind": "mob_justice",
+      "value": 1.0,
+      "one_time": true,
+      "requirement_type": "tier0_share",
+      "requirement_min_tier0_share": 1.0
+    },
+    {
+      "id": "mob_mercy",
+      "kind": "mob_mercy",
+      "value": 1.0,
+      "one_time": true,
+      "requirement_type": "tier0_share",
+      "requirement_min_tier0_share": 1.0
     }
   ]
 }
