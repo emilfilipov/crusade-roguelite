@@ -95,12 +95,14 @@ pub enum UnitKind {
     EnemyBanditRaider,
     RescuableChristianPeasantInfantry,
     RescuableChristianPeasantArcher,
+    RescuableChristianPeasantPriest,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RecruitUnitKind {
     ChristianPeasantInfantry,
     ChristianPeasantArcher,
+    ChristianPeasantPriest,
 }
 
 impl RecruitUnitKind {
@@ -108,6 +110,7 @@ impl RecruitUnitKind {
         match self {
             Self::ChristianPeasantInfantry => UnitKind::ChristianPeasantInfantry,
             Self::ChristianPeasantArcher => UnitKind::ChristianPeasantArcher,
+            Self::ChristianPeasantPriest => UnitKind::ChristianPeasantPriest,
         }
     }
 
@@ -115,6 +118,7 @@ impl RecruitUnitKind {
         match self {
             Self::ChristianPeasantInfantry => UnitKind::RescuableChristianPeasantInfantry,
             Self::ChristianPeasantArcher => UnitKind::RescuableChristianPeasantArcher,
+            Self::ChristianPeasantPriest => UnitKind::RescuableChristianPeasantPriest,
         }
     }
 }

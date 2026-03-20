@@ -8,10 +8,13 @@ Use this for entity/component/system lookup without scanning all source files.
 - Added `RunModalState` state machine for in-run utility screens (`Inventory`, `Stats`, `Skill Book`, `Archive`, `Unit Upgrade`).
 - Added shared modal request event path (`RunModalRequestEvent`) so keyboard and UI button actions use the same reducer logic.
 - Added modal hotkeys in-run: `I`, `O`, `P`, `K`, `U`; `Escape` closes modal first, otherwise opens pause menu.
+- Added pause-state `Escape` behavior: pressing `Escape` while paused resumes the run.
 - Added modal overlay scaffold renderer that pauses in-run simulation while open.
+- Added direct close-button modal state clear path to avoid stale open overlays from UI interaction edge cases.
 - Added top-right in-run utility bar with five icon buttons mapped to the same modal requests as hotkeys.
 - Added `ArchivePlugin` + `ArchiveDataset` with generated codex entries (units/enemies/skills/stats/bonuses/drops).
 - Added shared archive renderer used by both in-run `K` modal and main-menu `Bestiary` screen.
+- Added mouse-wheel scrollable sections for `Archive`/`Bestiary` and `Skill Book` to prevent clipping.
 - Main menu flow now exposes:
   - `Play Offline` (opens match setup)
   - `Play Online` (disabled placeholder)
@@ -33,7 +36,7 @@ Use this for entity/component/system lookup without scanning all source files.
   - Unit Upgrade modal now displays live budget and latest block reason strings.
 - Implemented Unit Upgrade modal runtime:
   - left roster list with selectable unit source rows,
-  - right promotion tree pane with tier path display and promotion options,
+  - right promotion-grid table with promotion options and affordability columns,
   - bulk action buttons (`+1`, `+5`, `MAX`) with affordability clamping.
 - Promotion validation now rejects non-upgrade paths (same-tier or invalid-tier conversions).
 - Enemy wave runtime now uses continuous units-per-second scheduling with staggered batch emission.
@@ -41,16 +44,22 @@ Use this for entity/component/system lookup without scanning all source files.
 - HUD commander level text now renders `current/allowed` and appends a lock marker when progression is budget-locked.
 - Rescue config now includes `recruit_pool` and validator rejects non-tier0 rescue entries.
 - Added inventory scaffold module/resource (`InventoryState`) with serializable bag/equipment setup model.
-- Inventory modal now renders dedicated bag list + per-unit equipment setup sections.
-- Stats modal now renders base/bonus/final rows for commander and global level-up-driven modifiers.
+- Inventory modal now renders:
+  - bag drops as 1-item-per-slot grid,
+  - separate 1x3 equipment rows for commander and each unit tier (`Tier 0..5`).
+- Commander slots: `Banner`, `Instrument`, `Chant`; unit-tier slots: `Melee Weapon`, `Ranged Weapon`, `Armor`.
+- Stats modal now renders a table (`Stat | Base | Bonus | Final`) with color-coded bonuses (green positive, red negative).
 - Skill Book modal now uses structured upgrade records with:
   - category grouping (formations/auras/combat/utility)
   - icon + description rows
   - stack-aware entries
   - formation active/inactive indicators
+- Skill Book now displays cumulative effect totals per owned upgrade entry.
 - Renamed the old recruit `Infantry/Knight` to `Christian Peasant Infantry`.
 - Added `Christian Peasant Archer` as a second recruitable retinue unit.
 - Rescue spawns now use a data-driven recruit pool and are currently constrained to tier-0 entries only.
+- Active tier-0 rescue pool entries: `christian_peasant_infantry`, `christian_peasant_archer`, `christian_peasant_priest`.
+- Added rescuable-priest variant mapping so priest rescues flow through the same recruit pipeline.
 - Recruit events now preserve rescued unit type so formation/combat/collision pipelines auto-handle both variants.
 - Upgraded ranged combat to a shared unit system (no longer commander-only).
 - Christian Peasant Archer now uses hybrid combat: weak melee profile + stronger projectile ranged profile.
@@ -232,7 +241,7 @@ Procedural continuation:
 - `spawn_count=14`
 - `rescue_radius=60`
 - `rescue_duration_secs=2.2`
-- `recruit_pool=["christian_peasant_infantry"]` (tier-0 validation enforced)
+- `recruit_pool=["christian_peasant_infantry","christian_peasant_archer","christian_peasant_priest"]` (tier-0 validation enforced)
 
 ### `upgrades.json`
 - `unlock_formation_diamond` (`one_time`, `adds_to_skillbar`, `formation_id=diamond`)
@@ -391,7 +400,7 @@ Friendly combined outgoing multiplier has lower clamp:
 
 ### Unit Upgrade Bulk Affordability (`src/ui.rs`)
 - For each promotion row, UI computes:
-  - `step_cost = to_tier - from_tier` (must be `> 0`)
+  - `step_cost = promotion_step_cost(from_kind, to_kind)` (allowed specialization paths can cost `1` even when tiers match)
   - iterate requested count from `1..=source_count`
   - stop when `level_cap_from_locked_budget(locked_levels + step_cost * requested) < commander_level`
 - `MAX` button uses the computed affordable count.
@@ -477,6 +486,7 @@ Friendly combined outgoing multiplier has lower clamp:
 - `Escape` behavior priority:
   - close open run modal
   - otherwise open pause menu
+- while paused, `Escape` resumes run (same as pause menu `Resume`)
 - virtual time pause/unpause sync while run modal is open
 - survival timer
 - commander-loss transition to `GameOver`
@@ -578,16 +588,22 @@ Friendly combined outgoing multiplier has lower clamp:
   - `Archive`
   - `Unit Upgrade`
 - inventory modal content:
-  - bag drops panel with empty-state fallback
-  - equipment setup panel for commander + current friendly unit classes
+  - bag drops grid (1 item = 1 slot, with empty placeholders)
+  - equipment setup panel with commander row + unit tier rows (`Tier 0..5`)
+  - commander slots: `Banner`, `Instrument`, `Chant`
+  - unit-tier slots: `Melee Weapon`, `Ranged Weapon`, `Armor`
 - stats modal content:
   - active formation label
-  - base/bonus/final stat rows (HP, damage, attack speed, armor, move speed, pickup radius, aura, aura effects)
+  - table layout (`Stat | Base | Bonus | Final`)
+  - bonus color coding (green positive, red negative)
 - skill book modal content:
   - grouped sections (`Formations`, `Auras`, `Combat`, `Utility`)
   - icon-backed entries with stacked counts
+  - cumulative effect descriptions per owned upgrade
   - active/inactive markers for mutually exclusive formation skills
   - active/inactive markers + unmet-requirement detail for owned conditional upgrades
+- archive/bestiary modal content:
+  - mouse-wheel scrolling with clipped viewport to prevent content overflow
 - top-right utility icon bar:
   - `Inventory` (`I`)
   - `Stats` (`O`)

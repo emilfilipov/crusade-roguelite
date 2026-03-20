@@ -229,8 +229,17 @@ fn spawn_recruit(
                 art.friendly_peasant_archer_idle.clone(),
                 11.0,
                 Color::srgb(0.94, 1.0, 0.94),
-                1u8,
-                1u32,
+                0u8,
+                0u32,
+            ),
+            RecruitUnitKind::ChristianPeasantPriest => (
+                &data.units.recruit_christian_peasant_priest,
+                UnitKind::ChristianPeasantPriest,
+                art.friendly_peasant_priest_idle.clone(),
+                11.0,
+                Color::srgb(0.96, 0.93, 1.0),
+                0u8,
+                0u32,
             ),
         };
 
@@ -433,7 +442,10 @@ fn apply_promotion_events(
     progression: Option<Res<Progression>>,
     economy: Res<RosterEconomy>,
     mut feedback: ResMut<RosterEconomyFeedback>,
-    friendlies: Query<(Entity, &Unit, &UnitTier), (With<FriendlyUnit>, Without<CommanderUnit>)>,
+    friendlies: Query<
+        (Entity, &Unit, &UnitTier, Option<&UnitLevelCost>),
+        (With<FriendlyUnit>, Without<CommanderUnit>),
+    >,
 ) {
     let Some(current_level) = progression.as_ref().map(|value| value.level) else {
         return;
@@ -464,17 +476,22 @@ fn apply_promotion_events(
             continue;
         };
 
-        let mut candidates: Vec<(Entity, Unit, UnitTier)> = friendlies
+        let mut candidates: Vec<(Entity, Unit, UnitTier, UnitLevelCost)> = friendlies
             .iter()
-            .filter_map(|(entity, unit, tier)| {
-                (unit.kind == event.from_kind).then_some((entity, *unit, *tier))
+            .filter_map(|(entity, unit, tier, level_cost)| {
+                (unit.kind == event.from_kind).then_some((
+                    entity,
+                    *unit,
+                    *tier,
+                    level_cost.copied().unwrap_or(UnitLevelCost(0)),
+                ))
             })
             .collect();
-        candidates.sort_by_key(|(entity, _, _)| entity.index());
+        candidates.sort_by_key(|(entity, _, _, _)| entity.index());
 
         let mut promoted = 0u32;
         let mut predicted_locked = economy.locked_levels;
-        for (entity, unit, tier) in candidates {
+        for (entity, unit, tier, level_cost) in candidates {
             if promoted >= event.count {
                 break;
             }
@@ -502,10 +519,11 @@ fn apply_promotion_events(
 
             let mut updated_unit = unit;
             updated_unit.kind = event.to_kind;
+            let upgraded_level_cost = level_cost.0.saturating_add(step_cost);
             commands.entity(entity).insert((
                 updated_unit,
                 UnitTier(target_tier),
-                UnitLevelCost(target_tier as u32),
+                UnitLevelCost(upgraded_level_cost),
                 Health::new(cfg.max_hp),
                 BaseMaxHealth(cfg.max_hp),
                 Morale::new(cfg.morale),
@@ -702,12 +720,21 @@ fn on_unit_died(mut roster: ResMut<SquadRoster>, mut death_events: EventReader<U
 pub fn friendly_tier_for_kind(kind: UnitKind) -> Option<u8> {
     match kind {
         UnitKind::ChristianPeasantInfantry => Some(0),
-        UnitKind::ChristianPeasantArcher | UnitKind::ChristianPeasantPriest => Some(1),
+        UnitKind::ChristianPeasantArcher | UnitKind::ChristianPeasantPriest => Some(0),
         _ => None,
     }
 }
 
 pub fn promotion_step_cost(from_kind: UnitKind, to_kind: UnitKind) -> Option<u32> {
+    if matches!(
+        (from_kind, to_kind),
+        (
+            UnitKind::ChristianPeasantInfantry,
+            UnitKind::ChristianPeasantArcher | UnitKind::ChristianPeasantPriest
+        )
+    ) {
+        return Some(1);
+    }
     let from_tier = friendly_tier_for_kind(from_kind)?;
     let to_tier = friendly_tier_for_kind(to_kind)?;
     (to_tier > from_tier).then_some((to_tier - from_tier) as u32)
@@ -722,6 +749,7 @@ pub fn unit_kind_label(kind: UnitKind) -> &'static str {
         UnitKind::EnemyBanditRaider => "Bandit Raider",
         UnitKind::RescuableChristianPeasantInfantry => "Rescuable Christian Peasant Infantry",
         UnitKind::RescuableChristianPeasantArcher => "Rescuable Christian Peasant Archer",
+        UnitKind::RescuableChristianPeasantPriest => "Rescuable Christian Peasant Priest",
     }
 }
 
@@ -910,8 +938,8 @@ mod tests {
         app.update();
 
         let economy_after_recruit = app.world().resource::<RosterEconomy>();
-        assert_eq!(economy_after_recruit.locked_levels, 1);
-        assert_eq!(economy_after_recruit.allowed_max_level, 199);
+        assert_eq!(economy_after_recruit.locked_levels, 0);
+        assert_eq!(economy_after_recruit.allowed_max_level, 200);
 
         let archer_entity = {
             let world = app.world_mut();

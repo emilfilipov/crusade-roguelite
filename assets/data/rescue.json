@@ -3,6 +3,8 @@
   "rescue_radius": 60.0,
   "rescue_duration_secs": 2.2,
   "recruit_pool": [
-    "christian_peasant_infantry"
+    "christian_peasant_infantry",
+    "christian_peasant_archer",
+    "christian_peasant_priest"
   ]
 }

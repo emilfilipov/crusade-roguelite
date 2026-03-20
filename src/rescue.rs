@@ -176,6 +176,11 @@ fn spawn_rescuable(
             art.friendly_peasant_archer_rescuable_variant.clone(),
             Color::srgb(0.86, 0.95, 0.86),
         ),
+        RecruitUnitKind::ChristianPeasantPriest => (
+            crate::model::UnitKind::RescuableChristianPeasantPriest,
+            art.friendly_peasant_priest_idle.clone(),
+            Color::srgb(0.94, 0.92, 0.98),
+        ),
     };
 
     commands.spawn((
@@ -297,10 +302,14 @@ mod tests {
     #[test]
     fn rescue_spawn_sequence_uses_tier0_pool_entries() {
         let config = RescueConfig {
-            spawn_count: 1,
+            spawn_count: 3,
             rescue_radius: 10.0,
             rescue_duration_secs: 1.0,
-            recruit_pool: vec![RescueRecruitKindConfig::ChristianPeasantInfantry],
+            recruit_pool: vec![
+                RescueRecruitKindConfig::ChristianPeasantInfantry,
+                RescueRecruitKindConfig::ChristianPeasantArcher,
+                RescueRecruitKindConfig::ChristianPeasantPriest,
+            ],
         };
         assert_eq!(
             recruit_kind_for_sequence(0, &config),
@@ -308,11 +317,11 @@ mod tests {
         );
         assert_eq!(
             recruit_kind_for_sequence(1, &config),
-            RecruitUnitKind::ChristianPeasantInfantry
+            RecruitUnitKind::ChristianPeasantArcher
         );
         assert_eq!(
             recruit_kind_for_sequence(2, &config),
-            RecruitUnitKind::ChristianPeasantInfantry
+            RecruitUnitKind::ChristianPeasantPriest
         );
     }
 

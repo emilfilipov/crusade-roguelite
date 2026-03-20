@@ -4,27 +4,36 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub enum EquipmentUnitType {
     Commander,
-    ChristianPeasantInfantry,
-    ChristianPeasantArcher,
-    ChristianPeasantPriest,
+    Tier0,
+    Tier1,
+    Tier2,
+    Tier3,
+    Tier4,
+    Tier5,
 }
 
 impl EquipmentUnitType {
     pub const fn label(self) -> &'static str {
         match self {
             Self::Commander => "Commander",
-            Self::ChristianPeasantInfantry => "Christian Peasant Infantry",
-            Self::ChristianPeasantArcher => "Christian Peasant Archer",
-            Self::ChristianPeasantPriest => "Christian Peasant Priest",
+            Self::Tier0 => "Tier 0 Units",
+            Self::Tier1 => "Tier 1 Units",
+            Self::Tier2 => "Tier 2 Units",
+            Self::Tier3 => "Tier 3 Units",
+            Self::Tier4 => "Tier 4 Units",
+            Self::Tier5 => "Tier 5 Units",
         }
     }
 
-    pub const fn all() -> [Self; 4] {
+    pub const fn all() -> [Self; 7] {
         [
             Self::Commander,
-            Self::ChristianPeasantInfantry,
-            Self::ChristianPeasantArcher,
-            Self::ChristianPeasantPriest,
+            Self::Tier0,
+            Self::Tier1,
+            Self::Tier2,
+            Self::Tier3,
+            Self::Tier4,
+            Self::Tier5,
         ]
     }
 }
@@ -70,7 +79,7 @@ impl Default for InventoryState {
             .into_iter()
             .map(|unit_type| UnitEquipmentSetup {
                 unit_type,
-                slots: default_equipment_slots(),
+                slots: default_equipment_slots(unit_type),
             })
             .collect();
         Self {
@@ -80,24 +89,32 @@ impl Default for InventoryState {
     }
 }
 
-fn default_equipment_slots() -> Vec<EquippedSlot> {
+fn default_equipment_slots(unit_type: EquipmentUnitType) -> Vec<EquippedSlot> {
+    let (first, second, third) = match unit_type {
+        EquipmentUnitType::Commander => ("Banner", "Instrument", "Chant"),
+        _ => ("Melee Weapon", "Ranged Weapon", "Armor"),
+    };
     vec![
         EquippedSlot {
-            slot_id: "weapon".to_string(),
-            display_name: "Weapon".to_string(),
+            slot_id: slot_id_from_label(first),
+            display_name: first.to_string(),
             item_id: None,
         },
         EquippedSlot {
-            slot_id: "armor".to_string(),
-            display_name: "Armor".to_string(),
+            slot_id: slot_id_from_label(second),
+            display_name: second.to_string(),
             item_id: None,
         },
         EquippedSlot {
-            slot_id: "trinket".to_string(),
-            display_name: "Trinket".to_string(),
+            slot_id: slot_id_from_label(third),
+            display_name: third.to_string(),
             item_id: None,
         },
     ]
+}
+
+fn slot_id_from_label(label: &str) -> String {
+    label.to_ascii_lowercase().replace([' ', '-'], "_")
 }
 
 pub struct InventoryPlugin;
@@ -121,6 +138,11 @@ mod tests {
                 .expect("setup should exist for each unit type");
             assert_eq!(setup.unit_type, unit_type);
             assert_eq!(setup.slots.len(), 3);
+            if unit_type == EquipmentUnitType::Commander {
+                assert_eq!(setup.slots[0].display_name, "Banner");
+            } else {
+                assert_eq!(setup.slots[0].display_name, "Melee Weapon");
+            }
         }
     }
 

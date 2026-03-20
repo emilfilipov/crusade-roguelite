@@ -1,5 +1,6 @@
 use bevy::app::AppExit;
 use bevy::ecs::system::SystemParam;
+use bevy::input::mouse::MouseWheel;
 use bevy::prelude::*;
 
 use crate::archive::{ArchiveCategory, ArchiveDataset, ArchiveEntry};
@@ -16,16 +17,17 @@ use crate::model::{
     RunModalState, RunSession, StartRunEvent, Team, Unit, UnitKind, level_cap_from_locked_budget,
 };
 use crate::morale::{Cohesion, average_morale_ratio};
-use crate::rescue::RescueProgress;
+use crate::rescue::{RescueProgress, effective_rescue_duration};
 use crate::settings::AppSettings;
 use crate::squad::{
     PriestAttackSpeedBlessing, PromoteUnitsEvent, RosterEconomy, RosterEconomyFeedback,
     SquadRoster, friendly_tier_for_kind, promotion_step_cost, unit_kind_label,
 };
 use crate::upgrades::{
-    ConditionalUpgradeStatus, Progression, ProgressionLockFeedback, SelectUpgradeEvent,
-    SkillBookLog, UpgradeCardIcon, UpgradeDraft, commander_level_hp_bonus, upgrade_card_icon,
-    upgrade_display_description, upgrade_display_title,
+    ConditionalUpgradeEffects, ConditionalUpgradeStatus, Progression, ProgressionLockFeedback,
+    SelectUpgradeEvent, SkillBookLog, UpgradeCardIcon, UpgradeDraft, commander_level_hp_bonus,
+    skill_book_entry_cumulative_description, upgrade_card_icon, upgrade_display_description,
+    upgrade_display_title,
 };
 
 #[derive(Resource, Clone, Debug)]
@@ -237,6 +239,16 @@ struct UtilityBarRoot;
 #[derive(Component, Clone, Copy, Debug, Eq, PartialEq)]
 struct UtilityBarButton {
     screen: RunModalScreen,
+}
+
+#[derive(Component, Clone, Copy, Debug)]
+struct ScrollViewport {
+    max_height: f32,
+}
+
+#[derive(Component, Clone, Copy, Debug)]
+struct ScrollContent {
+    offset: f32,
 }
 
 #[derive(Resource, Clone, Copy, Debug)]
@@ -531,6 +543,10 @@ impl Plugin for UiPlugin {
                 (attach_health_bars_to_units, update_health_bar_fills)
                     .chain()
                     .run_if(in_state(GameState::InRun)),
+            )
+            .add_systems(
+                Update,
+                handle_scroll_views.run_if(resource_exists::<Events<MouseWheel>>),
             );
     }
 }
@@ -1113,7 +1129,7 @@ fn spawn_archive_menu(
                     ..default()
                 },
             ));
-            spawn_archive_sections(parent, &archive, &art);
+            spawn_archive_sections(parent, &archive, &art, 620.0);
             parent
                 .spawn((
                     ButtonBundle {
@@ -1833,10 +1849,12 @@ fn spawn_run_modal_overlay(
     art: &crate::visuals::ArtAssets,
 ) {
     let (title, subtitle) = run_modal_titles(screen);
-    let (panel_width, panel_min_height) = if screen == RunModalScreen::UnitUpgrade {
-        (Val::Px(960.0), Val::Px(520.0))
-    } else {
-        (Val::Px(580.0), Val::Px(320.0))
+    let (panel_width, panel_min_height) = match screen {
+        RunModalScreen::Inventory => (Val::Px(980.0), Val::Px(560.0)),
+        RunModalScreen::Stats => (Val::Px(760.0), Val::Px(460.0)),
+        RunModalScreen::SkillBook => (Val::Px(860.0), Val::Px(560.0)),
+        RunModalScreen::Archive => (Val::Px(920.0), Val::Px(600.0)),
+        RunModalScreen::UnitUpgrade => (Val::Px(980.0), Val::Px(560.0)),
     };
     commands
         .spawn((
@@ -1909,7 +1927,7 @@ fn spawn_run_modal_overlay(
                     spawn_skill_book_modal_sections(panel, skill_book_panel, art);
                 }
                 if matches!(screen, RunModalScreen::Archive) {
-                    spawn_archive_sections(panel, archive, art);
+                    spawn_archive_sections(panel, archive, art, 360.0);
                 }
                 if matches!(screen, RunModalScreen::UnitUpgrade) {
                     spawn_unit_upgrade_modal_sections(panel, unit_upgrade_panel);
@@ -2080,7 +2098,7 @@ fn spawn_stats_modal_sections(parent: &mut ChildBuilder, stats: &StatsPanelData)
         .spawn(NodeBundle {
             style: Style {
                 width: Val::Percent(100.0),
-                min_height: Val::Px(180.0),
+                min_height: Val::Px(300.0),
                 border: UiRect::all(Val::Px(1.0)),
                 padding: UiRect::all(Val::Px(8.0)),
                 flex_direction: FlexDirection::Column,
@@ -2100,30 +2118,102 @@ fn spawn_stats_modal_sections(parent: &mut ChildBuilder, stats: &StatsPanelData)
                     ..default()
                 },
             ));
-            stats_root.spawn(TextBundle::from_section(
-                "Stat | Base | Bonus | Final",
+            stats_root
+                .spawn(NodeBundle {
+                    style: Style {
+                        width: Val::Percent(100.0),
+                        border: UiRect::all(Val::Px(1.0)),
+                        flex_direction: FlexDirection::Column,
+                        ..default()
+                    },
+                    background_color: BackgroundColor(Color::srgba(0.06, 0.06, 0.06, 0.4)),
+                    border_color: BorderColor(Color::srgba(0.78, 0.72, 0.58, 0.24)),
+                    ..default()
+                })
+                .with_children(|table| {
+                    table
+                        .spawn(NodeBundle {
+                            style: Style {
+                                width: Val::Percent(100.0),
+                                height: Val::Px(30.0),
+                                border: UiRect::all(Val::Px(1.0)),
+                                align_items: AlignItems::Center,
+                                ..default()
+                            },
+                            background_color: BackgroundColor(Color::srgba(0.1, 0.09, 0.08, 0.7)),
+                            border_color: BorderColor(Color::srgba(0.78, 0.72, 0.58, 0.24)),
+                            ..default()
+                        })
+                        .with_children(|header| {
+                            spawn_stats_cell(header, "Stat", 42.0, MENU_BUTTON_TEXT_HOVERED);
+                            spawn_stats_cell(header, "Base", 19.0, MENU_BUTTON_TEXT_HOVERED);
+                            spawn_stats_cell(header, "Bonus", 19.0, MENU_BUTTON_TEXT_HOVERED);
+                            spawn_stats_cell(header, "Final", 20.0, MENU_BUTTON_TEXT_HOVERED);
+                        });
+
+                    for row in &stats.rows {
+                        table
+                            .spawn(NodeBundle {
+                                style: Style {
+                                    width: Val::Percent(100.0),
+                                    min_height: Val::Px(28.0),
+                                    border: UiRect::all(Val::Px(1.0)),
+                                    align_items: AlignItems::Center,
+                                    ..default()
+                                },
+                                background_color: BackgroundColor(Color::srgba(
+                                    0.08, 0.07, 0.06, 0.62,
+                                )),
+                                border_color: BorderColor(Color::srgba(0.78, 0.72, 0.58, 0.16)),
+                                ..default()
+                            })
+                            .with_children(|line| {
+                                spawn_stats_cell(line, row.label, 42.0, HUD_TEXT_COLOR);
+                                spawn_stats_cell(
+                                    line,
+                                    format_stat_value(row.base).as_str(),
+                                    19.0,
+                                    HUD_TEXT_COLOR,
+                                );
+                                spawn_stats_cell(
+                                    line,
+                                    format_signed_stat_value(row.bonus).as_str(),
+                                    19.0,
+                                    stat_bonus_color(row.bonus),
+                                );
+                                spawn_stats_cell(
+                                    line,
+                                    format_stat_value(row.final_value).as_str(),
+                                    20.0,
+                                    HUD_TEXT_COLOR,
+                                );
+                            });
+                    }
+                });
+        });
+}
+
+fn spawn_stats_cell(parent: &mut ChildBuilder, text: &str, width_percent: f32, color: Color) {
+    parent
+        .spawn(NodeBundle {
+            style: Style {
+                width: Val::Percent(width_percent),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            background_color: BackgroundColor(Color::NONE),
+            ..default()
+        })
+        .with_children(|cell| {
+            cell.spawn(TextBundle::from_section(
+                text,
                 TextStyle {
-                    font_size: 15.0,
-                    color: HUD_TEXT_COLOR,
+                    font_size: 13.0,
+                    color,
                     ..default()
                 },
             ));
-            for row in &stats.rows {
-                stats_root.spawn(TextBundle::from_section(
-                    format!(
-                        "{} | {} | {} | {}",
-                        row.label,
-                        format_stat_value(row.base),
-                        format_stat_value(row.bonus),
-                        format_stat_value(row.final_value),
-                    ),
-                    TextStyle {
-                        font_size: 14.0,
-                        color: HUD_TEXT_COLOR,
-                        ..default()
-                    },
-                ));
-            }
         });
 }
 
@@ -2134,6 +2224,26 @@ fn format_stat_value(value: f32) -> String {
         format!("{value:.2}")
     } else {
         format!("{value:.3}")
+    }
+}
+
+fn format_signed_stat_value(value: f32) -> String {
+    if value > 0.0 {
+        format!("+{}", format_stat_value(value))
+    } else if value < 0.0 {
+        format!("-{}", format_stat_value(value.abs()))
+    } else {
+        "0".to_string()
+    }
+}
+
+fn stat_bonus_color(value: f32) -> Color {
+    if value > 0.001 {
+        Color::srgb(0.52, 0.9, 0.5)
+    } else if value < -0.001 {
+        Color::srgb(0.94, 0.42, 0.36)
+    } else {
+        HUD_TEXT_COLOR
     }
 }
 
@@ -2177,7 +2287,7 @@ fn build_skill_book_panel_data(
             .entries
             .iter()
             .find(|status| status.id == entry.id);
-        let mut description = entry.description.clone();
+        let mut description = skill_book_entry_cumulative_description(entry);
         let mut active = None;
         if let Some(status) = status {
             active = Some(status.active);
@@ -2246,102 +2356,131 @@ fn skill_book_category(kind: &str) -> &'static str {
     }
 }
 
+fn spawn_scrollable_panel(
+    parent: &mut ChildBuilder,
+    max_height: f32,
+    content_builder: impl FnOnce(&mut ChildBuilder),
+) {
+    parent
+        .spawn((
+            ScrollViewport { max_height },
+            NodeBundle {
+                style: Style {
+                    width: Val::Percent(100.0),
+                    height: Val::Px(max_height),
+                    border: UiRect::all(Val::Px(1.0)),
+                    position_type: PositionType::Relative,
+                    overflow: Overflow::clip_y(),
+                    ..default()
+                },
+                background_color: BackgroundColor(Color::srgba(0.04, 0.04, 0.04, 0.34)),
+                border_color: BorderColor(UTILITY_BAR_BORDER),
+                ..default()
+            },
+        ))
+        .with_children(|viewport| {
+            viewport
+                .spawn((
+                    ScrollContent { offset: 0.0 },
+                    NodeBundle {
+                        style: Style {
+                            width: Val::Percent(100.0),
+                            position_type: PositionType::Relative,
+                            top: Val::Px(0.0),
+                            padding: UiRect::all(Val::Px(8.0)),
+                            flex_direction: FlexDirection::Column,
+                            row_gap: Val::Px(8.0),
+                            ..default()
+                        },
+                        background_color: BackgroundColor(Color::NONE),
+                        ..default()
+                    },
+                ))
+                .with_children(content_builder);
+        });
+}
+
 fn spawn_skill_book_modal_sections(
     parent: &mut ChildBuilder,
     skill_book: &SkillBookPanelData,
     art: &crate::visuals::ArtAssets,
 ) {
-    parent
-        .spawn(NodeBundle {
-            style: Style {
-                width: Val::Percent(100.0),
-                min_height: Val::Px(220.0),
-                border: UiRect::all(Val::Px(1.0)),
-                padding: UiRect::all(Val::Px(8.0)),
-                flex_direction: FlexDirection::Column,
-                row_gap: Val::Px(8.0),
-                ..default()
-            },
-            background_color: BackgroundColor(Color::srgba(0.04, 0.04, 0.04, 0.34)),
-            border_color: BorderColor(UTILITY_BAR_BORDER),
-            ..default()
-        })
-        .with_children(|root| {
-            if skill_book.sections.is_empty() {
-                root.spawn(TextBundle::from_section(
-                    "No skills selected yet.",
-                    TextStyle {
-                        font_size: 17.0,
-                        color: HUD_TEXT_COLOR,
-                        ..default()
-                    },
-                ));
-                return;
-            }
+    spawn_scrollable_panel(parent, 360.0, |root| {
+        if skill_book.sections.is_empty() {
+            root.spawn(TextBundle::from_section(
+                "No skills selected yet.",
+                TextStyle {
+                    font_size: 17.0,
+                    color: HUD_TEXT_COLOR,
+                    ..default()
+                },
+            ));
+            return;
+        }
 
-            for section in &skill_book.sections {
-                root.spawn(TextBundle::from_section(
-                    section.label,
-                    TextStyle {
-                        font_size: 19.0,
-                        color: MENU_BUTTON_TEXT_HOVERED,
+        for section in &skill_book.sections {
+            root.spawn(TextBundle::from_section(
+                section.label,
+                TextStyle {
+                    font_size: 19.0,
+                    color: MENU_BUTTON_TEXT_HOVERED,
+                    ..default()
+                },
+            ));
+            for entry in &section.entries {
+                root.spawn(NodeBundle {
+                    style: Style {
+                        width: Val::Percent(100.0),
+                        border: UiRect::all(Val::Px(1.0)),
+                        padding: UiRect::all(Val::Px(6.0)),
+                        flex_direction: FlexDirection::Row,
+                        align_items: AlignItems::Center,
+                        column_gap: Val::Px(8.0),
                         ..default()
                     },
-                ));
-                for entry in &section.entries {
-                    root.spawn(NodeBundle {
+                    background_color: BackgroundColor(Color::srgba(0.07, 0.07, 0.07, 0.42)),
+                    border_color: BorderColor(Color::srgba(0.78, 0.72, 0.58, 0.18)),
+                    ..default()
+                })
+                .with_children(|row| {
+                    row.spawn(ImageBundle {
                         style: Style {
-                            width: Val::Percent(100.0),
-                            border: UiRect::all(Val::Px(1.0)),
-                            padding: UiRect::all(Val::Px(6.0)),
-                            flex_direction: FlexDirection::Row,
-                            align_items: AlignItems::Center,
-                            column_gap: Val::Px(8.0),
+                            width: Val::Px(22.0),
+                            height: Val::Px(22.0),
                             ..default()
                         },
-                        background_color: BackgroundColor(Color::srgba(0.07, 0.07, 0.07, 0.42)),
-                        border_color: BorderColor(Color::srgba(0.78, 0.72, 0.58, 0.18)),
+                        image: UiImage::new(upgrade_icon_for(entry.icon, art)),
+                        background_color: BackgroundColor(Color::NONE),
                         ..default()
-                    })
-                    .with_children(|row| {
-                        row.spawn(ImageBundle {
-                            style: Style {
-                                width: Val::Px(22.0),
-                                height: Val::Px(22.0),
-                                ..default()
-                            },
-                            image: UiImage::new(upgrade_icon_for(entry.icon, art)),
-                            background_color: BackgroundColor(Color::NONE),
-                            ..default()
-                        });
-
-                        let mut header = entry.title.clone();
-                        if entry.stacks > 1 {
-                            header.push_str(&format!(" x{}", entry.stacks));
-                        }
-                        if let Some(active) = entry.active {
-                            header.push_str(if active { " [ACTIVE]" } else { " [INACTIVE]" });
-                        }
-
-                        row.spawn(TextBundle {
-                            style: Style {
-                                max_width: Val::Px(500.0),
-                                ..default()
-                            },
-                            text: Text::from_section(
-                                format!("{header} - {}", entry.description),
-                                TextStyle {
-                                    font_size: 14.0,
-                                    color: HUD_TEXT_COLOR,
-                                    ..default()
-                                },
-                            ),
-                            ..default()
-                        });
                     });
-                }
+
+                    let mut header = entry.title.clone();
+                    if entry.stacks > 1 {
+                        header.push_str(&format!(" x{}", entry.stacks));
+                    }
+                    if let Some(active) = entry.active {
+                        header.push_str(if active { " [ACTIVE]" } else { " [INACTIVE]" });
+                    }
+
+                    row.spawn(TextBundle {
+                        style: Style {
+                            max_width: Val::Px(680.0),
+                            ..default()
+                        },
+                        text: Text::from_section(
+                            format!("{header} - {}", entry.description),
+                            TextStyle {
+                                font_size: 14.0,
+                                color: HUD_TEXT_COLOR,
+                                ..default()
+                            },
+                        ),
+                        ..default()
+                    });
+                });
             }
-        });
+        }
+    });
 }
 
 fn archive_entries_for_category(
@@ -2359,105 +2498,91 @@ fn spawn_archive_sections(
     parent: &mut ChildBuilder,
     archive: &ArchiveDataset,
     art: &crate::visuals::ArtAssets,
+    max_height: f32,
 ) {
-    parent
-        .spawn(NodeBundle {
-            style: Style {
-                width: Val::Percent(100.0),
-                min_height: Val::Px(260.0),
-                border: UiRect::all(Val::Px(1.0)),
-                padding: UiRect::all(Val::Px(8.0)),
-                flex_direction: FlexDirection::Column,
-                row_gap: Val::Px(8.0),
-                ..default()
-            },
-            background_color: BackgroundColor(Color::srgba(0.04, 0.04, 0.04, 0.34)),
-            border_color: BorderColor(UTILITY_BAR_BORDER),
-            ..default()
-        })
-        .with_children(|root| {
-            if archive.entries.is_empty() {
-                root.spawn(TextBundle::from_section(
-                    "Archive data not available yet.",
-                    TextStyle {
-                        font_size: 17.0,
-                        color: HUD_TEXT_COLOR,
-                        ..default()
-                    },
-                ));
-                return;
-            }
+    spawn_scrollable_panel(parent, max_height, |root| {
+        if archive.entries.is_empty() {
+            root.spawn(TextBundle::from_section(
+                "Archive data not available yet.",
+                TextStyle {
+                    font_size: 17.0,
+                    color: HUD_TEXT_COLOR,
+                    ..default()
+                },
+            ));
+            return;
+        }
 
-            for category in ArchiveCategory::all() {
-                let entries = archive_entries_for_category(archive, category);
-                if entries.is_empty() {
-                    continue;
-                }
-                root.spawn(TextBundle::from_section(
-                    category.label(),
-                    TextStyle {
-                        font_size: 19.0,
-                        color: MENU_BUTTON_TEXT_HOVERED,
+        for category in ArchiveCategory::all() {
+            let entries = archive_entries_for_category(archive, category);
+            if entries.is_empty() {
+                continue;
+            }
+            root.spawn(TextBundle::from_section(
+                category.label(),
+                TextStyle {
+                    font_size: 19.0,
+                    color: MENU_BUTTON_TEXT_HOVERED,
+                    ..default()
+                },
+            ));
+            for entry in entries {
+                root.spawn(NodeBundle {
+                    style: Style {
+                        width: Val::Percent(100.0),
+                        border: UiRect::all(Val::Px(1.0)),
+                        padding: UiRect::all(Val::Px(6.0)),
+                        flex_direction: FlexDirection::Row,
+                        align_items: AlignItems::FlexStart,
+                        column_gap: Val::Px(8.0),
                         ..default()
                     },
-                ));
-                for entry in entries {
-                    root.spawn(NodeBundle {
-                        style: Style {
-                            width: Val::Percent(100.0),
-                            border: UiRect::all(Val::Px(1.0)),
-                            padding: UiRect::all(Val::Px(6.0)),
-                            flex_direction: FlexDirection::Row,
-                            align_items: AlignItems::FlexStart,
-                            column_gap: Val::Px(8.0),
-                            ..default()
-                        },
-                        background_color: BackgroundColor(Color::srgba(0.07, 0.07, 0.07, 0.42)),
-                        border_color: BorderColor(Color::srgba(0.78, 0.72, 0.58, 0.18)),
-                        ..default()
-                    })
-                    .with_children(|row| {
-                        if let Some(icon) = entry.icon {
-                            row.spawn(ImageBundle {
-                                style: Style {
-                                    width: Val::Px(22.0),
-                                    height: Val::Px(22.0),
-                                    ..default()
-                                },
-                                image: UiImage::new(upgrade_icon_for(icon, art)),
-                                background_color: BackgroundColor(Color::NONE),
-                                ..default()
-                            });
-                        } else {
-                            row.spawn(NodeBundle {
-                                style: Style {
-                                    width: Val::Px(22.0),
-                                    height: Val::Px(22.0),
-                                    ..default()
-                                },
-                                background_color: BackgroundColor(Color::NONE),
-                                ..default()
-                            });
-                        }
-                        row.spawn(TextBundle {
+                    background_color: BackgroundColor(Color::srgba(0.07, 0.07, 0.07, 0.42)),
+                    border_color: BorderColor(Color::srgba(0.78, 0.72, 0.58, 0.18)),
+                    ..default()
+                })
+                .with_children(|row| {
+                    if let Some(icon) = entry.icon {
+                        row.spawn(ImageBundle {
                             style: Style {
-                                max_width: Val::Px(700.0),
+                                width: Val::Px(22.0),
+                                height: Val::Px(22.0),
                                 ..default()
                             },
-                            text: Text::from_section(
-                                format!("{} - {}", entry.title, entry.description),
-                                TextStyle {
-                                    font_size: 14.0,
-                                    color: HUD_TEXT_COLOR,
-                                    ..default()
-                                },
-                            ),
+                            image: UiImage::new(upgrade_icon_for(icon, art)),
+                            background_color: BackgroundColor(Color::NONE),
                             ..default()
                         });
+                    } else {
+                        row.spawn(NodeBundle {
+                            style: Style {
+                                width: Val::Px(22.0),
+                                height: Val::Px(22.0),
+                                ..default()
+                            },
+                            background_color: BackgroundColor(Color::NONE),
+                            ..default()
+                        });
+                    }
+                    row.spawn(TextBundle {
+                        style: Style {
+                            max_width: Val::Px(720.0),
+                            ..default()
+                        },
+                        text: Text::from_section(
+                            format!("{} - {}", entry.title, entry.description),
+                            TextStyle {
+                                font_size: 14.0,
+                                color: HUD_TEXT_COLOR,
+                                ..default()
+                            },
+                        ),
+                        ..default()
                     });
-                }
+                });
             }
-        });
+        }
+    });
 }
 
 #[cfg(test)]
@@ -2486,8 +2611,8 @@ fn spawn_inventory_modal_sections(parent: &mut ChildBuilder, inventory: &Invento
             layout
                 .spawn(NodeBundle {
                     style: Style {
-                        width: Val::Percent(46.0),
-                        min_height: Val::Px(150.0),
+                        width: Val::Percent(54.0),
+                        min_height: Val::Px(340.0),
                         border: UiRect::all(Val::Px(1.0)),
                         padding: UiRect::all(Val::Px(8.0)),
                         flex_direction: FlexDirection::Column,
@@ -2507,34 +2632,73 @@ fn spawn_inventory_modal_sections(parent: &mut ChildBuilder, inventory: &Invento
                             ..default()
                         },
                     ));
-                    if inventory.bag.is_empty() {
-                        bag.spawn(TextBundle::from_section(
-                            "No gear drops collected yet.",
-                            TextStyle {
-                                font_size: 16.0,
-                                color: HUD_TEXT_COLOR,
-                                ..default()
-                            },
-                        ));
-                    } else {
-                        for item in inventory.bag.iter().take(12) {
-                            bag.spawn(TextBundle::from_section(
-                                format!("{} - {}", item.name, item.description),
-                                TextStyle {
-                                    font_size: 14.0,
-                                    color: HUD_TEXT_COLOR,
+                    let min_slots = 24usize;
+                    let slot_count = inventory.bag.len().max(min_slots);
+                    spawn_scrollable_panel(bag, 300.0, |bag_scroll| {
+                        bag_scroll
+                            .spawn(NodeBundle {
+                                style: Style {
+                                    width: Val::Percent(100.0),
+                                    flex_wrap: FlexWrap::Wrap,
+                                    row_gap: Val::Px(6.0),
+                                    column_gap: Val::Px(6.0),
                                     ..default()
                                 },
-                            ));
-                        }
-                    }
+                                background_color: BackgroundColor(Color::NONE),
+                                ..default()
+                            })
+                            .with_children(|grid| {
+                                for index in 0..slot_count {
+                                    let maybe_item = inventory.bag.get(index);
+                                    grid.spawn(NodeBundle {
+                                        style: Style {
+                                            width: Val::Px(80.0),
+                                            height: Val::Px(58.0),
+                                            border: UiRect::all(Val::Px(1.0)),
+                                            justify_content: JustifyContent::Center,
+                                            align_items: AlignItems::Center,
+                                            padding: UiRect::all(Val::Px(3.0)),
+                                            ..default()
+                                        },
+                                        background_color: BackgroundColor(Color::srgba(
+                                            0.09, 0.08, 0.07, 0.72,
+                                        )),
+                                        border_color: BorderColor(Color::srgba(
+                                            0.78, 0.72, 0.58, 0.24,
+                                        )),
+                                        ..default()
+                                    })
+                                    .with_children(|slot| {
+                                        if let Some(item) = maybe_item {
+                                            slot.spawn(TextBundle::from_section(
+                                                truncate_inventory_label(&item.name, 14),
+                                                TextStyle {
+                                                    font_size: 12.0,
+                                                    color: MENU_BUTTON_TEXT_HOVERED,
+                                                    ..default()
+                                                },
+                                            ));
+                                        } else {
+                                            slot.spawn(TextBundle::from_section(
+                                                "--",
+                                                TextStyle {
+                                                    font_size: 11.0,
+                                                    color: MENU_BUTTON_TEXT_DISABLED,
+                                                    ..default()
+                                                },
+                                            ));
+                                        }
+                                    });
+                                }
+                            });
+                    });
                 });
 
             layout
                 .spawn(NodeBundle {
                     style: Style {
-                        width: Val::Percent(52.0),
-                        min_height: Val::Px(150.0),
+                        width: Val::Percent(44.0),
+                        min_height: Val::Px(340.0),
                         border: UiRect::all(Val::Px(1.0)),
                         padding: UiRect::all(Val::Px(8.0)),
                         flex_direction: FlexDirection::Column,
@@ -2554,32 +2718,110 @@ fn spawn_inventory_modal_sections(parent: &mut ChildBuilder, inventory: &Invento
                             ..default()
                         },
                     ));
-                    for unit_type in EquipmentUnitType::all() {
-                        let Some(setup) = inventory.setup_for(unit_type) else {
-                            continue;
-                        };
-                        let slot_labels: Vec<String> = setup
-                            .slots
-                            .iter()
-                            .map(|slot| {
-                                if let Some(item_id) = &slot.item_id {
-                                    format!("{}: {item_id}", slot.display_name)
-                                } else {
-                                    format!("{}: Empty", slot.display_name)
-                                }
-                            })
-                            .collect();
-                        setups.spawn(TextBundle::from_section(
-                            format!("{} | {}", unit_type.label(), slot_labels.join(" | ")),
-                            TextStyle {
-                                font_size: 14.0,
-                                color: HUD_TEXT_COLOR,
-                                ..default()
-                            },
-                        ));
-                    }
+                    spawn_scrollable_panel(setups, 300.0, |setups_scroll| {
+                        for unit_type in EquipmentUnitType::all() {
+                            let Some(setup) = inventory.setup_for(unit_type) else {
+                                continue;
+                            };
+                            setups_scroll
+                                .spawn(NodeBundle {
+                                    style: Style {
+                                        width: Val::Percent(100.0),
+                                        border: UiRect::all(Val::Px(1.0)),
+                                        padding: UiRect::all(Val::Px(6.0)),
+                                        flex_direction: FlexDirection::Column,
+                                        row_gap: Val::Px(4.0),
+                                        ..default()
+                                    },
+                                    background_color: BackgroundColor(Color::srgba(
+                                        0.08, 0.07, 0.06, 0.62,
+                                    )),
+                                    border_color: BorderColor(Color::srgba(0.78, 0.72, 0.58, 0.24)),
+                                    ..default()
+                                })
+                                .with_children(|unit_setup| {
+                                    unit_setup.spawn(TextBundle::from_section(
+                                        setup.unit_type.label(),
+                                        TextStyle {
+                                            font_size: 13.0,
+                                            color: MENU_BUTTON_TEXT_HOVERED,
+                                            ..default()
+                                        },
+                                    ));
+                                    unit_setup
+                                        .spawn(NodeBundle {
+                                            style: Style {
+                                                width: Val::Percent(100.0),
+                                                column_gap: Val::Px(6.0),
+                                                ..default()
+                                            },
+                                            background_color: BackgroundColor(Color::NONE),
+                                            ..default()
+                                        })
+                                        .with_children(|slot_row| {
+                                            for slot in &setup.slots {
+                                                slot_row
+                                                    .spawn(NodeBundle {
+                                                        style: Style {
+                                                            width: Val::Percent(33.3),
+                                                            height: Val::Px(50.0),
+                                                            border: UiRect::all(Val::Px(1.0)),
+                                                            justify_content: JustifyContent::Center,
+                                                            align_items: AlignItems::Center,
+                                                            padding: UiRect::all(Val::Px(2.0)),
+                                                            ..default()
+                                                        },
+                                                        background_color: BackgroundColor(
+                                                            Color::srgba(0.1, 0.085, 0.075, 0.74),
+                                                        ),
+                                                        border_color: BorderColor(Color::srgba(
+                                                            0.78, 0.72, 0.58, 0.24,
+                                                        )),
+                                                        ..default()
+                                                    })
+                                                    .with_children(|slot_cell| {
+                                                        let label = match &slot.item_id {
+                                                            Some(item_id) => {
+                                                                truncate_inventory_label(
+                                                                    item_id, 14,
+                                                                )
+                                                            }
+                                                            None => truncate_inventory_label(
+                                                                &slot.display_name,
+                                                                14,
+                                                            ),
+                                                        };
+                                                        let color = if slot.item_id.is_some() {
+                                                            MENU_BUTTON_TEXT_HOVERED
+                                                        } else {
+                                                            HUD_TEXT_COLOR
+                                                        };
+                                                        slot_cell.spawn(TextBundle::from_section(
+                                                            label,
+                                                            TextStyle {
+                                                                font_size: 11.0,
+                                                                color,
+                                                                ..default()
+                                                            },
+                                                        ));
+                                                    });
+                                            }
+                                        });
+                                });
+                        }
+                    });
                 });
         });
+}
+
+fn truncate_inventory_label(label: &str, max_chars: usize) -> String {
+    let mut chars = label.chars();
+    let clipped: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() {
+        format!("{clipped}...")
+    } else {
+        clipped
+    }
 }
 
 fn build_unit_upgrade_panel_data(
@@ -2695,7 +2937,7 @@ fn spawn_unit_upgrade_modal_sections(parent: &mut ChildBuilder, panel_data: &Uni
                 },
             ));
             root.spawn(TextBundle::from_section(
-                "Tier I -> Tier II branches. Use +1, +5, or MAX for bulk promotions.",
+                "Promotions are shown in a grid table. Upgrades consume level budget per step.",
                 TextStyle {
                     font_size: 13.0,
                     color: MENU_BUTTON_TEXT_DISABLED,
@@ -2817,7 +3059,7 @@ fn spawn_unit_upgrade_modal_sections(parent: &mut ChildBuilder, panel_data: &Uni
                             },
                         ));
                         tree.spawn(TextBundle::from_section(
-                            "Tree Columns: I -> II -> III -> IV -> V",
+                            "Promotion Table: Target | Tier | Source | Max Affordable | Actions",
                             TextStyle {
                                 font_size: 13.0,
                                 color: MENU_BUTTON_TEXT_DISABLED,
@@ -2827,7 +3069,7 @@ fn spawn_unit_upgrade_modal_sections(parent: &mut ChildBuilder, panel_data: &Uni
 
                         if panel_data.promotion_options.is_empty() {
                             tree.spawn(TextBundle::from_section(
-                                "No higher-tier promotion paths available for this unit.",
+                                "No promotion paths available for this unit type.",
                                 TextStyle {
                                     font_size: 14.0,
                                     color: HUD_TEXT_COLOR,
@@ -2837,14 +3079,35 @@ fn spawn_unit_upgrade_modal_sections(parent: &mut ChildBuilder, panel_data: &Uni
                             return;
                         }
 
+                        tree.spawn(NodeBundle {
+                            style: Style {
+                                width: Val::Percent(100.0),
+                                min_height: Val::Px(28.0),
+                                border: UiRect::all(Val::Px(1.0)),
+                                align_items: AlignItems::Center,
+                                ..default()
+                            },
+                            background_color: BackgroundColor(Color::srgba(0.1, 0.09, 0.08, 0.7)),
+                            border_color: BorderColor(Color::srgba(0.78, 0.72, 0.58, 0.24)),
+                            ..default()
+                        })
+                        .with_children(|header| {
+                            spawn_stats_cell(header, "Target", 30.0, MENU_BUTTON_TEXT_HOVERED);
+                            spawn_stats_cell(header, "Tier", 12.0, MENU_BUTTON_TEXT_HOVERED);
+                            spawn_stats_cell(header, "Source", 14.0, MENU_BUTTON_TEXT_HOVERED);
+                            spawn_stats_cell(header, "Max", 16.0, MENU_BUTTON_TEXT_HOVERED);
+                            spawn_stats_cell(header, "Actions", 28.0, MENU_BUTTON_TEXT_HOVERED);
+                        });
+
                         for option in &panel_data.promotion_options {
                             tree.spawn(NodeBundle {
                                 style: Style {
                                     width: Val::Percent(100.0),
                                     border: UiRect::all(Val::Px(1.0)),
-                                    padding: UiRect::all(Val::Px(6.0)),
-                                    flex_direction: FlexDirection::Column,
-                                    row_gap: Val::Px(6.0),
+                                    padding: UiRect::all(Val::Px(4.0)),
+                                    flex_direction: FlexDirection::Row,
+                                    align_items: AlignItems::Center,
+                                    column_gap: Val::Px(6.0),
                                     ..default()
                                 },
                                 background_color: BackgroundColor(Color::srgba(
@@ -2854,25 +3117,33 @@ fn spawn_unit_upgrade_modal_sections(parent: &mut ChildBuilder, panel_data: &Uni
                                 ..default()
                             })
                             .with_children(|row| {
-                                row.spawn(TextBundle::from_section(
-                                    format!(
-                                        "{} -> {} (Tier {} -> {}) | Available {} | Max now {}",
-                                        unit_kind_label(panel_data.selected_source),
-                                        unit_kind_label(option.to_kind),
-                                        selected_tier,
-                                        option.to_tier,
-                                        option.source_count,
-                                        option.max_affordable
-                                    ),
-                                    TextStyle {
-                                        font_size: 13.0,
-                                        color: HUD_TEXT_COLOR,
-                                        ..default()
-                                    },
-                                ));
+                                spawn_stats_cell(
+                                    row,
+                                    unit_kind_label(option.to_kind),
+                                    30.0,
+                                    HUD_TEXT_COLOR,
+                                );
+                                spawn_stats_cell(
+                                    row,
+                                    format!("{}", option.to_tier).as_str(),
+                                    12.0,
+                                    HUD_TEXT_COLOR,
+                                );
+                                spawn_stats_cell(
+                                    row,
+                                    format!("{}", option.source_count).as_str(),
+                                    14.0,
+                                    HUD_TEXT_COLOR,
+                                );
+                                spawn_stats_cell(
+                                    row,
+                                    format!("{}", option.max_affordable).as_str(),
+                                    16.0,
+                                    HUD_TEXT_COLOR,
+                                );
                                 row.spawn(NodeBundle {
                                     style: Style {
-                                        width: Val::Percent(100.0),
+                                        width: Val::Percent(28.0),
                                         flex_direction: FlexDirection::Row,
                                         column_gap: Val::Px(6.0),
                                         ..default()
@@ -4159,6 +4430,7 @@ fn handle_run_modal_buttons(
     >,
     mut text_query: Query<&mut Text>,
     mut modal_requests: EventWriter<RunModalRequestEvent>,
+    mut modal_state: ResMut<RunModalState>,
 ) {
     for (interaction, action, children, mut border_color, mut background_color) in &mut buttons {
         if let Some(&text_entity) = children.first()
@@ -4175,6 +4447,7 @@ fn handle_run_modal_buttons(
                 *border_color = BorderColor(MENU_BUTTON_BORDER_HOVERED);
                 *background_color = BackgroundColor(Color::NONE);
                 if matches!(action, RunModalButtonAction::Close) {
+                    *modal_state = RunModalState::None;
                     modal_requests.send(RunModalRequestEvent {
                         action: RunModalAction::Close,
                     });
@@ -4188,6 +4461,34 @@ fn handle_run_modal_buttons(
                 *border_color = BorderColor(Color::NONE);
                 *background_color = BackgroundColor(Color::NONE);
             }
+        }
+    }
+}
+
+fn handle_scroll_views(
+    mut wheel_events: EventReader<MouseWheel>,
+    mut content_query: Query<(&Parent, &Node, &mut Style, &mut ScrollContent), With<ScrollContent>>,
+    viewport_query: Query<(&Node, &ScrollViewport), With<ScrollViewport>>,
+) {
+    let wheel_delta = wheel_events.read().map(|event| event.y).sum::<f32>() * 28.0;
+
+    for (parent, content_node, mut style, mut content) in &mut content_query {
+        let Ok((viewport_node, viewport)) = viewport_query.get(parent.get()) else {
+            continue;
+        };
+        let viewport_height = if viewport_node.size().y > 1.0 {
+            viewport_node.size().y
+        } else {
+            viewport.max_height
+        };
+        let max_negative_offset = (content_node.size().y - viewport_height).max(0.0);
+        let next_offset = (content.offset + wheel_delta).clamp(-max_negative_offset, 0.0);
+        if (next_offset - content.offset).abs() > f32::EPSILON {
+            content.offset = next_offset;
+            style.top = Val::Px(next_offset);
+        } else if max_negative_offset <= 0.0 && content.offset != 0.0 {
+            content.offset = 0.0;
+            style.top = Val::Px(0.0);
         }
     }
 }
@@ -4408,6 +4709,7 @@ fn update_skill_bar_hud(
 fn update_rescue_progress_hud(
     mut commands: Commands,
     data: Res<GameData>,
+    conditional_effects: Option<Res<ConditionalUpgradeEffects>>,
     banner_state: Res<BannerState>,
     rescue_bars_root: Query<Entity, With<RescueProgressBarsRoot>>,
     rescuables: Query<&RescueProgress, With<RescuableUnit>>,
@@ -4417,7 +4719,10 @@ fn update_rescue_progress_hud(
     };
     commands.entity(root_entity).despawn_descendants();
 
-    let duration = data.rescue.rescue_duration_secs;
+    let duration = effective_rescue_duration(
+        data.rescue.rescue_duration_secs,
+        conditional_effects.as_deref(),
+    );
     let mut bars: Vec<(f32, Color)> = Vec::new();
     if let Some(progress_ratio) = banner_pickup_progress_ratio(&banner_state) {
         bars.push((progress_ratio, Color::srgb(0.94, 0.68, 0.32)));
@@ -5197,6 +5502,7 @@ mod tests {
             kind: "damage".to_string(),
             title: "Sharpened Steel".to_string(),
             description: "Increase damage.".to_string(),
+            total_value: 8.0,
             icon: UpgradeCardIcon::Damage,
             stacks: 2,
             one_time: false,
@@ -5208,6 +5514,7 @@ mod tests {
             kind: "authority_aura".to_string(),
             title: "Authority Aura".to_string(),
             description: "Reduce morale/cohesion losses.".to_string(),
+            total_value: 0.1,
             icon: UpgradeCardIcon::AuthorityAura,
             stacks: 1,
             one_time: false,
@@ -5265,6 +5572,7 @@ mod tests {
             kind: "mob_fury".to_string(),
             title: "Mob's Fury".to_string(),
             description: "Conditional buff.".to_string(),
+            total_value: 1.0,
             icon: UpgradeCardIcon::MobFury,
             stacks: 1,
             one_time: false,

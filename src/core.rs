@@ -93,6 +93,15 @@ fn dispatch_run_modal_hotkeys(
     mut next_state: ResMut<NextState<GameState>>,
     keyboard: Option<Res<ButtonInput<KeyCode>>>,
 ) {
+    if *state.get() == GameState::Paused {
+        let Some(keys) = keyboard.as_ref() else {
+            return;
+        };
+        if keys.just_pressed(KeyCode::Escape) {
+            next_state.set(GameState::InRun);
+        }
+        return;
+    }
     if *state.get() != GameState::InRun {
         return;
     }

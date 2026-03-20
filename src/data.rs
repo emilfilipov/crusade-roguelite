@@ -164,6 +164,7 @@ pub struct RescueConfig {
 pub enum RescueRecruitKindConfig {
     ChristianPeasantInfantry,
     ChristianPeasantArcher,
+    ChristianPeasantPriest,
 }
 
 impl RescueRecruitKindConfig {
@@ -171,13 +172,15 @@ impl RescueRecruitKindConfig {
         match self {
             Self::ChristianPeasantInfantry => RecruitUnitKind::ChristianPeasantInfantry,
             Self::ChristianPeasantArcher => RecruitUnitKind::ChristianPeasantArcher,
+            Self::ChristianPeasantPriest => RecruitUnitKind::ChristianPeasantPriest,
         }
     }
 
     pub const fn tier(self) -> u8 {
         match self {
             Self::ChristianPeasantInfantry => 0,
-            Self::ChristianPeasantArcher => 1,
+            Self::ChristianPeasantArcher => 0,
+            Self::ChristianPeasantPriest => 0,
         }
     }
 }
@@ -248,7 +251,11 @@ fn default_multiplier() -> f32 {
 }
 
 fn default_rescue_recruit_pool() -> Vec<RescueRecruitKindConfig> {
-    vec![RescueRecruitKindConfig::ChristianPeasantInfantry]
+    vec![
+        RescueRecruitKindConfig::ChristianPeasantInfantry,
+        RescueRecruitKindConfig::ChristianPeasantArcher,
+        RescueRecruitKindConfig::ChristianPeasantPriest,
+    ]
 }
 
 fn default_enemy_collision_radius() -> f32 {
@@ -717,7 +724,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_rescue_pool_with_non_tier0_entries() {
+    fn accepts_rescue_pool_with_all_tier0_entries() {
         let tmp = TempDir::new().expect("tmp");
         write_valid_set(tmp.path());
         write_config(
@@ -727,11 +734,15 @@ mod tests {
               "spawn_count":2,
               "rescue_radius":30.0,
               "rescue_duration_secs":1.5,
-              "recruit_pool":["christian_peasant_archer"]
+              "recruit_pool":[
+                "christian_peasant_infantry",
+                "christian_peasant_archer",
+                "christian_peasant_priest"
+              ]
             }"#,
         );
-        let err = GameData::load_from_dir(tmp.path()).expect_err("expected non-tier0 rejection");
-        assert!(err.to_string().contains("tier-0"));
+        let loaded = GameData::load_from_dir(tmp.path()).expect("expected valid rescue pool");
+        assert_eq!(loaded.rescue.recruit_pool.len(), 3);
     }
 
     #[test]

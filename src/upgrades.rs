@@ -61,12 +61,13 @@ pub struct SkillBookLog {
     pub entries: Vec<SkillBookEntry>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct SkillBookEntry {
     pub id: String,
     pub kind: String,
     pub title: String,
     pub description: String,
+    pub total_value: f32,
     pub icon: UpgradeCardIcon,
     pub stacks: u32,
     pub one_time: bool,
@@ -463,6 +464,7 @@ fn record_skill_book_entry(skill_book: &mut SkillBookLog, picked: &UpgradeConfig
         .find(|entry| entry.id == picked.id)
     {
         entry.stacks += 1;
+        entry.total_value += picked.value;
         entry.description = upgrade_display_description(picked);
         return;
     }
@@ -471,12 +473,55 @@ fn record_skill_book_entry(skill_book: &mut SkillBookLog, picked: &UpgradeConfig
         kind: picked.kind.clone(),
         title: upgrade_display_title(picked).to_string(),
         description: upgrade_display_description(picked),
+        total_value: picked.value,
         icon: upgrade_card_icon(picked),
         stacks: 1,
         one_time: picked.one_time,
         adds_to_skillbar: picked.adds_to_skillbar,
         formation_id: picked.formation_id.clone(),
     });
+}
+
+pub fn skill_book_entry_cumulative_description(entry: &SkillBookEntry) -> String {
+    match entry.kind.as_str() {
+        "damage" => format!(
+            "Total army damage bonus: +{:.1}%.",
+            entry.total_value.max(0.0)
+        ),
+        "attack_speed" => format!(
+            "Total army attack speed bonus: +{:.0}%.",
+            (entry.total_value.max(0.0) * 100.0)
+        ),
+        "armor" => format!(
+            "Total armor bonus: +{:.1} for friendlies.",
+            entry.total_value.max(0.0)
+        ),
+        "pickup_radius" => format!(
+            "Total pickup radius bonus: +{:.0}.",
+            entry.total_value.max(0.0)
+        ),
+        "aura_radius" => format!(
+            "Total commander aura radius bonus: +{:.0}.",
+            entry.total_value.max(0.0)
+        ),
+        "authority_aura" => format!(
+            "Aura effect total: {:.0}% loss resistance for friendlies in aura and {:.2} morale/s drain for enemies in aura.",
+            entry.total_value.max(0.0) * 100.0,
+            entry.total_value.max(0.0) * AUTHORITY_ENEMY_MORALE_DRAIN_SCALE
+        ),
+        "move_speed" => format!(
+            "Total army movement speed bonus: +{:.0}.",
+            entry.total_value.max(0.0)
+        ),
+        "hospitalier_aura" => format!(
+            "Aura regen totals: +{:.1} HP/s, +{:.2} cohesion/s, +{:.2} morale/s for friendlies in aura.",
+            entry.total_value.max(0.0),
+            entry.total_value.max(0.0) * HOSPITALIER_COHESION_REGEN_SCALE,
+            entry.total_value.max(0.0) * HOSPITALIER_MORALE_REGEN_SCALE
+        ),
+        "mob_fury" | "mob_justice" | "mob_mercy" | "unlock_formation" => entry.description.clone(),
+        _ => entry.description.clone(),
+    }
 }
 
 fn roll_upgrade_options(
@@ -1221,5 +1266,6 @@ mod tests {
         assert_eq!(skill_book.entries.len(), 1);
         assert_eq!(skill_book.entries[0].id, "damage_alpha");
         assert_eq!(skill_book.entries[0].stacks, 2);
+        assert!((skill_book.entries[0].total_value - picked.value * 2.0).abs() < 0.001);
     }
 }
