@@ -19,8 +19,8 @@ use crate::morale::{Cohesion, average_morale_ratio};
 use crate::rescue::RescueProgress;
 use crate::settings::AppSettings;
 use crate::squad::{
-    PromoteUnitsEvent, RosterEconomy, RosterEconomyFeedback, SquadRoster, friendly_tier_for_kind,
-    promotion_step_cost, unit_kind_label,
+    PriestAttackSpeedBlessing, PromoteUnitsEvent, RosterEconomy, RosterEconomyFeedback,
+    SquadRoster, friendly_tier_for_kind, promotion_step_cost, unit_kind_label,
 };
 use crate::upgrades::{
     ConditionalUpgradeStatus, Progression, ProgressionLockFeedback, SelectUpgradeEvent,
@@ -4321,6 +4321,7 @@ fn refresh_hud_snapshot(
 fn update_in_run_hud(
     hud: Res<HudSnapshot>,
     conditional_status: Res<ConditionalUpgradeStatus>,
+    priest_blessings: Query<&PriestAttackSpeedBlessing, With<FriendlyUnit>>,
     mut texts: ParamSet<(
         Query<&mut Text, With<WaveHudText>>,
         Query<&mut Text, With<TimeHudText>>,
@@ -4346,8 +4347,13 @@ fn update_in_run_hud(
             hud.progression_lock_reason.is_some(),
         );
     }
+    let max_priest_blessing_secs = priest_blessings
+        .iter()
+        .map(|blessing| blessing.remaining_secs)
+        .fold(0.0, f32::max);
     if let Ok(mut text) = texts.p3().get_single_mut() {
-        text.sections[0].value = conditional_upgrade_hud_status_text(&conditional_status);
+        text.sections[0].value =
+            conditional_upgrade_hud_status_text(&conditional_status, max_priest_blessing_secs);
     }
     let xp_ratio = if hud.next_level_xp <= 0.0 {
         0.0
@@ -4615,7 +4621,10 @@ pub fn format_elapsed_mm_ss(seconds: f32) -> String {
     format!("{minutes:02}:{secs:02}")
 }
 
-pub fn conditional_upgrade_hud_status_text(status: &ConditionalUpgradeStatus) -> String {
+pub fn conditional_upgrade_hud_status_text(
+    status: &ConditionalUpgradeStatus,
+    max_priest_blessing_secs: f32,
+) -> String {
     let mut entries = Vec::new();
     if let Some(active) = conditional_upgrade_active_state(status, "mob_fury") {
         entries.push(if active {
@@ -4637,6 +4646,9 @@ pub fn conditional_upgrade_hud_status_text(status: &ConditionalUpgradeStatus) ->
         } else {
             "Mob's Mercy: INACTIVE".to_string()
         });
+    }
+    if max_priest_blessing_secs > 0.0 {
+        entries.push(format!("Priest Blessing: {:.1}s", max_priest_blessing_secs));
     }
     entries.join(" | ")
 }
@@ -5308,10 +5320,11 @@ mod tests {
                 },
             ],
         };
-        let text = conditional_upgrade_hud_status_text(&status);
+        let text = conditional_upgrade_hud_status_text(&status, 6.25);
         assert!(text.contains("Mob's Fury: ACTIVE"));
         assert!(text.contains("Mob's Justice: INACTIVE"));
         assert!(text.contains("Mob's Mercy: RESCUE x0.5"));
+        assert!(text.contains("Priest Blessing: 6.2s"));
     }
 
     #[test]

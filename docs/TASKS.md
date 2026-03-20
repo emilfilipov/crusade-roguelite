@@ -526,7 +526,7 @@
   - `docs/SYSTEMS_REFERENCE.md`
 
 ### CRU-078 - Peasant Priest Unit (Auto-Cast Attack-Speed Blessing)
-- Status: `TODO`
+- Status: `DONE`
 - Type: `Gameplay`
 - Priority: `P1`
 - Depends on: `CRU-072`

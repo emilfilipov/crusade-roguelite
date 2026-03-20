@@ -554,7 +554,7 @@ fn apply_promotion_events(
 
             if priest_kind {
                 commands.entity(entity).insert(PriestSupportCaster {
-                    cooldown: PRIEST_BLESSING_COOLDOWN_SECS * 0.2,
+                    cooldown: PRIEST_BLESSING_COOLDOWN_SECS,
                 });
             } else {
                 commands
@@ -604,8 +604,8 @@ fn run_priest_support_logic(
     }
 
     for (priest_transform, mut caster) in &mut priests {
-        caster.cooldown -= dt;
-        if caster.cooldown > 0.0 {
+        caster.cooldown = tick_priest_cooldown(caster.cooldown, dt);
+        if !priest_should_cast(caster.cooldown) {
             continue;
         }
         let priest_position = priest_transform.translation.truncate();
@@ -613,12 +613,24 @@ fn run_priest_support_logic(
         for (entity, position) in &friendly_positions {
             if position.distance_squared(priest_position) <= range_sq {
                 commands.entity(*entity).insert(PriestAttackSpeedBlessing {
-                    remaining_secs: PRIEST_BLESSING_DURATION_SECS,
+                    remaining_secs: refresh_priest_blessing_remaining(0.0),
                 });
             }
         }
         caster.cooldown = PRIEST_BLESSING_COOLDOWN_SECS;
     }
+}
+
+pub fn tick_priest_cooldown(current_cooldown: f32, delta_seconds: f32) -> f32 {
+    (current_cooldown - delta_seconds.max(0.0)).max(0.0)
+}
+
+pub fn priest_should_cast(cooldown_after_tick: f32) -> bool {
+    cooldown_after_tick <= 0.0
+}
+
+pub fn refresh_priest_blessing_remaining(_current_remaining: f32) -> f32 {
+    PRIEST_BLESSING_DURATION_SECS
 }
 
 #[allow(clippy::type_complexity)]
@@ -770,12 +782,13 @@ mod tests {
     use crate::data::GameData;
     use crate::formation::{ActiveFormation, FormationModifiers};
     use crate::model::{
-        CommanderUnit, FriendlyUnit, GameState, RecruitEvent, RecruitUnitKind, StartRunEvent, Unit,
-        UnitKind,
+        AttackProfile, CommanderUnit, FriendlyUnit, GameState, RecruitEvent, RecruitUnitKind,
+        StartRunEvent, Unit, UnitKind,
     };
     use crate::squad::{
-        PromoteUnitsEvent, RosterEconomy, RosterEconomyFeedback, SquadPlugin,
+        PriestSupportCaster, PromoteUnitsEvent, RosterEconomy, RosterEconomyFeedback, SquadPlugin,
         enemy_inside_active_formation, movement_multiplier_from_inside_enemy_count,
+        priest_should_cast, refresh_priest_blessing_remaining, tick_priest_cooldown,
     };
     use crate::upgrades::Progression;
     use crate::visuals::ArtAssets;
@@ -1006,5 +1019,90 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn priest_cast_timer_triggers_on_twenty_second_cadence() {
+        let mut cooldown = 20.0;
+        let mut elapsed = 0u32;
+        let mut casts = Vec::new();
+        while elapsed < 60 {
+            elapsed += 1;
+            cooldown = tick_priest_cooldown(cooldown, 1.0);
+            if priest_should_cast(cooldown) {
+                casts.push(elapsed);
+                cooldown = 20.0;
+            }
+        }
+        assert_eq!(casts, vec![20, 40, 60]);
+    }
+
+    #[test]
+    fn priest_refresh_resets_blessing_duration_instead_of_stacking() {
+        let first_apply = refresh_priest_blessing_remaining(0.0);
+        let overlap_refresh = refresh_priest_blessing_remaining(5.0);
+        assert!((first_apply - 10.0).abs() < 0.001);
+        assert!((overlap_refresh - 10.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn priest_promotion_removes_direct_attack_profiles() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, bevy::state::app::StatesPlugin));
+        app.init_state::<GameState>();
+        app.add_event::<StartRunEvent>();
+        app.insert_resource(
+            GameData::load_from_dir(std::path::Path::new("assets/data")).expect("data"),
+        );
+        app.insert_resource(ArtAssets::default());
+        app.insert_resource(ActiveFormation::Square);
+        app.insert_resource(FormationModifiers::default());
+        app.insert_resource(Progression {
+            xp: 0.0,
+            level: 5,
+            next_level_xp: 10.0,
+        });
+        app.add_plugins(SquadPlugin);
+
+        app.world_mut().send_event(StartRunEvent);
+        app.update();
+        app.world_mut()
+            .resource_mut::<NextState<GameState>>()
+            .set(GameState::InRun);
+        app.update();
+
+        app.world_mut().send_event(RecruitEvent {
+            world_position: Vec2::new(10.0, 5.0),
+            recruit_kind: RecruitUnitKind::ChristianPeasantInfantry,
+        });
+        app.update();
+
+        app.world_mut().send_event(PromoteUnitsEvent {
+            from_kind: UnitKind::ChristianPeasantInfantry,
+            to_kind: UnitKind::ChristianPeasantPriest,
+            count: 1,
+        });
+        app.update();
+
+        let mut priest_has_support = false;
+        let mut priest_has_direct_attack = false;
+        {
+            let world = app.world_mut();
+            let mut query = world.query::<(
+                &Unit,
+                Option<&AttackProfile>,
+                Option<&RangedAttackProfile>,
+                Option<&PriestSupportCaster>,
+            )>();
+            for (unit, melee, ranged, support) in query.iter(world) {
+                if unit.kind != UnitKind::ChristianPeasantPriest {
+                    continue;
+                }
+                priest_has_support |= support.is_some();
+                priest_has_direct_attack |= melee.is_some() || ranged.is_some();
+            }
+        }
+        assert!(priest_has_support);
+        assert!(!priest_has_direct_attack);
     }
 }

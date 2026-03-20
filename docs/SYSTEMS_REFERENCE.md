@@ -122,6 +122,10 @@ Use this for entity/component/system lookup without scanning all source files.
   - rescue channel duration is computed via shared `effective_rescue_duration` and multiplied by conditional effects,
   - active Mercy state now appears alongside other mob upgrade statuses in the in-run HUD line,
   - added explicit tests for Mercy activation/deactivation and non-cross-wired interaction with Fury/Justice.
+- Completed `Christian Peasant Priest` support runtime:
+  - priest promotion now initializes full `20s` support cooldown and does not attach direct attack profiles,
+  - priests auto-cast a `10s` attack-speed blessing on friendlies in range and overlapping casts refresh duration,
+  - in-run HUD status line now surfaces active priest blessing remaining time.
 - Replaced placeholder `morale_weight` usage with active per-unit `Morale` (friendlies and enemies).
 - Added morale-based combat debuff below 50% morale.
 - Refactored cohesion to event-driven behavior (damage/death/kill events + low-morale pressure).
