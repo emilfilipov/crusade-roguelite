@@ -49,6 +49,8 @@ pub struct EnemyStatsConfig {
     pub attack_range: f32,
     pub move_speed: f32,
     pub morale: f32,
+    #[serde(default = "default_enemy_collision_radius")]
+    pub collision_radius: f32,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -245,6 +247,10 @@ fn default_rescue_recruit_pool() -> Vec<RescueRecruitKindConfig> {
     vec![RescueRecruitKindConfig::ChristianPeasantInfantry]
 }
 
+fn default_enemy_collision_radius() -> f32 {
+    15.0
+}
+
 fn validate_unit_stats(unit: &UnitStatsConfig, label: &str) -> Result<()> {
     if unit.max_hp <= 0.0 {
         bail!("{label} max_hp must be > 0");
@@ -312,6 +318,9 @@ fn validate_enemies(config: &EnemiesConfigFile) -> Result<()> {
     }
     if config.bandit_raider.morale <= 0.0 {
         bail!("enemy bandit_raider morale must be > 0");
+    }
+    if config.bandit_raider.collision_radius <= 0.0 {
+        bail!("enemy bandit_raider collision_radius must be > 0");
     }
     Ok(())
 }

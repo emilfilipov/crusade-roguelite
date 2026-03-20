@@ -105,6 +105,10 @@ Use this for entity/component/system lookup without scanning all source files.
   - `DamageTextEvent` emitted from finalized damage application,
   - world-space numeric text with rise/fade animation,
   - per-frame and active-entity caps to prevent text spikes under high hit density.
+- Reduced dense enemy crowd jitter/stacking:
+  - enemy collision radius is now data-driven (`enemies.bandit_raider.collision_radius`),
+  - collision correction now uses frame-time-aware damping + max push clamp,
+  - chase movement step is clamped to avoid overshooting into stop distance.
 - Replaced placeholder `morale_weight` usage with active per-unit `Morale` (friendlies and enemies).
 - Added morale-based combat debuff below 50% morale.
 - Refactored cohesion to event-driven behavior (damage/death/kill events + low-morale pressure).
@@ -178,7 +182,7 @@ Loaded from `assets/data` by `GameData::load_from_dir`.
   - Ranged profile: `damage=9`, `cd=1.15`, `range=220`, `projectile_speed=460`, `max_distance=235`
 
 ### `enemies.json`
-- `bandit_raider`: `hp=34`, `armor=1`, `damage=6`, `cd=1.3`, `range=30`, `move=118`, `morale=90`
+- `bandit_raider`: `hp=34`, `armor=1`, `damage=6`, `cd=1.3`, `range=30`, `move=118`, `morale=90`, `collision_radius=16`
 
 ### `formations.json`
 - `square`: `slot_spacing=30`, `offense=1.0`, `offense_while_moving=1.0`, `defense=1.0`, `anti_cavalry=1.0`, `move_speed=1.0`
@@ -460,6 +464,11 @@ Friendly combined outgoing multiplier has lower clamp:
 - builds `ArchiveDataset` entries from live data files
 - validates archive entries for required fields (title + description)
 - exposes category groupings reused by main-menu and in-run archive UIs
+
+### `collision.rs`
+- resolves eligible overlap pairs (enemy-enemy and enemy-inner-retinue)
+- applies damped/clamped correction vectors for frame-rate-stable separation
+- keeps post-separation positions inside map bounds
 
 ### `squad.rs`
 - run start commander spawn

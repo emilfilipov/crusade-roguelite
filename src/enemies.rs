@@ -235,7 +235,7 @@ fn spawn_enemy_batch(
                 TimerMode::Repeating,
             )),
             MoveSpeed(move_speed),
-            ColliderRadius(12.0),
+            ColliderRadius(cfg.collision_radius),
             SpriteBundle {
                 texture: art.enemy_bandit_raider_idle.clone(),
                 sprite: Sprite {
@@ -405,7 +405,15 @@ fn enemy_chase_targets(
                 resume_distance,
             );
             if movement_state.moving && distance > 0.001 {
-                let step = delta.normalize() * move_speed.0 * time.delta_seconds();
+                let step_distance = chase_step_distance(
+                    distance,
+                    stop_distance,
+                    move_speed.0 * time.delta_seconds(),
+                );
+                if step_distance <= 0.0 {
+                    continue;
+                }
+                let step = delta.normalize() * step_distance;
                 enemy_transform.translation.x += step.x;
                 enemy_transform.translation.y += step.y;
             }
@@ -423,6 +431,13 @@ pub fn should_move_towards_target(
         return distance_to_target > stop_distance;
     }
     distance_to_target > resume_distance
+}
+
+pub fn chase_step_distance(distance_to_target: f32, stop_distance: f32, max_step: f32) -> f32 {
+    if max_step <= 0.0 {
+        return 0.0;
+    }
+    (distance_to_target - stop_distance).max(0.0).min(max_step)
 }
 
 pub fn chase_target_positions(all_friendlies: &[(Vec2, bool)]) -> Vec<Vec2> {
@@ -530,10 +545,10 @@ mod tests {
 
     use crate::data::{WaveConfig, WavesConfigFile};
     use crate::enemies::{
-        BanditVisualState, batch_interval_secs, batch_size_for_wave, chase_target_positions,
-        choose_nearest, decide_bandit_visual_state, enemy_move_speed, random_spawn_position,
-        should_move_towards_target, units_per_second_for_wave, wave_duration_secs,
-        wave_stat_multiplier,
+        BanditVisualState, batch_interval_secs, batch_size_for_wave, chase_step_distance,
+        chase_target_positions, choose_nearest, decide_bandit_visual_state, enemy_move_speed,
+        random_spawn_position, should_move_towards_target, units_per_second_for_wave,
+        wave_duration_secs, wave_stat_multiplier,
     };
     use crate::map::MapBounds;
 
@@ -620,6 +635,14 @@ mod tests {
         assert!(!should_move_towards_target(true, 20.0, 22.0, 26.0));
         assert!(!should_move_towards_target(false, 24.0, 22.0, 26.0));
         assert!(should_move_towards_target(false, 30.0, 22.0, 26.0));
+    }
+
+    #[test]
+    fn chase_step_distance_prevents_overshoot_into_stop_range() {
+        let step = chase_step_distance(24.0, 20.0, 10.0);
+        assert!((step - 4.0).abs() < 0.001);
+        assert_eq!(chase_step_distance(19.5, 20.0, 10.0), 0.0);
+        assert_eq!(chase_step_distance(30.0, 20.0, 0.0), 0.0);
     }
 
     #[test]

@@ -5,6 +5,9 @@ use crate::formation::{ActiveFormation, active_formation_config};
 use crate::map::MapBounds;
 use crate::model::{ColliderRadius, GameState, Team, Unit, UnitKind};
 
+const COLLISION_CORRECTION_DAMPING: f32 = 0.62;
+const COLLISION_MAX_PUSH_PER_FRAME: f32 = 6.0;
+
 pub struct CollisionPlugin;
 
 impl Plugin for CollisionPlugin {
@@ -18,6 +21,7 @@ impl Plugin for CollisionPlugin {
 
 #[allow(clippy::type_complexity)]
 fn resolve_unit_collisions(
+    time: Res<Time>,
     data: Res<GameData>,
     active_formation: Res<ActiveFormation>,
     mut unit_queries: ParamSet<(
@@ -79,7 +83,12 @@ fn resolve_unit_collisions(
     }
 
     for (index, (entity, _, _, _)) in snapshot.iter().enumerate() {
-        let correction = corrections[index];
+        let correction = damp_collision_correction(
+            corrections[index],
+            time.delta_seconds(),
+            COLLISION_CORRECTION_DAMPING,
+            COLLISION_MAX_PUSH_PER_FRAME,
+        );
         if correction.length_squared() <= 0.000001 {
             continue;
         }
@@ -98,6 +107,25 @@ fn resolve_unit_collisions(
             }
         }
     }
+}
+
+pub fn damp_collision_correction(
+    correction: Vec2,
+    delta_seconds: f32,
+    damping: f32,
+    max_push_per_frame: f32,
+) -> Vec2 {
+    if correction.length_squared() <= 0.000001 || damping <= 0.0 || max_push_per_frame <= 0.0 {
+        return Vec2::ZERO;
+    }
+    let frame_scale = (delta_seconds.max(0.0) * 60.0).clamp(0.5, 1.5);
+    let mut damped = correction * damping * frame_scale;
+    let max_len = max_push_per_frame.max(0.0);
+    let len = damped.length();
+    if len > max_len {
+        damped = damped / len * max_len;
+    }
+    damped
 }
 
 pub fn should_resolve_collision_pair(
@@ -163,7 +191,7 @@ pub fn pair_push(position_a: Vec2, position_b: Vec2, min_distance: f32, seed: u3
 mod tests {
     use bevy::prelude::Vec2;
 
-    use crate::collision::{pair_push, should_resolve_collision_pair};
+    use crate::collision::{damp_collision_correction, pair_push, should_resolve_collision_pair};
     use crate::model::{Team, Unit, UnitKind};
 
     fn unit(team: Team, kind: UnitKind) -> Unit {
@@ -190,6 +218,36 @@ mod tests {
     fn exact_overlap_uses_deterministic_fallback_direction() {
         let push = pair_push(Vec2::ZERO, Vec2::ZERO, 10.0, 7).expect("push");
         assert!(push.length() > 0.0);
+    }
+
+    #[test]
+    fn separation_solver_converges_towards_minimum_distance() {
+        let min_distance = 18.0;
+        let mut a = Vec2::ZERO;
+        let mut b = Vec2::new(6.0, 0.0);
+        for step in 0..24 {
+            let Some(push) = pair_push(a, b, min_distance, step) else {
+                break;
+            };
+            let a_correction = damp_collision_correction(-push, 1.0 / 60.0, 0.62, 6.0);
+            let b_correction = damp_collision_correction(push, 1.0 / 60.0, 0.62, 6.0);
+            a += a_correction;
+            b += b_correction;
+        }
+        assert!(a.distance(b) >= min_distance - 0.4);
+    }
+
+    #[test]
+    fn damped_correction_is_stable_across_frame_deltas() {
+        let correction = Vec2::new(8.0, -2.0);
+        let fast = damp_collision_correction(correction, 1.0 / 120.0, 0.62, 6.0);
+        let medium = damp_collision_correction(correction, 1.0 / 60.0, 0.62, 6.0);
+        let slow = damp_collision_correction(correction, 1.0 / 20.0, 0.62, 6.0);
+
+        assert!(fast.length() > 0.0);
+        assert!(medium.length() >= fast.length());
+        assert!(slow.length() >= medium.length());
+        assert!(slow.length() <= 6.0 + 0.001);
     }
 
     #[test]

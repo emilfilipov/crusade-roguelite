@@ -424,7 +424,7 @@
   - `docs/SYSTEMS_REFERENCE.md`
 
 ### CRU-074 - Enemy Crowd Stability (Collision Footprint + Jitter Reduction)
-- Status: `TODO`
+- Status: `DONE`
 - Type: `Gameplay`
 - Priority: `P0`
 - Depends on: `none`
