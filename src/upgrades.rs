@@ -1118,6 +1118,66 @@ mod tests {
     }
 
     #[test]
+    fn mob_mercy_rescue_multiplier_toggles_with_requirement_state() {
+        let entries = vec![super::OwnedConditionalUpgrade {
+            id: "mob_mercy".to_string(),
+            kind: "mob_mercy".to_string(),
+            requirement: super::UpgradeRequirement::Tier0Share { min_share: 1.0 },
+            stacks: 1,
+        }];
+
+        let (active_effects, active_status) =
+            super::conditional_effects_from_owned(&entries, 1.0, ActiveFormation::Square);
+        assert!((active_effects.rescue_time_multiplier - 0.5).abs() < 0.001);
+        assert_eq!(active_effects.execute_below_health_ratio, 0.0);
+        assert!(active_status.iter().all(|entry| entry.active));
+
+        let (inactive_effects, inactive_status) =
+            super::conditional_effects_from_owned(&entries, 0.75, ActiveFormation::Square);
+        assert!((inactive_effects.rescue_time_multiplier - 1.0).abs() < 0.001);
+        assert!(inactive_status.iter().all(|entry| !entry.active));
+    }
+
+    #[test]
+    fn mob_trio_effects_do_not_cross_wire_when_requirements_diverge() {
+        let entries = vec![
+            super::OwnedConditionalUpgrade {
+                id: "mob_fury".to_string(),
+                kind: "mob_fury".to_string(),
+                requirement: super::UpgradeRequirement::Tier0Share { min_share: 1.0 },
+                stacks: 1,
+            },
+            super::OwnedConditionalUpgrade {
+                id: "mob_justice".to_string(),
+                kind: "mob_justice".to_string(),
+                requirement: super::UpgradeRequirement::FormationActive {
+                    formation: ActiveFormation::Diamond,
+                },
+                stacks: 1,
+            },
+            super::OwnedConditionalUpgrade {
+                id: "mob_mercy".to_string(),
+                kind: "mob_mercy".to_string(),
+                requirement: super::UpgradeRequirement::Tier0Share { min_share: 1.0 },
+                stacks: 1,
+            },
+        ];
+
+        let (effects, status) =
+            super::conditional_effects_from_owned(&entries, 1.0, ActiveFormation::Square);
+        assert!(effects.friendly_loss_immunity);
+        assert!((effects.friendly_damage_multiplier - 1.18).abs() < 0.001);
+        assert!((effects.rescue_time_multiplier - 0.5).abs() < 0.001);
+        assert_eq!(effects.execute_below_health_ratio, 0.0);
+
+        let justice_status = status
+            .iter()
+            .find(|entry| entry.kind == "mob_justice")
+            .expect("justice status");
+        assert!(!justice_status.active);
+    }
+
+    #[test]
     fn upgrade_display_metadata_maps_known_kinds() {
         let damage_upgrade = upgrade("damage", "damage_up");
         assert_eq!(upgrade_card_icon(&damage_upgrade), UpgradeCardIcon::Damage);

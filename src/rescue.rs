@@ -121,11 +121,10 @@ fn tick_rescue_progress(
         return;
     }
     let rescue_radius = data.rescue.rescue_radius;
-    let rescue_duration = data.rescue.rescue_duration_secs
-        * conditional_effects
-            .as_deref()
-            .map(|effects| effects.rescue_time_multiplier)
-            .unwrap_or(1.0);
+    let rescue_duration = effective_rescue_duration(
+        data.rescue.rescue_duration_secs,
+        conditional_effects.as_deref(),
+    );
 
     for (entity, transform, rescuable_unit, mut rescue_progress) in &mut rescuables {
         let in_range = any_friendly_in_rescue_radius(
@@ -232,6 +231,17 @@ pub fn advance_rescue_progress(
     }
 }
 
+pub fn effective_rescue_duration(
+    base_duration_secs: f32,
+    conditional_effects: Option<&ConditionalUpgradeEffects>,
+) -> f32 {
+    let multiplier = conditional_effects
+        .map(|effects| effects.rescue_time_multiplier)
+        .unwrap_or(1.0)
+        .max(0.0);
+    base_duration_secs.max(0.0) * multiplier
+}
+
 #[cfg(test)]
 mod tests {
     use bevy::prelude::Vec2;
@@ -240,9 +250,10 @@ mod tests {
     use crate::map::MapBounds;
     use crate::model::RecruitUnitKind;
     use crate::rescue::{
-        advance_rescue_progress, any_friendly_in_rescue_radius, recruit_kind_for_sequence,
-        rescue_spawn_position,
+        advance_rescue_progress, any_friendly_in_rescue_radius, effective_rescue_duration,
+        recruit_kind_for_sequence, rescue_spawn_position,
     };
+    use crate::upgrades::ConditionalUpgradeEffects;
 
     #[test]
     fn rescue_progress_advances_when_in_range() {
@@ -303,5 +314,18 @@ mod tests {
             recruit_kind_for_sequence(2, &config),
             RecruitUnitKind::ChristianPeasantInfantry
         );
+    }
+
+    #[test]
+    fn rescue_duration_uses_mob_mercy_multiplier_when_active() {
+        let base = 4.0;
+        let default_duration = effective_rescue_duration(base, None);
+        let mercy_effects = ConditionalUpgradeEffects {
+            rescue_time_multiplier: 0.5,
+            ..ConditionalUpgradeEffects::default()
+        };
+        let mercy_duration = effective_rescue_duration(base, Some(&mercy_effects));
+        assert!((default_duration - 4.0).abs() < 0.001);
+        assert!((mercy_duration - 2.0).abs() < 0.001);
     }
 }

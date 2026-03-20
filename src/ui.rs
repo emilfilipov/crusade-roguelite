@@ -4631,6 +4631,13 @@ pub fn conditional_upgrade_hud_status_text(status: &ConditionalUpgradeStatus) ->
             "Mob's Justice: INACTIVE".to_string()
         });
     }
+    if let Some(active) = conditional_upgrade_active_state(status, "mob_mercy") {
+        entries.push(if active {
+            "Mob's Mercy: RESCUE x0.5".to_string()
+        } else {
+            "Mob's Mercy: INACTIVE".to_string()
+        });
+    }
     entries.join(" | ")
 }
 
@@ -5278,7 +5285,7 @@ mod tests {
     }
 
     #[test]
-    fn conditional_upgrade_hud_status_text_summarizes_fury_and_justice_state() {
+    fn conditional_upgrade_hud_status_text_summarizes_mob_upgrade_states() {
         let status = ConditionalUpgradeStatus {
             entries: vec![
                 ConditionalUpgradeStatusEntry {
@@ -5293,11 +5300,18 @@ mod tests {
                     active: false,
                     detail: Some("requires tier-0 share".to_string()),
                 },
+                ConditionalUpgradeStatusEntry {
+                    id: "mob_mercy".to_string(),
+                    kind: "mob_mercy".to_string(),
+                    active: true,
+                    detail: None,
+                },
             ],
         };
         let text = conditional_upgrade_hud_status_text(&status);
         assert!(text.contains("Mob's Fury: ACTIVE"));
         assert!(text.contains("Mob's Justice: INACTIVE"));
+        assert!(text.contains("Mob's Mercy: RESCUE x0.5"));
     }
 
     #[test]

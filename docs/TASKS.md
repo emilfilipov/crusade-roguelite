@@ -500,7 +500,7 @@
   - `docs/SYSTEMS_REFERENCE.md`
 
 ### CRU-077 - Mob's Mercy Effect Definition and Implementation
-- Status: `TODO`
+- Status: `DONE`
 - Type: `Gameplay`
 - Priority: `P1`
 - Depends on: `CRU-075`

@@ -118,6 +118,10 @@ Use this for entity/component/system lookup without scanning all source files.
   - `Mob's Fury` active/inactive state now appears in-run in the top-center HUD status line,
   - `Mob's Justice` execute hits now emit explicit floating `EXECUTE` combat text,
   - execute resolution uses a shared threshold helper (`<=10%` HP) across melee and projectile hit paths.
+- Completed `Mob's Mercy` conditional rescue-speed effect:
+  - rescue channel duration is computed via shared `effective_rescue_duration` and multiplied by conditional effects,
+  - active Mercy state now appears alongside other mob upgrade statuses in the in-run HUD line,
+  - added explicit tests for Mercy activation/deactivation and non-cross-wired interaction with Fury/Justice.
 - Replaced placeholder `morale_weight` usage with active per-unit `Morale` (friendlies and enemies).
 - Added morale-based combat debuff below 50% morale.
 - Refactored cohesion to event-driven behavior (damage/death/kill events + low-morale pressure).
