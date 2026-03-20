@@ -56,6 +56,11 @@ impl Default for RosterEconomy {
     }
 }
 
+#[derive(Resource, Clone, Debug, Default)]
+pub struct RosterEconomyFeedback {
+    pub blocked_upgrade_reason: Option<String>,
+}
+
 #[derive(Resource, Clone, Copy, Debug, Default)]
 pub struct CommanderMotionState {
     pub is_moving: bool,
@@ -87,6 +92,7 @@ impl Plugin for SquadPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<SquadRoster>()
             .init_resource::<RosterEconomy>()
+            .init_resource::<RosterEconomyFeedback>()
             .init_resource::<CommanderMotionState>()
             .add_event::<RecruitEvent>()
             .add_event::<PromoteUnitsEvent>()
@@ -94,15 +100,20 @@ impl Plugin for SquadPlugin {
             .add_systems(Update, handle_start_run)
             .add_systems(
                 Update,
+                commander_movement.run_if(in_state(GameState::InRun)),
+            )
+            .add_systems(
+                Update,
                 (
-                    commander_movement.run_if(in_state(GameState::InRun)),
-                    apply_recruit_events.run_if(in_state(GameState::InRun)),
-                    apply_promotion_events.run_if(in_state(GameState::InRun)),
-                    run_priest_support_logic.run_if(in_state(GameState::InRun)),
-                    sync_roster.run_if(in_state(GameState::InRun)),
-                    on_unit_died,
-                ),
+                    apply_recruit_events,
+                    apply_promotion_events,
+                    run_priest_support_logic,
+                    sync_roster,
+                )
+                    .chain()
+                    .run_if(in_state(GameState::InRun)),
             );
+        app.add_systems(Update, on_unit_died);
     }
 }
 
@@ -111,6 +122,7 @@ fn handle_start_run(
     mut commands: Commands,
     mut roster: ResMut<SquadRoster>,
     mut economy: ResMut<RosterEconomy>,
+    mut economy_feedback: ResMut<RosterEconomyFeedback>,
     mut motion: ResMut<CommanderMotionState>,
     mut start_events: EventReader<StartRunEvent>,
     existing_units: Query<Entity, With<Unit>>,
@@ -132,6 +144,7 @@ fn handle_start_run(
     roster.casualties = 0;
     motion.is_moving = false;
     *economy = RosterEconomy::default();
+    *economy_feedback = RosterEconomyFeedback::default();
 }
 
 fn spawn_commander(commands: &mut Commands, data: &GameData, art: &ArtAssets) -> Entity {
@@ -419,17 +432,27 @@ fn apply_promotion_events(
     art: Res<ArtAssets>,
     progression: Option<Res<Progression>>,
     economy: Res<RosterEconomy>,
+    mut feedback: ResMut<RosterEconomyFeedback>,
     friendlies: Query<(Entity, &Unit, &UnitTier), (With<FriendlyUnit>, Without<CommanderUnit>)>,
 ) {
     let Some(current_level) = progression.as_ref().map(|value| value.level) else {
         return;
     };
+    feedback.blocked_upgrade_reason = None;
 
     for event in promote_events.read() {
         if event.count == 0 || event.from_kind == event.to_kind {
+            feedback.blocked_upgrade_reason = Some(
+                "Promotion ignored: invalid count or identical source/target unit type."
+                    .to_string(),
+            );
             continue;
         }
         let Some(target_tier) = friendly_tier_for_kind(event.to_kind) else {
+            feedback.blocked_upgrade_reason = Some(format!(
+                "Promotion blocked: target '{}' is not a valid friendly promotion tier.",
+                unit_kind_label(event.to_kind)
+            ));
             continue;
         };
 
@@ -454,6 +477,12 @@ fn apply_promotion_events(
             if level_cap_from_locked_budget(predicted_locked.saturating_add(step_cost))
                 < current_level
             {
+                feedback.blocked_upgrade_reason = Some(format!(
+                    "Promotion blocked: '{}' -> '{}' would exceed level budget at commander level {}.",
+                    unit_kind_label(event.from_kind),
+                    unit_kind_label(event.to_kind),
+                    current_level
+                ));
                 break;
             }
 
@@ -527,6 +556,15 @@ fn apply_promotion_events(
 
             predicted_locked = predicted_locked.saturating_add(step_cost);
             promoted = promoted.saturating_add(1);
+        }
+        if promoted == 0 && feedback.blocked_upgrade_reason.is_none() {
+            feedback.blocked_upgrade_reason = Some(format!(
+                "Promotion blocked: no eligible '{}' units available.",
+                unit_kind_label(event.from_kind)
+            ));
+        }
+        if promoted > 0 {
+            feedback.blocked_upgrade_reason = None;
         }
     }
 }
@@ -649,6 +687,18 @@ fn friendly_tier_for_kind(kind: UnitKind) -> Option<u8> {
     }
 }
 
+fn unit_kind_label(kind: UnitKind) -> &'static str {
+    match kind {
+        UnitKind::Commander => "Commander",
+        UnitKind::ChristianPeasantInfantry => "Christian Peasant Infantry",
+        UnitKind::ChristianPeasantArcher => "Christian Peasant Archer",
+        UnitKind::ChristianPeasantPriest => "Christian Peasant Priest",
+        UnitKind::EnemyBanditRaider => "Bandit Raider",
+        UnitKind::RescuableChristianPeasantInfantry => "Rescuable Christian Peasant Infantry",
+        UnitKind::RescuableChristianPeasantArcher => "Rescuable Christian Peasant Archer",
+    }
+}
+
 #[allow(clippy::type_complexity)]
 fn friendly_profile_for_kind<'a>(
     data: &'a GameData,
@@ -705,10 +755,15 @@ mod tests {
     use crate::combat::RangedAttackProfile;
     use crate::data::GameData;
     use crate::formation::{ActiveFormation, FormationModifiers};
-    use crate::model::{CommanderUnit, GameState, RecruitEvent, RecruitUnitKind, StartRunEvent};
-    use crate::squad::{
-        SquadPlugin, enemy_inside_active_formation, movement_multiplier_from_inside_enemy_count,
+    use crate::model::{
+        CommanderUnit, FriendlyUnit, GameState, RecruitEvent, RecruitUnitKind, StartRunEvent, Unit,
+        UnitKind,
     };
+    use crate::squad::{
+        PromoteUnitsEvent, RosterEconomy, RosterEconomyFeedback, SquadPlugin,
+        enemy_inside_active_formation, movement_multiplier_from_inside_enemy_count,
+    };
+    use crate::upgrades::Progression;
     use crate::visuals::ArtAssets;
 
     #[test]
@@ -798,5 +853,119 @@ mod tests {
             })
         };
         assert!(found_archer_with_ranged);
+    }
+
+    #[test]
+    fn locked_level_budget_updates_on_recruit_and_death() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, bevy::state::app::StatesPlugin));
+        app.init_state::<GameState>();
+        app.add_event::<StartRunEvent>();
+        app.insert_resource(
+            GameData::load_from_dir(std::path::Path::new("assets/data")).expect("data"),
+        );
+        app.insert_resource(ArtAssets::default());
+        app.insert_resource(ActiveFormation::Square);
+        app.insert_resource(FormationModifiers::default());
+        app.add_plugins(SquadPlugin);
+
+        app.world_mut().send_event(StartRunEvent);
+        app.update();
+        app.world_mut()
+            .resource_mut::<NextState<GameState>>()
+            .set(GameState::InRun);
+        app.update();
+
+        app.world_mut().send_event(RecruitEvent {
+            world_position: Vec2::new(16.0, 0.0),
+            recruit_kind: RecruitUnitKind::ChristianPeasantArcher,
+        });
+        app.update();
+
+        let economy_after_recruit = app.world().resource::<RosterEconomy>();
+        assert_eq!(economy_after_recruit.locked_levels, 1);
+        assert_eq!(economy_after_recruit.allowed_max_level, 199);
+
+        let archer_entity = {
+            let world = app.world_mut();
+            let mut query = world.query::<(Entity, &Unit)>();
+            query
+                .iter(world)
+                .find_map(|(entity, unit)| {
+                    (unit.kind == UnitKind::ChristianPeasantArcher).then_some(entity)
+                })
+                .expect("expected recruited archer")
+        };
+
+        app.world_mut()
+            .entity_mut(archer_entity)
+            .despawn_recursive();
+        app.update();
+
+        let economy_after_death = app.world().resource::<RosterEconomy>();
+        assert_eq!(economy_after_death.locked_levels, 0);
+        assert_eq!(economy_after_death.allowed_max_level, 200);
+    }
+
+    #[test]
+    fn promotion_is_blocked_when_level_budget_would_be_exceeded() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, bevy::state::app::StatesPlugin));
+        app.init_state::<GameState>();
+        app.add_event::<StartRunEvent>();
+        app.insert_resource(
+            GameData::load_from_dir(std::path::Path::new("assets/data")).expect("data"),
+        );
+        app.insert_resource(ArtAssets::default());
+        app.insert_resource(ActiveFormation::Square);
+        app.insert_resource(FormationModifiers::default());
+        app.insert_resource(Progression {
+            xp: 0.0,
+            level: 200,
+            next_level_xp: f32::INFINITY,
+        });
+        app.add_plugins(SquadPlugin);
+
+        app.world_mut().send_event(StartRunEvent);
+        app.update();
+        app.world_mut()
+            .resource_mut::<NextState<GameState>>()
+            .set(GameState::InRun);
+        app.update();
+
+        app.world_mut().send_event(RecruitEvent {
+            world_position: Vec2::new(10.0, 5.0),
+            recruit_kind: RecruitUnitKind::ChristianPeasantInfantry,
+        });
+        app.update();
+
+        app.world_mut().send_event(PromoteUnitsEvent {
+            from_kind: UnitKind::ChristianPeasantInfantry,
+            to_kind: UnitKind::ChristianPeasantArcher,
+            count: 1,
+        });
+        app.update();
+
+        let mut archer_count = 0usize;
+        let mut infantry_count = 0usize;
+        {
+            let world = app.world_mut();
+            let mut query = world.query::<(&Unit, Option<&FriendlyUnit>)>();
+            for (unit, friendly) in query.iter(world) {
+                if friendly.is_none() {
+                    continue;
+                }
+                match unit.kind {
+                    UnitKind::ChristianPeasantArcher => archer_count += 1,
+                    UnitKind::ChristianPeasantInfantry => infantry_count += 1,
+                    _ => {}
+                }
+            }
+        }
+        assert_eq!(archer_count, 0);
+        assert!(infantry_count >= 1);
+
+        let feedback = app.world().resource::<RosterEconomyFeedback>();
+        assert!(feedback.blocked_upgrade_reason.is_some());
     }
 }

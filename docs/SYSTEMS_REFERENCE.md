@@ -22,6 +22,15 @@ Use this for entity/component/system lookup without scanning all source files.
   - faction selection (`Christian` enabled, `Muslim` disabled),
   - map selection from data-driven map list,
   - start gate that only allows valid faction/map combinations.
+- Added roster level-budget economy:
+  - tier-0 units cost `0` locked levels,
+  - each tier-step promotion adds `+1` locked level,
+  - unit death refunds the unit's locked level cost,
+  - allowed max commander level is derived from locked budget (`200 - locked_levels`).
+- Added progression/upgrade lock feedback surfaces:
+  - `ProgressionLockFeedback` emits reason text when XP leveling is blocked by roster costs,
+  - `RosterEconomyFeedback` emits reason text when promotions are rejected by budget/path constraints,
+  - Unit Upgrade modal now displays live budget and latest block reason strings.
 - Added inventory scaffold module/resource (`InventoryState`) with serializable bag/equipment setup model.
 - Inventory modal now renders dedicated bag list + per-unit equipment setup sections.
 - Stats modal now renders base/bonus/final rows for commander and global level-up-driven modifiers.
@@ -256,7 +265,9 @@ Roll fields:
 - `Cohesion`, `CohesionCombatModifiers`
 - `BannerState`, `BannerMovementPenalty`
 - `Progression`, `UpgradeDraft`, `GlobalBuffs`
+- `ProgressionLockFeedback`
 - `OneTimeUpgradeTracker`
+- `RosterEconomy`, `RosterEconomyFeedback`
 - `CommanderMotionState`
 - `HudSnapshot`
 - `PlatformRuntime`
@@ -322,6 +333,13 @@ Friendly combined outgoing multiplier has lower clamp:
   - intra-bracket multiplier: `1.18^within_bracket_index`
 - Formula:
   - `xp_required(level) = 30 * 5.5^bracket * 1.18^within_bracket`
+
+### Commander Allowed Max Level from Roster Budget (`src/squad.rs`)
+- Hard commander cap: `200`.
+- Roster lock rule:
+  - `allowed_max_level = max(1, 200 - locked_levels)`
+- Promotion guard:
+  - a promotion is rejected if it would reduce `allowed_max_level` below current commander level.
 
 ### Upgrade Roll Formula (`src/upgrades.rs`)
 - Draft picks `3` unique upgrades from the configured pool.

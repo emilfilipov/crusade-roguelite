@@ -30,6 +30,11 @@ pub struct Progression {
     pub next_level_xp: f32,
 }
 
+#[derive(Resource, Clone, Debug, Default)]
+pub struct ProgressionLockFeedback {
+    pub message: Option<String>,
+}
+
 impl Default for Progression {
     fn default() -> Self {
         Self {
@@ -181,6 +186,7 @@ pub struct UpgradePlugin;
 impl Plugin for UpgradePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Progression>()
+            .init_resource::<ProgressionLockFeedback>()
             .init_resource::<UpgradeDraft>()
             .init_resource::<OneTimeUpgradeTracker>()
             .init_resource::<SkillBookLog>()
@@ -218,6 +224,7 @@ impl Plugin for UpgradePlugin {
 fn reset_progress_on_run_start(
     mut start_events: EventReader<StartRunEvent>,
     mut progression: ResMut<Progression>,
+    mut lock_feedback: ResMut<ProgressionLockFeedback>,
     mut draft: ResMut<UpgradeDraft>,
     mut one_time_tracker: ResMut<OneTimeUpgradeTracker>,
     mut skill_book: ResMut<SkillBookLog>,
@@ -232,6 +239,7 @@ fn reset_progress_on_run_start(
     }
     for _ in start_events.read() {}
     *progression = Progression::default();
+    *lock_feedback = ProgressionLockFeedback::default();
     *draft = UpgradeDraft::default();
     *one_time_tracker = OneTimeUpgradeTracker::default();
     *skill_book = SkillBookLog::default();
@@ -251,6 +259,7 @@ fn gain_xp(mut progression: ResMut<Progression>, mut xp_events: EventReader<Gain
 #[allow(clippy::too_many_arguments)]
 fn open_draft_on_level_up(
     mut progression: ResMut<Progression>,
+    mut lock_feedback: ResMut<ProgressionLockFeedback>,
     mut draft: ResMut<UpgradeDraft>,
     one_time_tracker: Res<OneTimeUpgradeTracker>,
     skillbar: Res<FormationSkillBar>,
@@ -268,6 +277,7 @@ fn open_draft_on_level_up(
         .map(|value| value.allowed_max_level)
         .unwrap_or(MAX_COMMANDER_LEVEL)
         .min(MAX_COMMANDER_LEVEL);
+    lock_feedback.message = progression_lock_reason(progression.level, allowed_max_level);
     if progression.level >= allowed_max_level {
         progression.level = allowed_max_level;
         return;
@@ -275,6 +285,7 @@ fn open_draft_on_level_up(
 
     if progression.level >= MAX_COMMANDER_LEVEL {
         progression.level = MAX_COMMANDER_LEVEL;
+        lock_feedback.message = None;
         return;
     }
 
@@ -297,6 +308,17 @@ fn open_draft_on_level_up(
         if draft.active {
             next_state.set(GameState::LevelUp);
         }
+    }
+}
+
+pub fn progression_lock_reason(level: u32, allowed_max_level: u32) -> Option<String> {
+    if allowed_max_level < MAX_COMMANDER_LEVEL && level >= allowed_max_level {
+        Some(format!(
+            "Level progression locked at {}/{} because roster unit costs are consuming level budget.",
+            allowed_max_level, MAX_COMMANDER_LEVEL
+        ))
+    } else {
+        None
     }
 }
 
@@ -732,8 +754,9 @@ mod tests {
     use crate::model::GlobalBuffs;
     use crate::upgrades::{
         OneTimeUpgradeTracker, SkillBookLog, UpgradeCardIcon, UpgradeRngState,
-        commander_level_hp_bonus, roll_upgrade_options, roll_upgrade_value, upgrade_card_icon,
-        upgrade_display_description, upgrade_display_title, xp_required_for_level,
+        commander_level_hp_bonus, progression_lock_reason, roll_upgrade_options,
+        roll_upgrade_value, upgrade_card_icon, upgrade_display_description, upgrade_display_title,
+        xp_required_for_level,
     };
 
     fn upgrade(kind: &str, id: &str) -> UpgradeConfig {
@@ -886,6 +909,18 @@ mod tests {
     fn commander_level_hp_bonus_increases_linearly() {
         assert_eq!(commander_level_hp_bonus(1), 0.0);
         assert_eq!(commander_level_hp_bonus(6), 5.0);
+    }
+
+    #[test]
+    fn progression_lock_reason_engages_and_clears_with_budget() {
+        let locked = progression_lock_reason(199, 199);
+        assert!(locked.is_some());
+
+        let unlocked = progression_lock_reason(120, 199);
+        assert!(unlocked.is_none());
+
+        let hard_cap_only = progression_lock_reason(200, 200);
+        assert!(hard_cap_only.is_none());
     }
 
     #[test]

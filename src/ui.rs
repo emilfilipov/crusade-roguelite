@@ -17,10 +17,10 @@ use crate::model::{
 use crate::morale::{Cohesion, average_morale_ratio};
 use crate::rescue::RescueProgress;
 use crate::settings::AppSettings;
-use crate::squad::SquadRoster;
+use crate::squad::{RosterEconomy, RosterEconomyFeedback, SquadRoster};
 use crate::upgrades::{
-    Progression, SelectUpgradeEvent, SkillBookLog, UpgradeCardIcon, UpgradeDraft,
-    commander_level_hp_bonus, upgrade_card_icon, upgrade_display_description,
+    Progression, ProgressionLockFeedback, SelectUpgradeEvent, SkillBookLog, UpgradeCardIcon,
+    UpgradeDraft, commander_level_hp_bonus, upgrade_card_icon, upgrade_display_description,
     upgrade_display_title,
 };
 
@@ -30,12 +30,14 @@ pub struct HudSnapshot {
     pub banner_dropped: bool,
     pub squad_size: usize,
     pub level: u32,
+    pub allowed_max_level: u32,
     pub xp: f32,
     pub next_level_xp: f32,
     pub wave_index: usize,
     pub current_wave: u32,
     pub elapsed_seconds: f32,
     pub average_morale_ratio: f32,
+    pub progression_lock_reason: Option<String>,
 }
 
 impl Default for HudSnapshot {
@@ -45,12 +47,14 @@ impl Default for HudSnapshot {
             banner_dropped: false,
             squad_size: 1,
             level: 1,
+            allowed_max_level: 200,
             xp: 0.0,
             next_level_xp: 30.0,
             wave_index: 0,
             current_wave: 1,
             elapsed_seconds: 0.0,
             average_morale_ratio: 1.0,
+            progression_lock_reason: None,
         }
     }
 }
@@ -249,6 +253,15 @@ struct SkillBookPanelEntry {
     icon: UpgradeCardIcon,
     stacks: u32,
     active: Option<bool>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct UnitUpgradePanelData {
+    commander_level: u32,
+    allowed_max_level: u32,
+    locked_levels: u32,
+    blocked_upgrade_reason: Option<String>,
+    progression_lock_reason: Option<String>,
 }
 
 #[derive(Resource, Clone, Debug)]
@@ -1617,6 +1630,9 @@ fn sync_run_modal_overlay(
     data: Res<GameData>,
     archive: Res<ArchiveDataset>,
     progression: Res<Progression>,
+    progression_lock_feedback: Res<ProgressionLockFeedback>,
+    roster_economy: Res<RosterEconomy>,
+    roster_feedback: Res<RosterEconomyFeedback>,
     buffs: Res<crate::model::GlobalBuffs>,
     skill_book: Res<SkillBookLog>,
     skillbar: Res<FormationSkillBar>,
@@ -1650,12 +1666,19 @@ fn sync_run_modal_overlay(
             );
             let skill_book_panel =
                 build_skill_book_panel_data(&skill_book, &skillbar, *active_formation, &data);
+            let unit_upgrade_panel = build_unit_upgrade_panel_data(
+                &roster_economy,
+                &roster_feedback,
+                &progression,
+                &progression_lock_feedback,
+            );
             spawn_run_modal_overlay(
                 &mut commands,
                 screen,
                 &inventory,
                 &stats,
                 &skill_book_panel,
+                &unit_upgrade_panel,
                 &archive,
                 &art,
             );
@@ -1669,12 +1692,14 @@ fn despawn_run_modal_overlay(mut commands: Commands, roots: Query<Entity, With<R
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_run_modal_overlay(
     commands: &mut Commands,
     screen: RunModalScreen,
     inventory: &InventoryState,
     stats: &StatsPanelData,
     skill_book_panel: &SkillBookPanelData,
+    unit_upgrade_panel: &UnitUpgradePanelData,
     archive: &ArchiveDataset,
     art: &crate::visuals::ArtAssets,
 ) {
@@ -1751,6 +1776,9 @@ fn spawn_run_modal_overlay(
                 }
                 if matches!(screen, RunModalScreen::Archive) {
                     spawn_archive_sections(panel, archive, art);
+                }
+                if matches!(screen, RunModalScreen::UnitUpgrade) {
+                    spawn_unit_upgrade_modal_sections(panel, unit_upgrade_panel);
                 }
                 panel
                     .spawn((
@@ -2401,6 +2429,86 @@ fn spawn_inventory_modal_sections(parent: &mut ChildBuilder, inventory: &Invento
                         ));
                     }
                 });
+        });
+}
+
+fn build_unit_upgrade_panel_data(
+    economy: &RosterEconomy,
+    feedback: &RosterEconomyFeedback,
+    progression: &Progression,
+    lock_feedback: &ProgressionLockFeedback,
+) -> UnitUpgradePanelData {
+    UnitUpgradePanelData {
+        commander_level: progression.level.max(1),
+        allowed_max_level: economy.allowed_max_level,
+        locked_levels: economy.locked_levels,
+        blocked_upgrade_reason: feedback.blocked_upgrade_reason.clone(),
+        progression_lock_reason: lock_feedback.message.clone(),
+    }
+}
+
+fn spawn_unit_upgrade_modal_sections(parent: &mut ChildBuilder, panel_data: &UnitUpgradePanelData) {
+    let budget_text = format!(
+        "Commander Level Budget: {}/{}  |  Locked by Roster: {}",
+        panel_data.commander_level, panel_data.allowed_max_level, panel_data.locked_levels
+    );
+    let upgrade_feedback = panel_data
+        .blocked_upgrade_reason
+        .as_deref()
+        .unwrap_or("No blocked promotion event in the current frame.");
+    let progression_feedback = panel_data
+        .progression_lock_reason
+        .as_deref()
+        .unwrap_or("Level progression is currently not budget-locked.");
+
+    parent
+        .spawn(NodeBundle {
+            style: Style {
+                width: Val::Percent(100.0),
+                min_height: Val::Px(190.0),
+                border: UiRect::all(Val::Px(1.0)),
+                padding: UiRect::all(Val::Px(8.0)),
+                flex_direction: FlexDirection::Column,
+                row_gap: Val::Px(8.0),
+                ..default()
+            },
+            background_color: BackgroundColor(Color::srgba(0.04, 0.04, 0.04, 0.34)),
+            border_color: BorderColor(UTILITY_BAR_BORDER),
+            ..default()
+        })
+        .with_children(|root| {
+            root.spawn(TextBundle::from_section(
+                budget_text,
+                TextStyle {
+                    font_size: 16.0,
+                    color: MENU_BUTTON_TEXT_HOVERED,
+                    ..default()
+                },
+            ));
+            root.spawn(TextBundle::from_section(
+                format!("Upgrade feedback: {upgrade_feedback}"),
+                TextStyle {
+                    font_size: 14.0,
+                    color: HUD_TEXT_COLOR,
+                    ..default()
+                },
+            ));
+            root.spawn(TextBundle::from_section(
+                format!("Progression feedback: {progression_feedback}"),
+                TextStyle {
+                    font_size: 14.0,
+                    color: HUD_TEXT_COLOR,
+                    ..default()
+                },
+            ));
+            root.spawn(TextBundle::from_section(
+                "Tree layout and bulk promotion controls are tracked by CRU-069.",
+                TextStyle {
+                    font_size: 13.0,
+                    color: MENU_BUTTON_TEXT_DISABLED,
+                    ..default()
+                },
+            ));
         });
 }
 
@@ -3530,7 +3638,9 @@ fn refresh_hud_snapshot(
     cohesion: Res<Cohesion>,
     banner_state: Res<BannerState>,
     roster: Res<SquadRoster>,
+    roster_economy: Res<RosterEconomy>,
     progression: Res<Progression>,
+    progression_feedback: Res<ProgressionLockFeedback>,
     waves: Res<WaveRuntime>,
     run_session: Res<RunSession>,
     friendlies: Query<&Morale, With<FriendlyUnit>>,
@@ -3542,12 +3652,14 @@ fn refresh_hud_snapshot(
         banner_dropped: banner_state.is_dropped,
         squad_size: roster.friendly_count,
         level: progression.level,
+        allowed_max_level: roster_economy.allowed_max_level,
         xp: progression.xp,
         next_level_xp: progression.next_level_xp,
         wave_index: waves.current_wave.saturating_sub(1) as usize,
         current_wave: displayed_wave_number(&waves),
         elapsed_seconds: run_session.survived_seconds,
         average_morale_ratio: average_morale_ratio(&morale_ratios),
+        progression_lock_reason: progression_feedback.message.clone(),
     };
 }
 
@@ -3572,7 +3684,11 @@ fn update_in_run_hud(
         text.sections[0].value = format_elapsed_mm_ss(hud.elapsed_seconds);
     }
     if let Ok(mut text) = texts.p2().get_single_mut() {
-        text.sections[0].value = format!("Commander Lv {}", hud.level);
+        text.sections[0].value = format_commander_level_text(
+            hud.level,
+            hud.allowed_max_level,
+            hud.progression_lock_reason.is_some(),
+        );
     }
     let xp_ratio = if hud.next_level_xp <= 0.0 {
         0.0
@@ -3812,6 +3928,23 @@ pub fn rescue_progress_ratio(elapsed: f32, duration: f32) -> Option<f32> {
     Some((elapsed / duration).clamp(0.0, 1.0))
 }
 
+pub fn format_commander_level_text(
+    level: u32,
+    allowed_max_level: u32,
+    is_budget_locked: bool,
+) -> String {
+    let clamped_level = level.max(1);
+    let clamped_allowed = allowed_max_level.max(1);
+    if is_budget_locked {
+        format!(
+            "Commander Lv {}/{} [LOCKED BY ROSTER COST]",
+            clamped_level, clamped_allowed
+        )
+    } else {
+        format!("Commander Lv {}/{}", clamped_level, clamped_allowed)
+    }
+}
+
 pub fn displayed_wave_number(runtime: &WaveRuntime) -> u32 {
     runtime.current_wave.max(1)
 }
@@ -3904,8 +4037,8 @@ mod tests {
     use crate::ui::{
         HudSnapshot, MainMenuAction, MainMenuDispatch, archive_entries_for_category,
         build_skill_book_panel_data, build_stats_panel_data, can_select_match_setup_faction,
-        displayed_wave_number, find_skill_section, find_stats_row, format_elapsed_mm_ss,
-        frame_cap_label, health_bar_fill_width, main_menu_dispatch,
+        displayed_wave_number, find_skill_section, find_stats_row, format_commander_level_text,
+        format_elapsed_mm_ss, frame_cap_label, health_bar_fill_width, main_menu_dispatch,
         modal_action_for_utility_button, rescue_progress_ratio, world_to_minimap_pos,
     };
     use crate::upgrades::{Progression, SkillBookEntry, SkillBookLog, UpgradeCardIcon};
@@ -3917,12 +4050,14 @@ mod tests {
             banner_dropped: true,
             squad_size: 5,
             level: 2,
+            allowed_max_level: 197,
             xp: 12.0,
             next_level_xp: 45.0,
             wave_index: 2,
             current_wave: 2,
             elapsed_seconds: 61.0,
             average_morale_ratio: 0.74,
+            progression_lock_reason: Some("blocked by budget".to_string()),
         };
         assert!(snapshot.banner_dropped);
         assert_eq!(snapshot.squad_size, 5);
@@ -3948,6 +4083,18 @@ mod tests {
         assert_eq!(format_elapsed_mm_ss(0.0), "00:00");
         assert_eq!(format_elapsed_mm_ss(65.3), "01:05");
         assert_eq!(format_elapsed_mm_ss(600.9), "10:00");
+    }
+
+    #[test]
+    fn commander_level_text_includes_allowed_cap_and_lock_marker() {
+        assert_eq!(
+            format_commander_level_text(54, 170, false),
+            "Commander Lv 54/170"
+        );
+        assert_eq!(
+            format_commander_level_text(170, 170, true),
+            "Commander Lv 170/170 [LOCKED BY ROSTER COST]"
+        );
     }
 
     #[test]

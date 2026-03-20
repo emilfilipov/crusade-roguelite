@@ -271,7 +271,7 @@
   - `docs/SYSTEM_SCOPE_MAP.md`
 
 ### CRU-068 - Roster Cost Economy + Level Budget Locks
-- Status: `TODO`
+- Status: `DONE`
 - Type: `Gameplay`
 - Priority: `P0`
 - Depends on: `CRU-067`
