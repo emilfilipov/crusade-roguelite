@@ -53,7 +53,20 @@ pub struct OneTimeUpgradeTracker {
 
 #[derive(Resource, Clone, Debug, Default)]
 pub struct SkillBookLog {
-    pub entries: Vec<String>,
+    pub entries: Vec<SkillBookEntry>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SkillBookEntry {
+    pub id: String,
+    pub kind: String,
+    pub title: String,
+    pub description: String,
+    pub icon: UpgradeCardIcon,
+    pub stacks: u32,
+    pub one_time: bool,
+    pub adds_to_skillbar: bool,
+    pub formation_id: Option<String>,
 }
 
 #[derive(Resource, Clone, Copy, Debug, Default)]
@@ -380,17 +393,36 @@ fn resolve_upgrade_selection(
     let index = selection.option_index.min(draft.options.len() - 1);
     let picked = draft.options[index].clone();
     apply_upgrade(&picked, &mut buffs, &mut mob_owned, &mut skillbar);
-    skill_book.entries.push(format!(
-        "{} - {}",
-        upgrade_display_title(&picked),
-        upgrade_display_description(&picked)
-    ));
+    record_skill_book_entry(&mut skill_book, &picked);
     if picked.one_time {
         one_time_tracker.acquired_ids.insert(picked.id.clone());
     }
     draft.active = false;
     draft.options.clear();
     next_state.set(GameState::InRun);
+}
+
+fn record_skill_book_entry(skill_book: &mut SkillBookLog, picked: &UpgradeConfig) {
+    if let Some(entry) = skill_book
+        .entries
+        .iter_mut()
+        .find(|entry| entry.id == picked.id)
+    {
+        entry.stacks += 1;
+        entry.description = upgrade_display_description(picked);
+        return;
+    }
+    skill_book.entries.push(SkillBookEntry {
+        id: picked.id.clone(),
+        kind: picked.kind.clone(),
+        title: upgrade_display_title(picked).to_string(),
+        description: upgrade_display_description(picked),
+        icon: upgrade_card_icon(picked),
+        stacks: 1,
+        one_time: picked.one_time,
+        adds_to_skillbar: picked.adds_to_skillbar,
+        formation_id: picked.formation_id.clone(),
+    });
 }
 
 fn roll_upgrade_options(
@@ -699,9 +731,9 @@ mod tests {
     };
     use crate::model::GlobalBuffs;
     use crate::upgrades::{
-        OneTimeUpgradeTracker, UpgradeCardIcon, UpgradeRngState, commander_level_hp_bonus,
-        roll_upgrade_options, roll_upgrade_value, upgrade_card_icon, upgrade_display_description,
-        upgrade_display_title, xp_required_for_level,
+        OneTimeUpgradeTracker, SkillBookLog, UpgradeCardIcon, UpgradeRngState,
+        commander_level_hp_bonus, roll_upgrade_options, roll_upgrade_value, upgrade_card_icon,
+        upgrade_display_description, upgrade_display_title, xp_required_for_level,
     };
 
     fn upgrade(kind: &str, id: &str) -> UpgradeConfig {
@@ -886,5 +918,17 @@ mod tests {
             "Diamond Formation"
         );
         assert!(upgrade_display_description(&formation_upgrade).contains("Diamond"));
+    }
+
+    #[test]
+    fn skill_book_records_upgrade_stacks_once_per_upgrade_id() {
+        let mut skill_book = SkillBookLog::default();
+        let picked = upgrade("damage", "damage_alpha");
+        super::record_skill_book_entry(&mut skill_book, &picked);
+        super::record_skill_book_entry(&mut skill_book, &picked);
+
+        assert_eq!(skill_book.entries.len(), 1);
+        assert_eq!(skill_book.entries[0].id, "damage_alpha");
+        assert_eq!(skill_book.entries[0].stacks, 2);
     }
 }

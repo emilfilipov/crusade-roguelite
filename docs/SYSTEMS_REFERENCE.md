@@ -13,6 +13,11 @@ Use this for entity/component/system lookup without scanning all source files.
 - Added inventory scaffold module/resource (`InventoryState`) with serializable bag/equipment setup model.
 - Inventory modal now renders dedicated bag list + per-unit equipment setup sections.
 - Stats modal now renders base/bonus/final rows for commander and global level-up-driven modifiers.
+- Skill Book modal now uses structured upgrade records with:
+  - category grouping (formations/auras/combat/utility)
+  - icon + description rows
+  - stack-aware entries
+  - formation active/inactive indicators
 - Renamed the old recruit `Infantry/Knight` to `Christian Peasant Infantry`.
 - Added `Christian Peasant Archer` as a second recruitable retinue unit.
 - Rescue spawns now carry recruit type metadata and alternate infantry/archer by spawn sequence.
@@ -450,6 +455,10 @@ Friendly combined outgoing multiplier has lower clamp:
 - stats modal content:
   - active formation label
   - base/bonus/final stat rows (HP, damage, attack speed, armor, move speed, pickup radius, aura, aura effects)
+- skill book modal content:
+  - grouped sections (`Formations`, `Auras`, `Combat`, `Utility`)
+  - icon-backed entries with stacked counts
+  - active/inactive markers for mutually exclusive formation skills
 - top-right utility icon bar:
   - `Inventory` (`I`)
   - `Stats` (`O`)

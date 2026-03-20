@@ -173,7 +173,7 @@
   - `docs/SYSTEMS_REFERENCE.md`
 
 ### CRU-064 - Skill Book Screen (Chosen Skills Registry)
-- Status: `TODO`
+- Status: `DONE`
 - Type: `UI`
 - Priority: `P1`
 - Depends on: `CRU-060`, `CRU-061`

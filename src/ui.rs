@@ -18,8 +18,9 @@ use crate::rescue::RescueProgress;
 use crate::settings::AppSettings;
 use crate::squad::SquadRoster;
 use crate::upgrades::{
-    Progression, SelectUpgradeEvent, UpgradeCardIcon, UpgradeDraft, commander_level_hp_bonus,
-    upgrade_card_icon, upgrade_display_description, upgrade_display_title,
+    Progression, SelectUpgradeEvent, SkillBookLog, UpgradeCardIcon, UpgradeDraft,
+    commander_level_hp_bonus, upgrade_card_icon, upgrade_display_description,
+    upgrade_display_title,
 };
 
 #[derive(Resource, Clone, Debug)]
@@ -192,6 +193,26 @@ struct StatsPanelRow {
     base: f32,
     bonus: f32,
     final_value: f32,
+}
+
+#[derive(Clone, Debug)]
+struct SkillBookPanelData {
+    sections: Vec<SkillBookPanelSection>,
+}
+
+#[derive(Clone, Debug)]
+struct SkillBookPanelSection {
+    label: &'static str,
+    entries: Vec<SkillBookPanelEntry>,
+}
+
+#[derive(Clone, Debug)]
+struct SkillBookPanelEntry {
+    title: String,
+    description: String,
+    icon: UpgradeCardIcon,
+    stacks: u32,
+    active: Option<bool>,
 }
 
 #[derive(Resource, Clone, Debug)]
@@ -1170,6 +1191,9 @@ fn sync_run_modal_overlay(
     data: Res<GameData>,
     progression: Res<Progression>,
     buffs: Res<crate::model::GlobalBuffs>,
+    skill_book: Res<SkillBookLog>,
+    skillbar: Res<FormationSkillBar>,
+    art: Res<crate::visuals::ArtAssets>,
     active_formation: Res<ActiveFormation>,
     formation_modifiers: Res<FormationModifiers>,
     roots: Query<(Entity, &RunModalRoot)>,
@@ -1197,7 +1221,16 @@ fn sync_run_modal_overlay(
                 *active_formation,
                 &formation_modifiers,
             );
-            spawn_run_modal_overlay(&mut commands, screen, &inventory, &stats);
+            let skill_book_panel =
+                build_skill_book_panel_data(&skill_book, &skillbar, *active_formation, &data);
+            spawn_run_modal_overlay(
+                &mut commands,
+                screen,
+                &inventory,
+                &stats,
+                &skill_book_panel,
+                &art,
+            );
         }
     }
 }
@@ -1213,6 +1246,8 @@ fn spawn_run_modal_overlay(
     screen: RunModalScreen,
     inventory: &InventoryState,
     stats: &StatsPanelData,
+    skill_book_panel: &SkillBookPanelData,
+    art: &crate::visuals::ArtAssets,
 ) {
     let (title, subtitle) = run_modal_titles(screen);
     commands
@@ -1281,6 +1316,9 @@ fn spawn_run_modal_overlay(
                 }
                 if matches!(screen, RunModalScreen::Stats) {
                     spawn_stats_modal_sections(panel, stats);
+                }
+                if matches!(screen, RunModalScreen::SkillBook) {
+                    spawn_skill_book_modal_sections(panel, skill_book_panel, art);
                 }
                 panel
                     .spawn((
@@ -1508,6 +1546,200 @@ fn format_stat_value(value: f32) -> String {
 #[cfg(test)]
 fn find_stats_row<'a>(rows: &'a [StatsPanelRow], label: &str) -> Option<&'a StatsPanelRow> {
     rows.iter().find(|row| row.label == label)
+}
+
+fn build_skill_book_panel_data(
+    skill_book: &SkillBookLog,
+    skillbar: &FormationSkillBar,
+    active_formation: ActiveFormation,
+    data: &GameData,
+) -> SkillBookPanelData {
+    let mut formations: Vec<SkillBookPanelEntry> = Vec::new();
+    for slot in &skillbar.slots {
+        let SkillBarSkillKind::Formation(formation) = slot.kind;
+        let icon = match formation {
+            ActiveFormation::Square => UpgradeCardIcon::FormationSquare,
+            ActiveFormation::Diamond => UpgradeCardIcon::FormationDiamond,
+        };
+        formations.push(SkillBookPanelEntry {
+            title: slot.label.clone(),
+            description: formation_skill_description(formation, data),
+            icon,
+            stacks: 1,
+            active: Some(formation == active_formation),
+        });
+    }
+
+    let mut auras: Vec<SkillBookPanelEntry> = Vec::new();
+    let mut combat: Vec<SkillBookPanelEntry> = Vec::new();
+    let mut utility: Vec<SkillBookPanelEntry> = Vec::new();
+
+    for entry in &skill_book.entries {
+        if entry.kind == "unlock_formation" {
+            continue;
+        }
+        let mapped = SkillBookPanelEntry {
+            title: entry.title.clone(),
+            description: entry.description.clone(),
+            icon: entry.icon,
+            stacks: entry.stacks,
+            active: None,
+        };
+        match skill_book_category(entry.kind.as_str()) {
+            "Auras" => auras.push(mapped),
+            "Utility" => utility.push(mapped),
+            _ => combat.push(mapped),
+        }
+    }
+
+    let mut sections = vec![
+        SkillBookPanelSection {
+            label: "Formations",
+            entries: formations,
+        },
+        SkillBookPanelSection {
+            label: "Auras",
+            entries: auras,
+        },
+        SkillBookPanelSection {
+            label: "Combat",
+            entries: combat,
+        },
+        SkillBookPanelSection {
+            label: "Utility",
+            entries: utility,
+        },
+    ];
+    sections.retain(|section| !section.entries.is_empty());
+    SkillBookPanelData { sections }
+}
+
+fn formation_skill_description(formation: ActiveFormation, data: &GameData) -> String {
+    let config = match formation {
+        ActiveFormation::Square => &data.formations.square,
+        ActiveFormation::Diamond => &data.formations.diamond,
+    };
+    format!(
+        "Offense x{:.2}, Moving offense x{:.2}, Defense x{:.2}, Move x{:.2}.",
+        config.offense_multiplier,
+        config.offense_while_moving_multiplier,
+        config.defense_multiplier,
+        config.move_speed_multiplier,
+    )
+}
+
+fn skill_book_category(kind: &str) -> &'static str {
+    match kind {
+        "authority_aura" | "hospitalier_aura" => "Auras",
+        "pickup_radius" | "aura_radius" | "move_speed" | "mob_mercy" => "Utility",
+        _ => "Combat",
+    }
+}
+
+fn spawn_skill_book_modal_sections(
+    parent: &mut ChildBuilder,
+    skill_book: &SkillBookPanelData,
+    art: &crate::visuals::ArtAssets,
+) {
+    parent
+        .spawn(NodeBundle {
+            style: Style {
+                width: Val::Percent(100.0),
+                min_height: Val::Px(220.0),
+                border: UiRect::all(Val::Px(1.0)),
+                padding: UiRect::all(Val::Px(8.0)),
+                flex_direction: FlexDirection::Column,
+                row_gap: Val::Px(8.0),
+                ..default()
+            },
+            background_color: BackgroundColor(Color::srgba(0.04, 0.04, 0.04, 0.34)),
+            border_color: BorderColor(UTILITY_BAR_BORDER),
+            ..default()
+        })
+        .with_children(|root| {
+            if skill_book.sections.is_empty() {
+                root.spawn(TextBundle::from_section(
+                    "No skills selected yet.",
+                    TextStyle {
+                        font_size: 17.0,
+                        color: HUD_TEXT_COLOR,
+                        ..default()
+                    },
+                ));
+                return;
+            }
+
+            for section in &skill_book.sections {
+                root.spawn(TextBundle::from_section(
+                    section.label,
+                    TextStyle {
+                        font_size: 19.0,
+                        color: MENU_BUTTON_TEXT_HOVERED,
+                        ..default()
+                    },
+                ));
+                for entry in &section.entries {
+                    root.spawn(NodeBundle {
+                        style: Style {
+                            width: Val::Percent(100.0),
+                            border: UiRect::all(Val::Px(1.0)),
+                            padding: UiRect::all(Val::Px(6.0)),
+                            flex_direction: FlexDirection::Row,
+                            align_items: AlignItems::Center,
+                            column_gap: Val::Px(8.0),
+                            ..default()
+                        },
+                        background_color: BackgroundColor(Color::srgba(0.07, 0.07, 0.07, 0.42)),
+                        border_color: BorderColor(Color::srgba(0.78, 0.72, 0.58, 0.18)),
+                        ..default()
+                    })
+                    .with_children(|row| {
+                        row.spawn(ImageBundle {
+                            style: Style {
+                                width: Val::Px(22.0),
+                                height: Val::Px(22.0),
+                                ..default()
+                            },
+                            image: UiImage::new(upgrade_icon_for(entry.icon, art)),
+                            background_color: BackgroundColor(Color::NONE),
+                            ..default()
+                        });
+
+                        let mut header = entry.title.clone();
+                        if entry.stacks > 1 {
+                            header.push_str(&format!(" x{}", entry.stacks));
+                        }
+                        if let Some(active) = entry.active {
+                            header.push_str(if active { " [ACTIVE]" } else { " [INACTIVE]" });
+                        }
+
+                        row.spawn(TextBundle {
+                            style: Style {
+                                max_width: Val::Px(500.0),
+                                ..default()
+                            },
+                            text: Text::from_section(
+                                format!("{header} - {}", entry.description),
+                                TextStyle {
+                                    font_size: 14.0,
+                                    color: HUD_TEXT_COLOR,
+                                    ..default()
+                                },
+                            ),
+                            ..default()
+                        });
+                    });
+                }
+            }
+        });
+}
+
+#[cfg(test)]
+fn find_skill_section<'a>(
+    panel: &'a SkillBookPanelData,
+    label: &str,
+) -> Option<&'a SkillBookPanelSection> {
+    panel.sections.iter().find(|section| section.label == label)
 }
 
 fn spawn_inventory_modal_sections(parent: &mut ChildBuilder, inventory: &InventoryState) {
@@ -2756,15 +2988,16 @@ mod tests {
     use crate::core::hotkey_to_run_modal_screen;
     use crate::data::GameData;
     use crate::enemies::WaveRuntime;
-    use crate::formation::{ActiveFormation, FormationModifiers};
+    use crate::formation::{ActiveFormation, FormationModifiers, FormationSkillBar};
     use crate::map::MapBounds;
     use crate::model::{FrameRateCap, GlobalBuffs, RunModalAction, RunModalScreen};
     use crate::ui::{
-        HudSnapshot, build_stats_panel_data, displayed_wave_number, find_stats_row,
-        format_elapsed_mm_ss, frame_cap_label, health_bar_fill_width,
-        modal_action_for_utility_button, rescue_progress_ratio, world_to_minimap_pos,
+        HudSnapshot, build_skill_book_panel_data, build_stats_panel_data, displayed_wave_number,
+        find_skill_section, find_stats_row, format_elapsed_mm_ss, frame_cap_label,
+        health_bar_fill_width, modal_action_for_utility_button, rescue_progress_ratio,
+        world_to_minimap_pos,
     };
-    use crate::upgrades::Progression;
+    use crate::upgrades::{Progression, SkillBookEntry, SkillBookLog, UpgradeCardIcon};
 
     #[test]
     fn snapshot_holds_expected_values() {
@@ -2919,5 +3152,70 @@ mod tests {
         assert!(damage_row.final_value > damage_row.base);
         let move_row = find_stats_row(&panel.rows, "Move Speed").expect("move row");
         assert!(move_row.final_value > move_row.base);
+    }
+
+    #[test]
+    fn skill_book_panel_groups_entries_and_tracks_active_formation() {
+        let data = GameData::load_from_dir(Path::new("assets/data")).expect("load data");
+        let mut skillbar = FormationSkillBar::default();
+        assert!(skillbar.try_add_formation(ActiveFormation::Diamond));
+
+        let mut skill_book = SkillBookLog::default();
+        skill_book.entries.push(SkillBookEntry {
+            id: "damage_up".to_string(),
+            kind: "damage".to_string(),
+            title: "Sharpened Steel".to_string(),
+            description: "Increase damage.".to_string(),
+            icon: UpgradeCardIcon::Damage,
+            stacks: 2,
+            one_time: false,
+            adds_to_skillbar: false,
+            formation_id: None,
+        });
+        skill_book.entries.push(SkillBookEntry {
+            id: "authority_aura".to_string(),
+            kind: "authority_aura".to_string(),
+            title: "Authority Aura".to_string(),
+            description: "Reduce morale/cohesion losses.".to_string(),
+            icon: UpgradeCardIcon::AuthorityAura,
+            stacks: 1,
+            one_time: false,
+            adds_to_skillbar: false,
+            formation_id: None,
+        });
+
+        let panel =
+            build_skill_book_panel_data(&skill_book, &skillbar, ActiveFormation::Diamond, &data);
+        let formation_section =
+            find_skill_section(&panel, "Formations").expect("formation section");
+        assert!(
+            formation_section
+                .entries
+                .iter()
+                .any(|entry| entry.active == Some(true))
+        );
+        assert!(
+            formation_section
+                .entries
+                .iter()
+                .any(|entry| entry.active == Some(false))
+        );
+
+        let combat_section = find_skill_section(&panel, "Combat").expect("combat section");
+        assert!(
+            combat_section
+                .entries
+                .iter()
+                .any(|entry| entry.title == "Sharpened Steel")
+        );
+        assert!(combat_section.entries.iter().any(|entry| entry.stacks == 2));
+
+        let aura_section = find_skill_section(&panel, "Auras").expect("auras section");
+        assert!(
+            aura_section
+                .entries
+                .iter()
+                .any(|entry| entry.title == "Authority Aura")
+        );
     }
 }
