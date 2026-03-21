@@ -337,7 +337,7 @@ Roll fields:
 - `RangedAttackProfile`, `RangedAttackCooldown` (`src/combat.rs`)
 - `BanditVisualRuntime`, `BanditVisualState` (`src/enemies.rs`)
 - `RescueProgress` (`src/rescue.rs`)
-- `ExpPack`, `DropInTransitToCommander` (`src/drops.rs`)
+- `ExpPack`, `DropInTransitToCommander`, `MagnetPickup` (`src/drops.rs`)
 - `Projectile` (`src/projectiles.rs`)
 - `BannerMarker` (`src/banner.rs`)
 
@@ -525,6 +525,11 @@ Friendly combined outgoing multiplier has lower clamp:
    - Effective pickup radius = `base pickup radius + stacked pickup-radius upgrades`.
 4. Transit pack homes to commander each frame at speed slightly above commander base speed.
 5. On commander contact radius, pack is consumed and effect is applied (`GainXpEvent`).
+6. Magnet pickup lifecycle:
+   - spawns at wave start on waves divisible by `3` (map center),
+   - despawns automatically when the next wave starts.
+7. Magnet pickup effect:
+   - on friendly pickup, all active XP packs are immediately forced into transit-to-commander mode.
 
 ## System Summary (By Module)
 
@@ -584,6 +589,13 @@ Friendly combined outgoing multiplier has lower clamp:
 - typed rescuable metadata driven by `rescue.recruit_pool` (tier-0-only entries accepted by config validator)
 - any-friendly rescue channel logic
 
+### `drops.rs`
+- ambient and event XP pack spawning with wave/level XP scaling
+- pickup-delay-aware pack pickup detection (any friendly can trigger)
+- transit-to-commander homing consume flow
+- wave magnet pickup spawn/despawn cadence (every 3 waves)
+- magnet pickup force-homes all active XP packs
+
 ### `enemies.rs`
 - finite 100-wave runtime with units-per-second spawning
 - queued enemy batch spawning with wave-scaled batch sizes/intervals
@@ -636,6 +648,7 @@ Friendly combined outgoing multiplier has lower clamp:
 - bottom-right minimap prototype with periodic blip refresh
   - commander/friendlies/enemies
   - XP packs (yellow)
+  - wave magnet pickup symbol (cross for Christian, crescent for Muslim)
   - rescuable retinue markers
   - dropped-banner marker
 - bottom-center skillbar (10 slots)

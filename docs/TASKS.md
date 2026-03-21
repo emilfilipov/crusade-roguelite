@@ -255,7 +255,7 @@
   - `docs/SYSTEMS_REFERENCE.md`
 
 ### CRU-070 - Magnet Pickup Drop System
-- Status: `TODO`
+- Status: `DONE`
 - Type: `Gameplay`
 - Priority: `P0`
 - Depends on: `CRU-067`

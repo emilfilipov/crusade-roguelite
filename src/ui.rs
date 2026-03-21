@@ -7,7 +7,7 @@ use bevy::window::PrimaryWindow;
 use crate::archive::{ArchiveCategory, ArchiveDataset, ArchiveEntry};
 use crate::banner::{BannerState, banner_pickup_progress_ratio};
 use crate::data::GameData;
-use crate::drops::ExpPack;
+use crate::drops::{ExpPack, MagnetPickup};
 use crate::enemies::WaveRuntime;
 use crate::formation::{ActiveFormation, FormationModifiers, FormationSkillBar, SkillBarSkillKind};
 use crate::inventory::{EquipmentUnitType, InventoryState};
@@ -32,6 +32,7 @@ use crate::upgrades::{
     commander_level_hp_bonus, skill_book_entry_cumulative_description, upgrade_card_icon,
     upgrade_display_description, upgrade_display_title, upgrade_value_tier,
 };
+use crate::visuals::ArtAssets;
 
 #[derive(Resource, Clone, Debug)]
 pub struct HudSnapshot {
@@ -424,6 +425,7 @@ const MINIMAP_MAX_ENEMY_BLIPS: usize = 220;
 const MINIMAP_MAX_FRIENDLY_BLIPS: usize = 260;
 const MINIMAP_MAX_RESCUABLE_BLIPS: usize = 80;
 const MINIMAP_MAX_EXP_BLIPS: usize = 320;
+const MINIMAP_MAX_MAGNET_BLIPS: usize = 4;
 const SKILL_BAR_SLOT_BG: Color = Color::srgba(0.05, 0.045, 0.04, 0.82);
 const SKILL_BAR_SLOT_BORDER: Color = Color::srgba(0.78, 0.72, 0.58, 0.4);
 const SKILL_BAR_SLOT_ACTIVE_BORDER: Color = Color::srgb(0.94, 0.82, 0.43);
@@ -5223,6 +5225,7 @@ fn update_rescue_progress_hud(
 fn update_minimap_hud(
     mut commands: Commands,
     time: Res<Time>,
+    art: Res<ArtAssets>,
     banner_state: Res<BannerState>,
     bounds: Option<Res<MapBounds>>,
     mut runtime: ResMut<MinimapRefreshRuntime>,
@@ -5230,6 +5233,7 @@ fn update_minimap_hud(
     units: Query<(&Unit, &Transform)>,
     rescuables: Query<&Transform, With<RescuableUnit>>,
     exp_packs: Query<&Transform, With<ExpPack>>,
+    magnets: Query<(&Transform, &MagnetPickup)>,
 ) {
     runtime.timer.tick(time.delta());
     if !runtime.timer.just_finished() {
@@ -5250,6 +5254,7 @@ fn update_minimap_hud(
         let mut commander_seen = false;
         let mut rescuable_count = 0usize;
         let mut exp_count = 0usize;
+        let mut magnet_count = 0usize;
         for (unit, transform) in &units {
             if commander_seen
                 && friendly_count >= MINIMAP_MAX_FRIENDLY_BLIPS
@@ -5311,6 +5316,22 @@ fn update_minimap_hud(
             spawn_minimap_dot(parent, draw_pos, 2.1, MINIMAP_EXP_COLOR);
         }
 
+        for (transform, magnet) in &magnets {
+            if magnet_count >= MINIMAP_MAX_MAGNET_BLIPS {
+                break;
+            }
+            let position = transform.translation.truncate();
+            let Some(draw_pos) = world_to_minimap_pos(position, *bounds, MINIMAP_SIZE) else {
+                continue;
+            };
+            magnet_count += 1;
+            let texture = match magnet.faction {
+                PlayerFaction::Christian => art.magnet_cross_pickup.clone(),
+                PlayerFaction::Muslim => art.magnet_crescent_pickup.clone(),
+            };
+            spawn_minimap_icon(parent, draw_pos, 9.0, texture);
+        }
+
         if banner_state.is_dropped
             && let Some(draw_pos) =
                 world_to_minimap_pos(banner_state.world_position, *bounds, MINIMAP_SIZE)
@@ -5357,6 +5378,26 @@ fn spawn_minimap_dot(parent: &mut ChildBuilder, draw_pos: Vec2, dot_size: f32, c
             ..default()
         },
         background_color: BackgroundColor(color),
+        ..default()
+    });
+}
+
+fn spawn_minimap_icon(
+    parent: &mut ChildBuilder,
+    draw_pos: Vec2,
+    icon_size: f32,
+    texture: Handle<Image>,
+) {
+    parent.spawn(ImageBundle {
+        style: Style {
+            position_type: PositionType::Absolute,
+            left: Val::Px(draw_pos.x - icon_size * 0.5),
+            top: Val::Px(draw_pos.y - icon_size * 0.5),
+            width: Val::Px(icon_size),
+            height: Val::Px(icon_size),
+            ..default()
+        },
+        image: UiImage::new(texture),
         ..default()
     });
 }

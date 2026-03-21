@@ -4,8 +4,8 @@ use crate::data::GameData;
 use crate::enemies::WaveRuntime;
 use crate::map::MapBounds;
 use crate::model::{
-    CommanderUnit, FriendlyUnit, GainXpEvent, GameState, GlobalBuffs, MoveSpeed, SpawnExpPackEvent,
-    StartRunEvent,
+    CommanderUnit, FriendlyUnit, GainXpEvent, GameState, GlobalBuffs, MatchSetupSelection,
+    MoveSpeed, PlayerFaction, SpawnExpPackEvent, StartRunEvent,
 };
 use crate::upgrades::Progression;
 use crate::visuals::ArtAssets;
@@ -15,6 +15,9 @@ const DROP_CONSUME_RADIUS: f32 = 16.0;
 const AMBIENT_PICKUP_DELAY_SECS: f32 = 0.0;
 const DROP_RENDER_SIZE: f32 = 24.0;
 const DROP_RENDER_Z: f32 = 40.0;
+const MAGNET_PICKUP_SIZE: f32 = 30.0;
+const MAGNET_PICKUP_Z: f32 = 42.0;
+const MAGNET_PICKUP_WAVE_INTERVAL: u32 = 3;
 
 #[derive(Component, Clone, Copy, Debug)]
 pub struct ExpPack {
@@ -24,6 +27,12 @@ pub struct ExpPack {
 
 #[derive(Component, Clone, Copy, Debug)]
 struct DropInTransitToCommander;
+
+#[derive(Component, Clone, Copy, Debug)]
+pub struct MagnetPickup {
+    pub faction: PlayerFaction,
+    pub wave: u32,
+}
 
 #[derive(Resource, Clone, Debug)]
 struct DropSpawnRuntime {
@@ -40,17 +49,25 @@ impl Default for DropSpawnRuntime {
     }
 }
 
+#[derive(Resource, Clone, Copy, Debug, Default)]
+struct MagnetWaveRuntime {
+    last_seen_wave: u32,
+}
+
 pub struct DropsPlugin;
 
 impl Plugin for DropsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<DropSpawnRuntime>()
+            .init_resource::<MagnetWaveRuntime>()
             .add_systems(Update, spawn_exp_packs_on_run_start)
             .add_systems(
                 Update,
                 (
                     spawn_exp_packs_over_time,
                     spawn_exp_packs_from_events,
+                    update_wave_magnet_pickup,
+                    pickup_wave_magnet,
                     pickup_exp_packs,
                     transit_drops_to_commander,
                 )
@@ -71,7 +88,9 @@ fn spawn_exp_packs_on_run_start(
     bounds: Option<Res<MapBounds>>,
     commanders: Query<&Transform, With<CommanderUnit>>,
     existing_packs: Query<Entity, With<ExpPack>>,
+    existing_magnets: Query<Entity, With<MagnetPickup>>,
     mut runtime: ResMut<DropSpawnRuntime>,
+    mut magnet_runtime: ResMut<MagnetWaveRuntime>,
 ) {
     if start_events.is_empty() {
         return;
@@ -79,6 +98,9 @@ fn spawn_exp_packs_on_run_start(
     for _ in start_events.read() {}
 
     for entity in &existing_packs {
+        commands.entity(entity).despawn_recursive();
+    }
+    for entity in &existing_magnets {
         commands.entity(entity).despawn_recursive();
     }
 
@@ -100,6 +122,7 @@ fn spawn_exp_packs_on_run_start(
 
     runtime.sequence = initial_count;
     runtime.timer = Timer::from_seconds(data.drops.spawn_interval_secs, TimerMode::Repeating);
+    magnet_runtime.last_seen_wave = 0;
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -175,6 +198,90 @@ fn spawn_exp_packs_from_events(
         );
         active_count = active_count.saturating_add(1);
     }
+}
+
+#[allow(clippy::type_complexity)]
+fn update_wave_magnet_pickup(
+    mut commands: Commands,
+    art: Res<ArtAssets>,
+    setup: Res<MatchSetupSelection>,
+    waves: Option<Res<WaveRuntime>>,
+    mut runtime: ResMut<MagnetWaveRuntime>,
+    existing_magnets: Query<Entity, With<MagnetPickup>>,
+) {
+    let current_wave = current_wave_number(waves.as_deref());
+    let (wave_changed, should_spawn) = magnet_wave_lifecycle(runtime.last_seen_wave, current_wave);
+    if !wave_changed {
+        return;
+    }
+
+    for entity in &existing_magnets {
+        commands.entity(entity).despawn_recursive();
+    }
+
+    if should_spawn {
+        spawn_wave_magnet(&mut commands, &art, setup.faction, current_wave);
+    }
+    runtime.last_seen_wave = current_wave;
+}
+
+#[allow(clippy::type_complexity)]
+fn pickup_wave_magnet(
+    mut commands: Commands,
+    data: Res<GameData>,
+    buffs: Option<Res<GlobalBuffs>>,
+    friendlies: Query<&Transform, With<FriendlyUnit>>,
+    magnets: Query<(Entity, &Transform), With<MagnetPickup>>,
+    mut packs: Query<(Entity, Option<&DropInTransitToCommander>, &mut ExpPack)>,
+) {
+    let friendly_positions: Vec<Vec2> = friendlies
+        .iter()
+        .map(|transform| transform.translation.truncate())
+        .collect();
+    if friendly_positions.is_empty() {
+        return;
+    }
+    let pickup_radius = (data.drops.pickup_radius
+        + buffs
+            .as_ref()
+            .map(|value| value.pickup_radius_bonus)
+            .unwrap_or(0.0))
+    .max(1.0);
+
+    for (magnet_entity, magnet_transform) in &magnets {
+        let magnet_position = magnet_transform.translation.truncate();
+        if !any_friendly_in_pickup_radius(magnet_position, &friendly_positions, pickup_radius) {
+            continue;
+        }
+        for (pack_entity, in_transit, mut pack) in &mut packs {
+            let (should_insert_transit, next_delay) =
+                force_home_pack_state(in_transit.is_some(), pack.pickup_delay_remaining);
+            pack.pickup_delay_remaining = next_delay;
+            if should_insert_transit {
+                commands
+                    .entity(pack_entity)
+                    .insert(DropInTransitToCommander);
+            }
+        }
+        commands.entity(magnet_entity).despawn_recursive();
+    }
+}
+
+fn spawn_wave_magnet(commands: &mut Commands, art: &ArtAssets, faction: PlayerFaction, wave: u32) {
+    let texture = magnet_texture_for_faction(art, faction);
+    commands.spawn((
+        MagnetPickup { faction, wave },
+        SpriteBundle {
+            texture,
+            sprite: Sprite {
+                custom_size: Some(Vec2::splat(MAGNET_PICKUP_SIZE)),
+                color: Color::WHITE,
+                ..default()
+            },
+            transform: Transform::from_xyz(0.0, 0.0, MAGNET_PICKUP_Z),
+            ..default()
+        },
+    ));
 }
 
 #[allow(clippy::type_complexity)]
@@ -272,6 +379,33 @@ fn spawn_exp_pack(
     ));
 }
 
+pub fn magnet_wave_lifecycle(last_seen_wave: u32, current_wave: u32) -> (bool, bool) {
+    if current_wave == 0 || current_wave == last_seen_wave {
+        return (false, false);
+    }
+    (true, should_spawn_magnet_for_wave(current_wave))
+}
+
+pub fn should_spawn_magnet_for_wave(wave_number: u32) -> bool {
+    wave_number > 0 && wave_number.is_multiple_of(MAGNET_PICKUP_WAVE_INTERVAL)
+}
+
+pub fn force_home_pack_state(
+    already_in_transit: bool,
+    _pickup_delay_remaining: f32,
+) -> (bool, f32) {
+    let should_insert_transit = !already_in_transit;
+    let next_delay = 0.0;
+    (should_insert_transit, next_delay)
+}
+
+fn magnet_texture_for_faction(art: &ArtAssets, faction: PlayerFaction) -> Handle<Image> {
+    match faction {
+        PlayerFaction::Christian => art.magnet_cross_pickup.clone(),
+        PlayerFaction::Muslim => art.magnet_crescent_pickup.clone(),
+    }
+}
+
 fn current_wave_number(waves: Option<&WaveRuntime>) -> u32 {
     let Some(runtime) = waves else {
         return 1;
@@ -355,8 +489,9 @@ mod tests {
     use bevy::prelude::Vec2;
 
     use crate::drops::{
-        any_friendly_in_pickup_radius, drop_spawn_position, homing_speed_from_commander_base,
-        reached_target, scaled_pack_xp, step_towards_target, tick_pickup_delay,
+        any_friendly_in_pickup_radius, drop_spawn_position, force_home_pack_state,
+        homing_speed_from_commander_base, magnet_wave_lifecycle, reached_target, scaled_pack_xp,
+        should_spawn_magnet_for_wave, step_towards_target, tick_pickup_delay,
     };
     use crate::map::MapBounds;
 
@@ -426,5 +561,27 @@ mod tests {
     fn pickup_delay_ticks_down_to_zero() {
         assert!((tick_pickup_delay(0.5, 0.2) - 0.3).abs() < 0.001);
         assert_eq!(tick_pickup_delay(0.1, 1.0), 0.0);
+    }
+
+    #[test]
+    fn magnet_lifecycle_spawns_every_third_wave_and_expires_next_wave() {
+        assert!(!should_spawn_magnet_for_wave(1));
+        assert!(!should_spawn_magnet_for_wave(2));
+        assert!(should_spawn_magnet_for_wave(3));
+
+        assert_eq!(magnet_wave_lifecycle(2, 2), (false, false));
+        assert_eq!(magnet_wave_lifecycle(2, 3), (true, true));
+        assert_eq!(magnet_wave_lifecycle(3, 4), (true, false));
+    }
+
+    #[test]
+    fn magnet_force_homing_marks_non_transit_packs_and_clears_delay() {
+        let (insert_transit, delay) = force_home_pack_state(false, 0.8);
+        assert!(insert_transit);
+        assert_eq!(delay, 0.0);
+
+        let (insert_transit_existing, delay_existing) = force_home_pack_state(true, 1.2);
+        assert!(!insert_transit_existing);
+        assert_eq!(delay_existing, 0.0);
     }
 }

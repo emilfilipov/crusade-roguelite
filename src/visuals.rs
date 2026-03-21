@@ -19,6 +19,8 @@ pub struct ArtAssets {
     pub terrain_desert_foliage_tile_a: Handle<Image>,
     pub terrain_boundary_wall_tile_a: Handle<Image>,
     pub exp_pack_coin_stack: Handle<Image>,
+    pub magnet_cross_pickup: Handle<Image>,
+    pub magnet_crescent_pickup: Handle<Image>,
     pub arrow_projectile: Handle<Image>,
     pub upgrade_damage_icon: Handle<Image>,
     pub upgrade_attack_speed_icon: Handle<Image>,
@@ -81,6 +83,8 @@ fn load_art_assets(mut assets: ResMut<ArtAssets>, asset_server: Option<Res<Asset
     assets.terrain_boundary_wall_tile_a = asset_server
         .load("third_party/oga_ishtar_top-down-pack_1.1/top-down-pack-1/tiles/Slice 76.png");
     assets.exp_pack_coin_stack = asset_server.load("sprites/pickups/xp_coin_stack.png");
+    assets.magnet_cross_pickup = asset_server.load("sprites/pickups/magnet_cross.png");
+    assets.magnet_crescent_pickup = asset_server.load("sprites/pickups/magnet_crescent.png");
     assets.arrow_projectile = asset_server
         .load("third_party/kenney_desert-shooter-pack_1.0/PNG/Weapons/Tiles/tile_0018.png");
     assets.upgrade_damage_icon =

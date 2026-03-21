@@ -37,7 +37,10 @@ Track external art sources, licenses, and current runtime mapping.
 
 ### Local Curated Sprite
 - `assets/sprites/pickups/xp_coin_stack.png`
+- `assets/sprites/pickups/magnet_cross.png`
+- `assets/sprites/pickups/magnet_crescent.png`
 - Runtime usage: XP pack pickup sprite (`exp_pack_coin_stack`)
+  - plus wave magnet pickup symbols (`magnet_cross_pickup`, `magnet_crescent_pickup`)
 
 ### Local Generated Formation Icons
 - `assets/sprites/skills/formation_square.png`
@@ -67,10 +70,12 @@ Track external art sources, licenses, and current runtime mapping.
 - `enemy_bandit_raider_dead` -> `third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0120.png`
 - `banner_upright` -> `third_party/oga_ishtar_top-down-pack_1.1/top-down-pack-1/tiles/Slice 24.png`
 - `banner_dropped` -> `third_party/oga_ishtar_top-down-pack_1.1/top-down-pack-1/tiles/Slice 16.png`
-- `terrain_desert_base_tile_a` -> `third_party/oga_ishtar_top-down-pack_1.1/top-down-pack-1/tiles/Slice 39.png`
+- `terrain_desert_base_tile_a` -> `third_party/oga_ishtar_top-down-pack_1.1/top-down-pack-1/tiles/Slice 66.png`
 - `terrain_desert_foliage_tile_a` -> `third_party/oga_ishtar_top-down-pack_1.1/top-down-pack-1/tiles/Slice 70.png`
 - `terrain_boundary_wall_tile_a` -> `third_party/oga_ishtar_top-down-pack_1.1/top-down-pack-1/tiles/Slice 76.png`
 - `exp_pack_coin_stack` -> `sprites/pickups/xp_coin_stack.png`
+- `magnet_cross_pickup` -> `sprites/pickups/magnet_cross.png`
+- `magnet_crescent_pickup` -> `sprites/pickups/magnet_crescent.png`
 - `arrow_projectile` -> `third_party/kenney_desert-shooter-pack_1.0/PNG/Weapons/Tiles/tile_0018.png`
 - `formation_square_icon` -> `sprites/skills/formation_square.png`
 - `formation_diamond_icon` -> `sprites/skills/formation_diamond.png`
