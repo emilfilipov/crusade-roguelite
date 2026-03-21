@@ -300,11 +300,8 @@ struct StatsPanelData {
 #[derive(Clone, Debug)]
 struct StatsPanelRow {
     label: &'static str,
-    base: f32,
-    bonus: f32,
-    final_value: f32,
-    base_override: Option<String>,
-    final_override: Option<String>,
+    bonus_value: f32,
+    bonus_text: String,
 }
 
 #[derive(Clone, Debug)]
@@ -365,7 +362,7 @@ struct MinimapRefreshRuntime {
 impl Default for MinimapRefreshRuntime {
     fn default() -> Self {
         Self {
-            timer: Timer::from_seconds(0.12, TimerMode::Repeating),
+            timer: Timer::from_seconds(0.2, TimerMode::Repeating),
         }
     }
 }
@@ -1933,7 +1930,7 @@ fn spawn_run_modal_overlay(
     let (panel_width, panel_height) = match screen {
         RunModalScreen::Inventory => (Val::Px(920.0), Val::Px(520.0)),
         RunModalScreen::Stats => (Val::Px(980.0), Val::Px(560.0)),
-        RunModalScreen::SkillBook => (Val::Px(900.0), Val::Px(600.0)),
+        RunModalScreen::SkillBook => (Val::Px(900.0), Val::Px(640.0)),
         RunModalScreen::Archive => (Val::Px(980.0), Val::Px(620.0)),
         RunModalScreen::UnitUpgrade => (Val::Px(980.0), Val::Px(560.0)),
     };
@@ -1963,10 +1960,10 @@ fn spawn_run_modal_overlay(
                     height: panel_height,
                     border: UiRect::all(Val::Px(1.0)),
                     flex_direction: FlexDirection::Column,
-                    justify_content: JustifyContent::SpaceBetween,
+                    justify_content: JustifyContent::FlexStart,
                     align_items: AlignItems::Center,
-                    row_gap: Val::Px(16.0),
-                    padding: UiRect::all(Val::Px(16.0)),
+                    row_gap: Val::Px(10.0),
+                    padding: UiRect::all(Val::Px(14.0)),
                     ..default()
                 },
                 background_color: BackgroundColor(Color::srgba(0.08, 0.07, 0.06, 0.95)),
@@ -2000,8 +1997,8 @@ fn spawn_run_modal_overlay(
                             .spawn((
                                 ButtonBundle {
                                     style: Style {
-                                        width: Val::Px(34.0),
-                                        height: Val::Px(34.0),
+                                        width: Val::Px(40.0),
+                                        height: Val::Px(40.0),
                                         justify_content: JustifyContent::Center,
                                         align_items: AlignItems::Center,
                                         border: UiRect::all(Val::Px(1.0)),
@@ -2017,7 +2014,7 @@ fn spawn_run_modal_overlay(
                                 button.spawn(TextBundle::from_section(
                                     "X",
                                     TextStyle {
-                                        font_size: 20.0,
+                                        font_size: 22.0,
                                         color: MENU_BUTTON_TEXT_NORMAL,
                                         ..default()
                                     },
@@ -2057,33 +2054,6 @@ fn spawn_run_modal_overlay(
                 if matches!(screen, RunModalScreen::UnitUpgrade) {
                     spawn_unit_upgrade_modal_sections(panel, unit_upgrade_panel);
                 }
-                panel
-                    .spawn((
-                        ButtonBundle {
-                            style: Style {
-                                width: Val::Px(180.0),
-                                height: Val::Px(50.0),
-                                justify_content: JustifyContent::Center,
-                                align_items: AlignItems::Center,
-                                border: UiRect::all(Val::Px(1.0)),
-                                ..default()
-                            },
-                            background_color: BackgroundColor(Color::NONE),
-                            border_color: BorderColor(Color::NONE),
-                            ..default()
-                        },
-                        RunModalButtonAction::Close,
-                    ))
-                    .with_children(|button| {
-                        button.spawn(TextBundle::from_section(
-                            "CLOSE",
-                            TextStyle {
-                                font_size: 24.0,
-                                color: MENU_BUTTON_TEXT_NORMAL,
-                                ..default()
-                            },
-                        ));
-                    });
             });
         });
 }
@@ -2094,13 +2064,10 @@ fn run_modal_titles(screen: RunModalScreen) -> (&'static str, Option<&'static st
         RunModalScreen::Stats => (
             "STATS",
             Some(
-                "Passive level bonuses (all friendlies): +1% damage, +1% attack speed, +1 HP per level.",
+                "Bonus values shown below apply to commander and all friendlies unless stated otherwise.",
             ),
         ),
-        RunModalScreen::SkillBook => (
-            "SKILL BOOK",
-            Some("Selected formations, auras, and level-up effects appear here."),
-        ),
+        RunModalScreen::SkillBook => ("SKILL BOOK", Some("Chosen skills, formations, and auras.")),
         RunModalScreen::Archive => ("BESTIARY", None),
         RunModalScreen::UnitUpgrade => (
             "UNIT UPGRADES",
@@ -2109,30 +2076,42 @@ fn run_modal_titles(screen: RunModalScreen) -> (&'static str, Option<&'static st
     }
 }
 
-fn numeric_stats_row(
-    label: &'static str,
-    base: f32,
-    bonus: f32,
-    final_value: f32,
-) -> StatsPanelRow {
+fn stats_bonus_row(label: &'static str, bonus_value: f32, bonus_text: String) -> StatsPanelRow {
     StatsPanelRow {
         label,
-        base,
-        bonus,
-        final_value,
-        base_override: None,
-        final_override: None,
+        bonus_value,
+        bonus_text,
     }
 }
 
-fn bonus_only_stats_row(label: &'static str, bonus: f32) -> StatsPanelRow {
-    StatsPanelRow {
-        label,
-        base: 0.0,
-        bonus,
-        final_value: 0.0,
-        base_override: Some("-".to_string()),
-        final_override: Some("-".to_string()),
+fn format_percent_bonus(percent: f32) -> String {
+    if percent.abs() <= 0.0001 {
+        "0%".to_string()
+    } else {
+        format!("{:+.1}%", percent)
+    }
+}
+
+fn format_raw_bonus(raw: f32) -> String {
+    if raw.abs() <= 0.0001 {
+        "0".to_string()
+    } else {
+        format_signed_stat_value(raw)
+    }
+}
+
+fn format_raw_and_percent_bonus(raw: f32, percent: f32) -> String {
+    let mut parts = Vec::with_capacity(2);
+    if raw.abs() > 0.0001 {
+        parts.push(format_raw_bonus(raw));
+    }
+    if percent.abs() > 0.0001 {
+        parts.push(format_percent_bonus(percent));
+    }
+    if parts.is_empty() {
+        "0".to_string()
+    } else {
+        parts.join(" ")
     }
 }
 
@@ -2147,21 +2126,12 @@ fn build_stats_panel_data(
 ) -> StatsPanelData {
     let commander = &data.units.commander;
     let level = progression.level.max(1);
-    let base_attack_speed = if commander.attack_cooldown_secs > 0.0 {
-        1.0 / commander.attack_cooldown_secs
-    } else {
-        0.0
-    };
-    let attack_speed_final = base_attack_speed * buffs.attack_speed_multiplier;
-    let damage_final = commander.damage * buffs.damage_multiplier;
-    let base_move_speed = commander.move_speed;
-    let move_with_upgrades = base_move_speed + buffs.move_speed_bonus;
-    let move_final = move_with_upgrades * formation_modifiers.move_speed_multiplier;
-    let base_pickup = data.drops.pickup_radius;
-    let final_pickup = base_pickup + buffs.pickup_radius_bonus;
-    let base_aura = commander.aura_radius;
-    let final_aura = base_aura + buffs.commander_aura_radius_bonus;
     let hp_bonus = commander_level_hp_bonus(level);
+    let passive_level_percent = level.saturating_sub(1) as f32;
+    let damage_upgrade_percent = (buffs.damage_multiplier - 1.0) * 100.0;
+    let attack_speed_upgrade_percent = (buffs.attack_speed_multiplier - 1.0) * 100.0;
+    let authority_resist_percent = buffs.authority_friendly_loss_resistance * 100.0;
+    let encirclement_percent = (buffs.inside_formation_damage_multiplier - 1.0) * 100.0;
 
     let mut active_buffs = vec![format!("Formation: {}", active_formation.display_name())];
     if buffs.authority_friendly_loss_resistance > 0.0
@@ -2199,67 +2169,78 @@ fn build_stats_panel_data(
 
     StatsPanelData {
         rows: vec![
-            bonus_only_stats_row("Unit HP", hp_bonus),
-            numeric_stats_row(
+            stats_bonus_row(
+                "Commander Base HP",
+                0.0,
+                format_stat_value(commander.max_hp),
+            ),
+            stats_bonus_row(
+                "Unit HP (level passive)",
+                hp_bonus,
+                format_raw_bonus(hp_bonus),
+            ),
+            stats_bonus_row(
                 "Damage",
-                commander.damage,
-                damage_final - commander.damage,
-                damage_final,
+                passive_level_percent + damage_upgrade_percent,
+                format_percent_bonus(passive_level_percent + damage_upgrade_percent),
             ),
-            numeric_stats_row(
-                "Attack Speed (hits/s)",
-                base_attack_speed,
-                attack_speed_final - base_attack_speed,
-                attack_speed_final,
+            stats_bonus_row(
+                "Attack Speed",
+                passive_level_percent + attack_speed_upgrade_percent,
+                format_percent_bonus(passive_level_percent + attack_speed_upgrade_percent),
             ),
-            numeric_stats_row(
+            stats_bonus_row(
                 "Armor",
-                commander.armor,
                 buffs.armor_bonus,
-                commander.armor + buffs.armor_bonus,
+                format_raw_bonus(buffs.armor_bonus),
             ),
-            numeric_stats_row(
+            stats_bonus_row(
                 "Move Speed",
-                base_move_speed,
-                move_final - base_move_speed,
-                move_final,
+                buffs.move_speed_bonus,
+                format_raw_and_percent_bonus(
+                    buffs.move_speed_bonus,
+                    (formation_modifiers.move_speed_multiplier - 1.0) * 100.0,
+                ),
             ),
-            numeric_stats_row(
+            stats_bonus_row(
                 "Pickup Radius",
-                base_pickup,
-                final_pickup - base_pickup,
-                final_pickup,
+                buffs.pickup_radius_bonus,
+                format_raw_bonus(buffs.pickup_radius_bonus),
             ),
-            numeric_stats_row("Aura Radius", base_aura, final_aura - base_aura, final_aura),
-            numeric_stats_row(
+            stats_bonus_row(
+                "Aura Radius",
+                buffs.commander_aura_radius_bonus,
+                format_raw_bonus(buffs.commander_aura_radius_bonus),
+            ),
+            stats_bonus_row(
+                "Encirclement Damage",
+                encirclement_percent,
+                format_percent_bonus(encirclement_percent),
+            ),
+            stats_bonus_row(
                 "Authority Loss Resist",
-                0.0,
-                buffs.authority_friendly_loss_resistance,
-                buffs.authority_friendly_loss_resistance,
+                authority_resist_percent,
+                format_percent_bonus(authority_resist_percent),
             ),
-            numeric_stats_row(
+            stats_bonus_row(
                 "Authority Enemy Morale Drain/s",
-                0.0,
                 buffs.authority_enemy_morale_drain_per_sec,
-                buffs.authority_enemy_morale_drain_per_sec,
+                format_raw_bonus(buffs.authority_enemy_morale_drain_per_sec),
             ),
-            numeric_stats_row(
+            stats_bonus_row(
                 "Hospitalier HP Regen/s",
-                0.0,
                 buffs.hospitalier_hp_regen_per_sec,
-                buffs.hospitalier_hp_regen_per_sec,
+                format_raw_bonus(buffs.hospitalier_hp_regen_per_sec),
             ),
-            numeric_stats_row(
+            stats_bonus_row(
                 "Hospitalier Cohesion Regen/s",
-                0.0,
                 buffs.hospitalier_cohesion_regen_per_sec,
-                buffs.hospitalier_cohesion_regen_per_sec,
+                format_raw_bonus(buffs.hospitalier_cohesion_regen_per_sec),
             ),
-            numeric_stats_row(
+            stats_bonus_row(
                 "Hospitalier Morale Regen/s",
-                0.0,
                 buffs.hospitalier_morale_regen_per_sec,
-                buffs.hospitalier_morale_regen_per_sec,
+                format_raw_bonus(buffs.hospitalier_morale_regen_per_sec),
             ),
         ],
         active_buffs,
@@ -2309,21 +2290,11 @@ fn spawn_stats_modal_sections(parent: &mut ChildBuilder, stats: &StatsPanelData)
                             ..default()
                         })
                         .with_children(|header| {
-                            spawn_stats_cell(header, "Stat", 42.0, MENU_BUTTON_TEXT_HOVERED);
-                            spawn_stats_cell(header, "Base", 19.0, MENU_BUTTON_TEXT_HOVERED);
-                            spawn_stats_cell(header, "Bonus", 19.0, MENU_BUTTON_TEXT_HOVERED);
-                            spawn_stats_cell(header, "Final", 20.0, MENU_BUTTON_TEXT_HOVERED);
+                            spawn_stats_cell(header, "Stat", 54.0, MENU_BUTTON_TEXT_HOVERED);
+                            spawn_stats_cell(header, "Bonus", 46.0, MENU_BUTTON_TEXT_HOVERED);
                         });
                     spawn_scrollable_panel(table, 322.0, |rows| {
                         for row in &stats.rows {
-                            let base_text = row
-                                .base_override
-                                .clone()
-                                .unwrap_or_else(|| format_stat_value(row.base));
-                            let final_text = row
-                                .final_override
-                                .clone()
-                                .unwrap_or_else(|| format_stat_value(row.final_value));
                             rows.spawn(NodeBundle {
                                 style: Style {
                                     width: Val::Percent(100.0),
@@ -2339,15 +2310,13 @@ fn spawn_stats_modal_sections(parent: &mut ChildBuilder, stats: &StatsPanelData)
                                 ..default()
                             })
                             .with_children(|line| {
-                                spawn_stats_cell(line, row.label, 42.0, HUD_TEXT_COLOR);
-                                spawn_stats_cell(line, base_text.as_str(), 19.0, HUD_TEXT_COLOR);
+                                spawn_stats_cell(line, row.label, 54.0, HUD_TEXT_COLOR);
                                 spawn_stats_cell(
                                     line,
-                                    format_signed_stat_value(row.bonus).as_str(),
-                                    19.0,
-                                    stat_bonus_color(row.bonus),
+                                    row.bonus_text.as_str(),
+                                    46.0,
+                                    stat_bonus_color(row.bonus_value),
                                 );
-                                spawn_stats_cell(line, final_text.as_str(), 20.0, HUD_TEXT_COLOR);
                             });
                         }
                     });
@@ -2636,7 +2605,7 @@ fn spawn_skill_book_modal_sections(
     skill_book: &SkillBookPanelData,
     art: &crate::visuals::ArtAssets,
 ) {
-    spawn_scrollable_panel(parent, 360.0, |root| {
+    spawn_scrollable_panel(parent, 420.0, |root| {
         if skill_book.sections.is_empty() {
             root.spawn(TextBundle::from_section(
                 "No skills selected yet.",
@@ -4395,6 +4364,7 @@ fn handle_game_over_buttons(
     mut text_query: Query<&mut Text>,
     mut next_state: ResMut<NextState<GameState>>,
     mut run_session: ResMut<RunSession>,
+    mut run_modal_state: ResMut<RunModalState>,
     mut start_run_events: EventWriter<StartRunEvent>,
 ) {
     for (interaction, action, children, mut border_color, mut background) in &mut buttons {
@@ -4414,9 +4384,12 @@ fn handle_game_over_buttons(
                 match action {
                     GameOverMenuAction::Restart => {
                         info!("Restart requested from GameOver.");
-                        *run_session = RunSession::default();
-                        start_run_events.send(StartRunEvent);
-                        next_state.set(GameState::InRun);
+                        request_run_restart(
+                            &mut run_session,
+                            &mut run_modal_state,
+                            &mut start_run_events,
+                            &mut next_state,
+                        );
                     }
                     GameOverMenuAction::MainMenu => {
                         info!("Returning to MainMenu from GameOver.");
@@ -4451,6 +4424,7 @@ fn handle_victory_buttons(
     mut text_query: Query<&mut Text>,
     mut next_state: ResMut<NextState<GameState>>,
     mut run_session: ResMut<RunSession>,
+    mut run_modal_state: ResMut<RunModalState>,
     mut start_run_events: EventWriter<StartRunEvent>,
 ) {
     for (interaction, action, children, mut border_color, mut background) in &mut buttons {
@@ -4470,9 +4444,12 @@ fn handle_victory_buttons(
                 match action {
                     VictoryMenuAction::Restart => {
                         info!("Restart requested from Victory screen.");
-                        *run_session = RunSession::default();
-                        start_run_events.send(StartRunEvent);
-                        next_state.set(GameState::InRun);
+                        request_run_restart(
+                            &mut run_session,
+                            &mut run_modal_state,
+                            &mut start_run_events,
+                            &mut next_state,
+                        );
                     }
                     VictoryMenuAction::MainMenu => {
                         info!("Returning to MainMenu from Victory screen.");
@@ -4507,6 +4484,7 @@ fn handle_pause_menu_buttons(
     mut text_query: Query<&mut Text>,
     mut next_state: ResMut<NextState<GameState>>,
     mut run_session: ResMut<RunSession>,
+    mut run_modal_state: ResMut<RunModalState>,
     mut start_run_events: EventWriter<StartRunEvent>,
 ) {
     for (interaction, action, children, mut border_color, mut background) in &mut buttons {
@@ -4529,9 +4507,12 @@ fn handle_pause_menu_buttons(
                     }
                     PauseMenuAction::Restart => {
                         info!("Restart requested from pause menu.");
-                        *run_session = RunSession::default();
-                        start_run_events.send(StartRunEvent);
-                        next_state.set(GameState::InRun);
+                        request_run_restart(
+                            &mut run_session,
+                            &mut run_modal_state,
+                            &mut start_run_events,
+                            &mut next_state,
+                        );
                     }
                     PauseMenuAction::MainMenuOrQuit => {
                         info!("Returning to MainMenu from pause menu.");
@@ -4549,6 +4530,18 @@ fn handle_pause_menu_buttons(
             }
         }
     }
+}
+
+fn request_run_restart(
+    run_session: &mut RunSession,
+    run_modal_state: &mut RunModalState,
+    start_run_events: &mut EventWriter<StartRunEvent>,
+    next_state: &mut NextState<GameState>,
+) {
+    *run_session = RunSession::default();
+    *run_modal_state = RunModalState::None;
+    start_run_events.send(StartRunEvent);
+    next_state.set(GameState::InRun);
 }
 
 #[allow(clippy::type_complexity)]
@@ -5156,9 +5149,16 @@ fn update_minimap_hud(
     commands.entity(root).with_children(|parent| {
         let mut friendly_count = 0usize;
         let mut enemy_count = 0usize;
+        let mut commander_seen = false;
         let mut rescuable_count = 0usize;
         let mut exp_count = 0usize;
         for (unit, transform) in &units {
+            if commander_seen
+                && friendly_count >= MINIMAP_MAX_FRIENDLY_BLIPS
+                && enemy_count >= MINIMAP_MAX_ENEMY_BLIPS
+            {
+                break;
+            }
             let position = transform.translation.truncate();
             let Some(draw_pos) = world_to_minimap_pos(position, *bounds, MINIMAP_SIZE) else {
                 continue;
@@ -5167,6 +5167,7 @@ fn update_minimap_hud(
             match unit.team {
                 Team::Friendly => {
                     let (color, dot_size) = if unit.kind == UnitKind::Commander {
+                        commander_seen = true;
                         (MINIMAP_COMMANDER_COLOR, 4.0)
                     } else {
                         if friendly_count >= MINIMAP_MAX_FRIENDLY_BLIPS {
@@ -5227,16 +5228,24 @@ fn draw_commander_aura_footprint(
     buffs: Res<crate::model::GlobalBuffs>,
     commanders: Query<&Transform, With<CommanderUnit>>,
 ) {
+    if !has_active_aura_footprint(&buffs) {
+        return;
+    }
     let Ok(commander_transform) = commanders.get_single() else {
         return;
     };
     let radius = commander_aura_radius(&data, Some(&buffs)).max(1.0);
     let center = commander_transform.translation.truncate();
-    let edge_color = Color::srgba(0.62, 0.86, 1.0, 0.22);
-    let inner_color = Color::srgba(0.62, 0.86, 1.0, 0.08);
-
+    let edge_color = Color::srgba(0.62, 0.86, 1.0, 0.18);
     gizmos.circle_2d(center, radius, edge_color);
-    gizmos.circle_2d(center, radius * 0.66, inner_color);
+}
+
+fn has_active_aura_footprint(buffs: &crate::model::GlobalBuffs) -> bool {
+    buffs.authority_friendly_loss_resistance > 0.0
+        || buffs.authority_enemy_morale_drain_per_sec > 0.0
+        || buffs.hospitalier_hp_regen_per_sec > 0.0
+        || buffs.hospitalier_cohesion_regen_per_sec > 0.0
+        || buffs.hospitalier_morale_regen_per_sec > 0.0
 }
 
 fn spawn_minimap_dot(parent: &mut ChildBuilder, draw_pos: Vec2, dot_size: f32, color: Color) {
@@ -5828,7 +5837,7 @@ mod tests {
     }
 
     #[test]
-    fn stats_panel_defaults_show_base_values_without_bonus() {
+    fn stats_panel_defaults_show_zero_bonus_values_without_upgrades() {
         let data = GameData::load_from_dir(Path::new("assets/data")).expect("load data");
         let progression = Progression::default();
         let buffs = GlobalBuffs::default();
@@ -5846,10 +5855,9 @@ mod tests {
 
         assert!(!panel.rows.is_empty());
         let damage_row = find_stats_row(&panel.rows, "Damage").expect("damage row");
-        assert!((damage_row.base - damage_row.final_value).abs() < 0.001);
-        let hp_row = find_stats_row(&panel.rows, "Unit HP").expect("hp row");
-        assert!((hp_row.bonus - 0.0).abs() < 0.001);
-        assert_eq!(hp_row.base_override.as_deref(), Some("-"));
+        assert!((damage_row.bonus_value - 0.0).abs() < 0.001);
+        let hp_row = find_stats_row(&panel.rows, "Unit HP (level passive)").expect("hp row");
+        assert!((hp_row.bonus_value - 0.0).abs() < 0.001);
     }
 
     #[test]
@@ -5891,12 +5899,13 @@ mod tests {
             0.0,
         );
 
-        let hp_row = find_stats_row(&panel.rows, "Unit HP").expect("hp row");
-        assert!((hp_row.bonus - 7.0).abs() < 0.001);
+        let hp_row = find_stats_row(&panel.rows, "Unit HP (level passive)").expect("hp row");
+        assert!((hp_row.bonus_value - 7.0).abs() < 0.001);
         let damage_row = find_stats_row(&panel.rows, "Damage").expect("damage row");
-        assert!(damage_row.final_value > damage_row.base);
+        assert!(damage_row.bonus_value > 0.0);
         let move_row = find_stats_row(&panel.rows, "Move Speed").expect("move row");
-        assert!(move_row.final_value > move_row.base);
+        assert!(move_row.bonus_text.contains("+18"));
+        assert!(move_row.bonus_text.contains("+8.0%"));
     }
 
     #[test]

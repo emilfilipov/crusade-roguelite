@@ -1,12 +1,15 @@
 use bevy::prelude::*;
+use std::collections::HashMap;
 
 use crate::data::GameData;
 use crate::formation::{ActiveFormation, active_formation_config};
 use crate::map::MapBounds;
 use crate::model::{ColliderRadius, GameState, Team, Unit, UnitKind};
 
-const COLLISION_CORRECTION_DAMPING: f32 = 0.62;
-const COLLISION_MAX_PUSH_PER_FRAME: f32 = 6.0;
+const COLLISION_CORRECTION_DAMPING: f32 = 0.84;
+const COLLISION_MAX_PUSH_PER_FRAME: f32 = 10.0;
+const COLLISION_MIN_OVERLAP_TO_RESOLVE: f32 = 0.05;
+const COLLISION_MIN_CELL_SIZE: f32 = 24.0;
 
 pub struct CollisionPlugin;
 
@@ -34,13 +37,16 @@ fn resolve_unit_collisions(
         let read_units = unit_queries.p0();
         read_units
             .iter()
-            .map(|(entity, radius, transform, unit)| {
-                (
+            .filter_map(|(entity, radius, transform, unit)| {
+                if unit.team == Team::Neutral {
+                    return None;
+                }
+                Some((
                     entity,
                     radius.0.max(0.0),
                     transform.translation.truncate(),
                     *unit,
-                )
+                ))
             })
             .collect()
     };
@@ -55,29 +61,60 @@ fn resolve_unit_collisions(
         }
     });
     let inner_retinue_radius = active_formation_config(&data, *active_formation).slot_spacing * 1.6;
+    let max_radius = snapshot
+        .iter()
+        .map(|(_, radius, _, _)| *radius)
+        .fold(0.0_f32, f32::max);
+    let cell_size = (max_radius * 2.0).max(COLLISION_MIN_CELL_SIZE);
+
+    let mut grid: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
+    for (index, (_, radius, position, _)) in snapshot.iter().enumerate() {
+        if *radius <= 0.0 {
+            continue;
+        }
+        grid.entry(spatial_cell_key(*position, cell_size))
+            .or_default()
+            .push(index);
+    }
 
     let mut corrections = vec![Vec2::ZERO; snapshot.len()];
     for i in 0..snapshot.len() {
-        for j in (i + 1)..snapshot.len() {
-            let (_, radius_a, position_a, unit_a) = snapshot[i];
-            let (_, radius_b, position_b, unit_b) = snapshot[j];
-            if !should_resolve_collision_pair(
-                unit_a,
-                position_a,
-                unit_b,
-                position_b,
-                commander_position,
-                inner_retinue_radius,
-            ) {
+        let (_, radius_a, position_a, unit_a) = snapshot[i];
+        if radius_a <= 0.0 {
+            continue;
+        }
+        let cell = spatial_cell_key(position_a, cell_size);
+        for neighbor_cell in neighboring_cells(cell) {
+            let Some(candidates) = grid.get(&neighbor_cell) else {
                 continue;
-            }
-            let min_distance = radius_a + radius_b;
-            if min_distance <= 0.0 {
-                continue;
-            }
-            if let Some(push) = pair_push(position_a, position_b, min_distance, (i + j) as u32) {
-                corrections[i] -= push;
-                corrections[j] += push;
+            };
+            for &j in candidates {
+                if j <= i {
+                    continue;
+                }
+                let (_, radius_b, position_b, unit_b) = snapshot[j];
+                if radius_b <= 0.0 {
+                    continue;
+                }
+                if !should_resolve_collision_pair(
+                    unit_a,
+                    position_a,
+                    unit_b,
+                    position_b,
+                    commander_position,
+                    inner_retinue_radius,
+                ) {
+                    continue;
+                }
+                let min_distance = radius_a + radius_b;
+                if min_distance <= 0.0 {
+                    continue;
+                }
+                if let Some(push) = pair_push(position_a, position_b, min_distance, (i + j) as u32)
+                {
+                    corrections[i] -= push;
+                    corrections[j] += push;
+                }
             }
         }
     }
@@ -109,6 +146,29 @@ fn resolve_unit_collisions(
     }
 }
 
+fn spatial_cell_key(position: Vec2, cell_size: f32) -> (i32, i32) {
+    let inv = 1.0 / cell_size.max(1.0);
+    (
+        (position.x * inv).floor() as i32,
+        (position.y * inv).floor() as i32,
+    )
+}
+
+fn neighboring_cells(cell: (i32, i32)) -> [(i32, i32); 9] {
+    let (x, y) = cell;
+    [
+        (x - 1, y - 1),
+        (x, y - 1),
+        (x + 1, y - 1),
+        (x - 1, y),
+        (x, y),
+        (x + 1, y),
+        (x - 1, y + 1),
+        (x, y + 1),
+        (x + 1, y + 1),
+    ]
+}
+
 pub fn damp_collision_correction(
     correction: Vec2,
     delta_seconds: f32,
@@ -118,7 +178,8 @@ pub fn damp_collision_correction(
     if correction.length_squared() <= 0.000001 || damping <= 0.0 || max_push_per_frame <= 0.0 {
         return Vec2::ZERO;
     }
-    let frame_scale = (delta_seconds.max(0.0) * 60.0).clamp(0.5, 1.5);
+    // Clamp frame scaling to avoid low-FPS over-corrections that create visible jitter.
+    let frame_scale = (delta_seconds.max(0.0) * 60.0).clamp(0.75, 1.0);
     let mut damped = correction * damping * frame_scale;
     let max_len = max_push_per_frame.max(0.0);
     let len = damped.length();
@@ -181,7 +242,7 @@ pub fn pair_push(position_a: Vec2, position_b: Vec2, min_distance: f32, seed: u3
     };
     let distance = distance_sq.sqrt();
     let overlap = (min_distance - distance).max(0.0);
-    if overlap <= 0.0 {
+    if overlap <= COLLISION_MIN_OVERLAP_TO_RESOLVE {
         return None;
     }
     Some(direction * overlap * 0.5)

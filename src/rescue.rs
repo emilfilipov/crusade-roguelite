@@ -216,13 +216,52 @@ fn recruit_kind_for_sequence(sequence: u32, config: &RescueConfig) -> RecruitUni
 }
 
 fn rescue_spawn_position(sequence: u32, bounds: Option<MapBounds>) -> Vec2 {
-    let max_radius = bounds
-        .map(|b| b.half_width.min(b.half_height) * 0.82)
-        .unwrap_or(800.0);
-    let ring_fraction = 0.35 + (sequence % 6) as f32 * 0.08;
-    let radius = (max_radius * ring_fraction).min(max_radius);
-    let angle = sequence as f32 * 2.399_963_1;
-    Vec2::new(radius * angle.cos(), radius * angle.sin())
+    let (map_half_width, map_half_height) = bounds
+        .map(|b| (b.half_width.max(1.0), b.half_height.max(1.0)))
+        .unwrap_or((1000.0, 800.0));
+    let central_half_width = (map_half_width * 0.45).max(140.0);
+    let central_half_height = (map_half_height * 0.45).max(140.0);
+
+    for attempt in 0..8 {
+        let seed = rescue_hash_seed(sequence, attempt);
+        let x = lerp(
+            -central_half_width,
+            central_half_width,
+            normalized_seed(seed),
+        );
+        let y = lerp(
+            -central_half_height,
+            central_half_height,
+            normalized_seed(seed ^ 0x9E37_79B9),
+        );
+        let candidate = Vec2::new(x, y);
+        // Keep candidates generally central while avoiding exact center pileups.
+        if candidate.length_squared() >= 40.0 * 40.0 || attempt == 7 {
+            return candidate;
+        }
+    }
+
+    Vec2::ZERO
+}
+
+fn rescue_hash_seed(sequence: u32, attempt: u32) -> u32 {
+    let mut value = sequence
+        .wrapping_mul(1_103_515_245)
+        .wrapping_add(attempt.wrapping_mul(747_796_405))
+        .wrapping_add(0x9E37_79B9);
+    value ^= value >> 16;
+    value = value.wrapping_mul(0x7FEB_352D);
+    value ^= value >> 15;
+    value = value.wrapping_mul(0x846C_A68B);
+    value ^ (value >> 16)
+}
+
+fn normalized_seed(seed: u32) -> f32 {
+    seed as f32 / u32::MAX as f32
+}
+
+fn lerp(min: f32, max: f32, t: f32) -> f32 {
+    min + (max - min) * t
 }
 
 pub fn advance_rescue_progress(
@@ -284,14 +323,15 @@ mod tests {
     }
 
     #[test]
-    fn rescue_spawn_points_stay_within_map_radius() {
+    fn rescue_spawn_points_stay_within_central_zone() {
         let bounds = MapBounds {
             half_width: 1200.0,
             half_height: 1000.0,
         };
         for sequence in 0..32 {
             let point = rescue_spawn_position(sequence, Some(bounds));
-            assert!(point.length() <= 1000.0 * 0.82 + 0.01);
+            assert!(point.x.abs() <= bounds.half_width * 0.45 + 0.01);
+            assert!(point.y.abs() <= bounds.half_height * 0.45 + 0.01);
         }
     }
 
