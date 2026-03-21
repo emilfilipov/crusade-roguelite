@@ -74,7 +74,7 @@
   - `docs/SYSTEMS_REFERENCE.md`
 
 ### CRU-062 - Double Attack-Speed Upgrade Values
-- Status: `TODO`
+- Status: `DONE`
 - Type: `Balance`
 - Priority: `P1`
 - Depends on: `none`
