@@ -20,7 +20,7 @@ use crate::visuals::ArtAssets;
 
 pub const MIN_FRIENDLY_COMBAT_MULTIPLIER: f32 = 0.55;
 const LOW_MORALE_THRESHOLD: f32 = 0.5;
-const LOW_MORALE_MIN_MULTIPLIER: f32 = 0.75;
+const LOW_MORALE_MIN_MULTIPLIER: f32 = 0.50;
 const ENEMY_DROP_PICKUP_DELAY_SECS: f32 = 0.9;
 const FORMATION_BOUNDS_PADDING_SLOTS: f32 = 0.35;
 const RANGED_PROJECTILE_HIT_RADIUS: f32 = 10.0;
@@ -786,8 +786,8 @@ mod tests {
     fn low_morale_scales_down_to_minimum_multiplier() {
         assert!((morale_effect_multiplier(1.0) - 1.0).abs() < 0.0001);
         assert!((morale_effect_multiplier(0.5) - 1.0).abs() < 0.0001);
-        assert!((morale_effect_multiplier(0.25) - 0.875).abs() < 0.0001);
-        assert!((morale_effect_multiplier(0.0) - 0.75).abs() < 0.0001);
+        assert!((morale_effect_multiplier(0.25) - 0.75).abs() < 0.0001);
+        assert!((morale_effect_multiplier(0.0) - 0.50).abs() < 0.0001);
     }
 
     #[test]
