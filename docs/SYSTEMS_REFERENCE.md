@@ -264,7 +264,7 @@ Procedural continuation:
 - `max_active_packs=5000`
 
 ### `rescue.json`
-- `spawn_count=14`
+- `spawn_count=6`
 - `rescue_radius=60`
 - `rescue_duration_secs=2.2`
 - `recruit_pool=["christian_peasant_infantry","christian_peasant_archer","christian_peasant_priest"]` (tier-0 validation enforced)
@@ -557,7 +557,7 @@ Friendly combined outgoing multiplier has lower clamp:
 - formation movement now scaled by `BannerMovementPenalty`
 
 ### `rescue.rs`
-- start spawn + timed respawn of rescuables
+- start spawn + timed respawn of rescuables (`20s` cadence, max `6` active at once)
 - typed rescuable metadata driven by `rescue.recruit_pool` (tier-0-only entries accepted by config validator)
 - any-friendly rescue channel logic
 

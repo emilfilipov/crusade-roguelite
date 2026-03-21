@@ -9,6 +9,9 @@ use crate::model::{
 use crate::upgrades::ConditionalUpgradeEffects;
 use crate::visuals::ArtAssets;
 
+const RESCUE_RESPAWN_INTERVAL_SECS: f32 = 20.0;
+const MAX_ACTIVE_RESCUABLES: usize = 6;
+
 #[derive(Component, Clone, Copy, Debug)]
 pub struct RescueProgress {
     pub elapsed: f32,
@@ -23,7 +26,7 @@ struct RescueSpawnRuntime {
 impl Default for RescueSpawnRuntime {
     fn default() -> Self {
         Self {
-            timer: Timer::from_seconds(12.0, TimerMode::Repeating),
+            timer: Timer::from_seconds(RESCUE_RESPAWN_INTERVAL_SECS, TimerMode::Repeating),
             sequence: 0,
         }
     }
@@ -73,7 +76,7 @@ fn spawn_rescuables_on_run_start(
     }
 
     spawn_runtime.sequence = count;
-    spawn_runtime.timer = Timer::from_seconds(12.0, TimerMode::Repeating);
+    spawn_runtime.timer = Timer::from_seconds(RESCUE_RESPAWN_INTERVAL_SECS, TimerMode::Repeating);
 }
 
 fn spawn_rescuables_over_time(
@@ -85,7 +88,6 @@ fn spawn_rescuables_over_time(
     rescuables: Query<Entity, With<RescuableUnit>>,
     mut runtime: ResMut<RescueSpawnRuntime>,
 ) {
-    const MAX_ACTIVE_RESCUABLES: usize = 12;
     if rescuables.iter().count() >= MAX_ACTIVE_RESCUABLES {
         return;
     }
@@ -247,6 +249,14 @@ pub fn effective_rescue_duration(
     base_duration_secs.max(0.0) * multiplier
 }
 
+pub const fn rescue_respawn_interval_secs() -> f32 {
+    RESCUE_RESPAWN_INTERVAL_SECS
+}
+
+pub const fn rescue_max_active() -> usize {
+    MAX_ACTIVE_RESCUABLES
+}
+
 #[cfg(test)]
 mod tests {
     use bevy::prelude::Vec2;
@@ -256,7 +266,8 @@ mod tests {
     use crate::model::RecruitUnitKind;
     use crate::rescue::{
         advance_rescue_progress, any_friendly_in_rescue_radius, effective_rescue_duration,
-        recruit_kind_for_sequence, rescue_spawn_position,
+        recruit_kind_for_sequence, rescue_max_active, rescue_respawn_interval_secs,
+        rescue_spawn_position,
     };
     use crate::upgrades::ConditionalUpgradeEffects;
 
@@ -336,5 +347,11 @@ mod tests {
         let mercy_duration = effective_rescue_duration(base, Some(&mercy_effects));
         assert!((default_duration - 4.0).abs() < 0.001);
         assert!((mercy_duration - 2.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn rescue_spawn_pacing_defaults_are_slow_and_limited() {
+        assert!((rescue_respawn_interval_secs() - 20.0).abs() < 0.001);
+        assert_eq!(rescue_max_active(), 6);
     }
 }
