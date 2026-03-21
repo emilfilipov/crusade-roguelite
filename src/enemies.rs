@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 
 use crate::data::{GameData, WavesConfigFile};
+use crate::formation::{ActiveFormation, active_formation_config, formation_contains_position};
 use crate::map::{MapBounds, playable_bounds};
 use crate::model::{
     Armor, AttackCooldown, AttackProfile, ColliderRadius, CommanderUnit, EnemyUnit, FriendlyUnit,
@@ -53,6 +54,12 @@ const WAVE_DURATION_SECS: f32 = 30.0;
 pub const MAX_WAVES: u32 = 100;
 const STOP_FACTOR: f32 = 0.82;
 const RESUME_FACTOR: f32 = 0.98;
+const ENEMY_INSIDE_FORMATION_PADDING_SLOTS: f32 = 0.35;
+const ENEMY_FORMATION_OVERFLOW_REPEL_SPEED: f32 = 280.0;
+const INSIDE_ENEMY_CAP_PERIMETER_FACTOR: f32 = 0.65;
+const INSIDE_ENEMY_CAP_RECRUIT_BONUS_FACTOR: f32 = 0.04;
+const INSIDE_ENEMY_CAP_MIN: usize = 4;
+const INSIDE_ENEMY_CAP_MAX: usize = 96;
 const WAVE_UNITS_MULTIPLIER: f32 = 2.0;
 const MAX_ENEMIES_PER_WAVE: f32 = 1000.0;
 const POST_SCRIPTED_WAVE_COUNT_GROWTH: f32 = 1.18;
@@ -76,6 +83,7 @@ impl Plugin for EnemyPlugin {
                     spawn_waves,
                     spawn_pending_enemy_batches,
                     enemy_chase_targets,
+                    repel_enemy_overflow_from_formation,
                     update_bandit_visual_states,
                 )
                     .chain()
@@ -423,6 +431,172 @@ fn enemy_chase_targets(
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+struct InsideEnemySample {
+    entity: Entity,
+    position: Vec2,
+    distance_sq: f32,
+}
+
+#[allow(clippy::type_complexity)]
+fn repel_enemy_overflow_from_formation(
+    time: Res<Time>,
+    data: Res<GameData>,
+    active_formation: Res<ActiveFormation>,
+    commanders: Query<&Transform, With<CommanderUnit>>,
+    recruits: Query<Entity, (With<FriendlyUnit>, Without<CommanderUnit>)>,
+    mut enemies: Query<(Entity, &mut Transform), (With<EnemyUnit>, Without<CommanderUnit>)>,
+) {
+    let dt = time.delta_seconds();
+    if dt <= 0.0 {
+        return;
+    }
+    let Ok(commander_transform) = commanders.get_single() else {
+        return;
+    };
+    let recruit_count = recruits.iter().count();
+    if recruit_count == 0 {
+        return;
+    }
+    let commander_position = commander_transform.translation.truncate();
+    let formation_cfg = active_formation_config(&data, *active_formation);
+    let slot_spacing = formation_cfg.slot_spacing;
+    if slot_spacing <= 0.0 {
+        return;
+    }
+
+    let inside_cap = max_inside_enemy_count_for_formation(recruit_count);
+    let mut inside_samples = Vec::new();
+    for (entity, transform) in &mut enemies {
+        let enemy_position = transform.translation.truncate();
+        if formation_contains_position(
+            *active_formation,
+            commander_position,
+            enemy_position,
+            recruit_count,
+            slot_spacing,
+            ENEMY_INSIDE_FORMATION_PADDING_SLOTS,
+        ) {
+            inside_samples.push(InsideEnemySample {
+                entity,
+                position: enemy_position,
+                distance_sq: commander_position.distance_squared(enemy_position),
+            });
+        }
+    }
+    if inside_samples.len() <= inside_cap {
+        return;
+    }
+
+    let distances: Vec<f32> = inside_samples
+        .iter()
+        .map(|sample| sample.distance_sq)
+        .collect();
+    let overflow_indices = overflow_indices_by_distance(&distances, inside_cap);
+    let max_step = ENEMY_FORMATION_OVERFLOW_REPEL_SPEED * dt;
+    for overflow_index in overflow_indices {
+        let sample = inside_samples[overflow_index];
+        let target = formation_perimeter_target(
+            *active_formation,
+            commander_position,
+            sample.position,
+            recruit_count,
+            slot_spacing,
+        );
+        if let Ok((_, mut transform)) = enemies.get_mut(sample.entity) {
+            let current = transform.translation.truncate();
+            let to_target = target - current;
+            let distance = to_target.length();
+            if distance <= f32::EPSILON {
+                continue;
+            }
+            let step = to_target.normalize() * distance.min(max_step);
+            transform.translation.x += step.x;
+            transform.translation.y += step.y;
+        }
+    }
+}
+
+pub fn max_inside_enemy_count_for_formation(recruit_count: usize) -> usize {
+    if recruit_count == 0 {
+        return 0;
+    }
+    let side = ((recruit_count + 1) as f32).sqrt().ceil();
+    let perimeter_slots = (side * 4.0).max(4.0);
+    let recruit_bonus = (recruit_count as f32 * INSIDE_ENEMY_CAP_RECRUIT_BONUS_FACTOR).floor();
+    ((perimeter_slots * INSIDE_ENEMY_CAP_PERIMETER_FACTOR) + recruit_bonus)
+        .round()
+        .clamp(INSIDE_ENEMY_CAP_MIN as f32, INSIDE_ENEMY_CAP_MAX as f32) as usize
+}
+
+pub fn overflow_indices_by_distance(distances_sq: &[f32], cap: usize) -> Vec<usize> {
+    if distances_sq.len() <= cap {
+        return Vec::new();
+    }
+    let mut sorted: Vec<(usize, f32)> = distances_sq.iter().copied().enumerate().collect();
+    sorted.sort_by(|a, b| {
+        a.1.partial_cmp(&b.1)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.0.cmp(&b.0))
+    });
+    sorted
+        .into_iter()
+        .skip(cap)
+        .map(|(index, _)| index)
+        .collect()
+}
+
+pub fn formation_perimeter_target(
+    active_formation: ActiveFormation,
+    commander_position: Vec2,
+    enemy_position: Vec2,
+    recruit_count: usize,
+    slot_spacing: f32,
+) -> Vec2 {
+    if recruit_count == 0 || slot_spacing <= 0.0 {
+        return enemy_position;
+    }
+    let half_extent = formation_half_extent(
+        recruit_count,
+        slot_spacing,
+        ENEMY_INSIDE_FORMATION_PADDING_SLOTS,
+    );
+    let delta = enemy_position - commander_position;
+    let local = match active_formation {
+        ActiveFormation::Square => project_to_square_perimeter(delta, half_extent),
+        ActiveFormation::Diamond => project_to_diamond_perimeter(delta, half_extent),
+    };
+    commander_position + local
+}
+
+fn formation_half_extent(recruit_count: usize, slot_spacing: f32, padding_slots: f32) -> f32 {
+    let side = ((recruit_count + 1) as f32).sqrt().ceil();
+    ((side - 1.0) * 0.5 + padding_slots) * slot_spacing
+}
+
+fn project_to_square_perimeter(delta: Vec2, half_extent: f32) -> Vec2 {
+    if half_extent <= 0.0 {
+        return delta;
+    }
+    let dominant = delta.x.abs().max(delta.y.abs());
+    if dominant <= f32::EPSILON {
+        return Vec2::new(half_extent, 0.0);
+    }
+    delta * (half_extent / dominant)
+}
+
+fn project_to_diamond_perimeter(delta: Vec2, half_extent: f32) -> Vec2 {
+    let diamond_radius = half_extent * std::f32::consts::SQRT_2;
+    if diamond_radius <= 0.0 {
+        return delta;
+    }
+    let l1 = delta.x.abs() + delta.y.abs();
+    if l1 <= f32::EPSILON {
+        return Vec2::new(diamond_radius, 0.0);
+    }
+    delta * (diamond_radius / l1)
+}
+
 pub fn should_move_towards_target(
     was_moving: bool,
     distance_to_target: f32,
@@ -549,9 +723,11 @@ mod tests {
     use crate::enemies::{
         BanditVisualState, batch_interval_secs, batch_size_for_wave, chase_step_distance,
         chase_target_positions, choose_nearest, decide_bandit_visual_state, enemy_move_speed,
-        random_spawn_position, should_move_towards_target, units_per_second_for_wave,
-        wave_duration_secs, wave_stat_multiplier,
+        formation_perimeter_target, max_inside_enemy_count_for_formation,
+        overflow_indices_by_distance, random_spawn_position, should_move_towards_target,
+        units_per_second_for_wave, wave_duration_secs, wave_stat_multiplier,
     };
+    use crate::formation::ActiveFormation;
     use crate::map::MapBounds;
 
     #[test]
@@ -631,6 +807,52 @@ mod tests {
         };
         let rate = units_per_second_for_wave(&config, 1);
         assert!((rate - (1000.0 / 30.0)).abs() < 0.001);
+    }
+
+    #[test]
+    fn inside_formation_cap_scales_with_roster_size() {
+        let small = max_inside_enemy_count_for_formation(4);
+        let medium = max_inside_enemy_count_for_formation(32);
+        let large = max_inside_enemy_count_for_formation(180);
+        assert!(small >= 4);
+        assert!(medium > small);
+        assert!(large >= medium);
+    }
+
+    #[test]
+    fn overflow_selection_respects_cap_and_distance_order() {
+        let overflow = overflow_indices_by_distance(&[16.0, 4.0, 9.0, 1.0, 25.0], 2);
+        assert_eq!(overflow.len(), 3);
+        assert!(overflow.contains(&0));
+        assert!(overflow.contains(&2));
+        assert!(overflow.contains(&4));
+    }
+
+    #[test]
+    fn square_perimeter_target_projects_to_boundary() {
+        let target = formation_perimeter_target(
+            ActiveFormation::Square,
+            Vec2::ZERO,
+            Vec2::new(10.0, 5.0),
+            16,
+            30.0,
+        );
+        assert!(target.x.abs() > target.y.abs());
+        assert!(target.x.abs() > 20.0);
+    }
+
+    #[test]
+    fn diamond_perimeter_target_projects_to_boundary() {
+        let target = formation_perimeter_target(
+            ActiveFormation::Diamond,
+            Vec2::ZERO,
+            Vec2::new(7.0, 4.0),
+            16,
+            30.0,
+        );
+        let diamond_radius = ((16.0f32 + 1.0).sqrt().ceil() - 1.0) * 0.5 + 0.35;
+        let expected = diamond_radius * 30.0 * std::f32::consts::SQRT_2;
+        assert!(((target.x.abs() + target.y.abs()) - expected).abs() < 0.2);
     }
 
     #[test]

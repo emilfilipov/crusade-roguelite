@@ -211,7 +211,7 @@
   - `docs/SYSTEMS_REFERENCE.md`
 
 ### CRU-068 - Formation Footprint Occupancy Cap + Perimeter Repel
-- Status: `TODO`
+- Status: `DONE`
 - Type: `Gameplay`
 - Priority: `P0`
 - Depends on: `CRU-067`

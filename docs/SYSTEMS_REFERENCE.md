@@ -408,6 +408,14 @@ Friendly combined outgoing multiplier has lower clamp:
 - Formula:
   - `multiplier = clamp(1.0 - enemy_count * 0.04, 0.5, 1.0)`
 
+### Formation Footprint Occupancy Cap + Repel (`src/enemies.rs`)
+- Enemies allowed inside the active formation footprint are capped dynamically by retinue size.
+- Cap model:
+  - derives from estimated formation perimeter slots + small recruit-count bonus
+  - clamped to `[4, 96]`
+- Overflow enemies are sorted deterministically by distance-to-commander and redirected toward the formation perimeter projection (square/diamond-specific boundary math).
+- Repel movement is step-limited each frame for stability (`280 units/sec`).
+
 ### Diamond Formation Combat/Movement Effects
 - Formation offense multiplier now has a moving-state modifier:
   - `effective_offense = offense_multiplier * offense_while_moving_multiplier` when commander is moving.
@@ -578,6 +586,7 @@ Friendly combined outgoing multiplier has lower clamp:
 - queued enemy batch spawning with wave-scaled batch sizes/intervals
 - pseudo-random spawn points within playable map bounds
 - chase AI (retinue-prioritized targeting)
+- active-formation inside-footprint cap with perimeter repel for overflow enemies
 - visual state texture mapping
 
 ### `combat.rs`
