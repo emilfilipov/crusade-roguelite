@@ -13,7 +13,7 @@ use crate::formation::{ActiveFormation, FormationModifiers, FormationSkillBar, S
 use crate::inventory::{EquipmentUnitType, InventoryState};
 use crate::map::MapBounds;
 use crate::model::{
-    CommanderUnit, DamageTextEvent, FrameRateCap, FriendlyUnit, GameState, Health,
+    CommanderUnit, DamageTextEvent, EnemyUnit, FrameRateCap, FriendlyUnit, GameState, Health,
     MatchSetupSelection, Morale, PlayerFaction, RescuableUnit, RunModalAction,
     RunModalRequestEvent, RunModalScreen, RunModalState, RunSession, StartRunEvent, Team, Unit,
     UnitKind, level_cap_from_locked_budget,
@@ -45,6 +45,7 @@ pub struct HudSnapshot {
     pub wave_index: usize,
     pub current_wave: u32,
     pub elapsed_seconds: f32,
+    pub alive_enemy_count: usize,
     pub average_morale_ratio: f32,
     pub progression_lock_reason: Option<String>,
 }
@@ -62,6 +63,7 @@ impl Default for HudSnapshot {
             wave_index: 0,
             current_wave: 1,
             elapsed_seconds: 0.0,
+            alive_enemy_count: 0,
             average_morale_ratio: 1.0,
             progression_lock_reason: None,
         }
@@ -199,6 +201,9 @@ struct WaveHudText;
 
 #[derive(Component, Clone, Copy, Debug)]
 struct TimeHudText;
+
+#[derive(Component, Clone, Copy, Debug)]
+struct EnemyCountHudText;
 
 #[derive(Component, Clone, Copy, Debug)]
 struct CommanderLevelHudText;
@@ -1715,6 +1720,17 @@ fn spawn_in_run_hud(
                                 "00:00",
                                 TextStyle {
                                     font_size: 20.0,
+                                    color: HUD_TEXT_COLOR,
+                                    ..default()
+                                },
+                            ),
+                        ));
+                        left.spawn((
+                            EnemyCountHudText,
+                            TextBundle::from_section(
+                                "Enemies: 0",
+                                TextStyle {
+                                    font_size: 18.0,
                                     color: HUD_TEXT_COLOR,
                                     ..default()
                                 },
@@ -4968,6 +4984,7 @@ fn refresh_hud_snapshot(
     waves: Res<WaveRuntime>,
     run_session: Res<RunSession>,
     friendlies: Query<&Morale, With<FriendlyUnit>>,
+    enemies: Query<(), With<EnemyUnit>>,
     mut hud: ResMut<HudSnapshot>,
 ) {
     let morale_ratios: Vec<f32> = friendlies.iter().map(|morale| morale.ratio()).collect();
@@ -4982,6 +4999,7 @@ fn refresh_hud_snapshot(
         wave_index: waves.current_wave.saturating_sub(1) as usize,
         current_wave: displayed_wave_number(&waves),
         elapsed_seconds: run_session.survived_seconds,
+        alive_enemy_count: enemies.iter().len(),
         average_morale_ratio: average_morale_ratio(&morale_ratios),
         progression_lock_reason: progression_feedback.message.clone(),
     };
@@ -4993,6 +5011,7 @@ fn update_in_run_hud(
     mut texts: ParamSet<(
         Query<&mut Text, With<WaveHudText>>,
         Query<&mut Text, With<TimeHudText>>,
+        Query<&mut Text, With<EnemyCountHudText>>,
         Query<&mut Text, With<CommanderLevelHudText>>,
     )>,
     mut bar_styles: ParamSet<(
@@ -5008,6 +5027,9 @@ fn update_in_run_hud(
         text.sections[0].value = format_elapsed_mm_ss(hud.elapsed_seconds);
     }
     if let Ok(mut text) = texts.p2().get_single_mut() {
+        text.sections[0].value = format_enemy_count(hud.alive_enemy_count);
+    }
+    if let Ok(mut text) = texts.p3().get_single_mut() {
         text.sections[0].value = format_commander_level_text(
             hud.level,
             hud.allowed_max_level,
@@ -5318,6 +5340,10 @@ pub fn format_elapsed_mm_ss(seconds: f32) -> String {
     format!("{minutes:02}:{secs:02}")
 }
 
+pub fn format_enemy_count(count: usize) -> String {
+    format!("Enemies: {count}")
+}
+
 pub fn conditional_upgrade_hud_status_text(
     status: &ConditionalUpgradeStatus,
     max_priest_blessing_secs: f32,
@@ -5588,10 +5614,10 @@ mod tests {
         can_select_match_setup_faction, conditional_upgrade_hud_status_text, displayed_wave_number,
         find_skill_section, find_stats_row, floating_damage_text_alpha,
         floating_damage_text_is_expired, floating_damage_text_spawn_data,
-        format_commander_level_text, format_elapsed_mm_ss, frame_cap_label, health_bar_fill_width,
-        main_menu_dispatch, max_affordable_promotions, modal_action_for_utility_button,
-        requested_promotion_count, rescue_progress_ratio, responsive_ui_scale_for_resolution,
-        world_to_minimap_pos,
+        format_commander_level_text, format_elapsed_mm_ss, format_enemy_count, frame_cap_label,
+        health_bar_fill_width, main_menu_dispatch, max_affordable_promotions,
+        modal_action_for_utility_button, requested_promotion_count, rescue_progress_ratio,
+        responsive_ui_scale_for_resolution, world_to_minimap_pos,
     };
     use crate::upgrades::{
         ConditionalUpgradeStatus, ConditionalUpgradeStatusEntry, Progression, SkillBookEntry,
@@ -5611,6 +5637,7 @@ mod tests {
             wave_index: 2,
             current_wave: 2,
             elapsed_seconds: 61.0,
+            alive_enemy_count: 37,
             average_morale_ratio: 0.74,
             progression_lock_reason: Some("blocked by budget".to_string()),
         };
@@ -5696,6 +5723,12 @@ mod tests {
         assert_eq!(format_elapsed_mm_ss(0.0), "00:00");
         assert_eq!(format_elapsed_mm_ss(65.3), "01:05");
         assert_eq!(format_elapsed_mm_ss(600.9), "10:00");
+    }
+
+    #[test]
+    fn enemy_count_formats_as_counter_text() {
+        assert_eq!(format_enemy_count(0), "Enemies: 0");
+        assert_eq!(format_enemy_count(128), "Enemies: 128");
     }
 
     #[test]
