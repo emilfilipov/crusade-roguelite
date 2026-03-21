@@ -25,6 +25,22 @@
       "weight_exponent": 2.0
     },
     {
+      "id": "crit_chance_up",
+      "kind": "crit_chance",
+      "min_value": 0.01,
+      "max_value": 0.05,
+      "value_step": 0.01,
+      "weight_exponent": 2.1
+    },
+    {
+      "id": "crit_damage_up",
+      "kind": "crit_damage",
+      "min_value": 0.10,
+      "max_value": 0.50,
+      "value_step": 0.05,
+      "weight_exponent": 2.2
+    },
+    {
       "id": "armor_up",
       "kind": "armor",
       "min_value": 0.5,

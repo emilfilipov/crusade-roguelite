@@ -26,6 +26,35 @@ const FORMATION_BOUNDS_PADDING_SLOTS: f32 = 0.35;
 const RANGED_PROJECTILE_HIT_RADIUS: f32 = 10.0;
 const RANGED_PROJECTILE_RENDER_SIZE: f32 = 16.0;
 const RANGED_PROJECTILE_RENDER_Z: f32 = 28.0;
+const DEFAULT_CRIT_DAMAGE_MULTIPLIER: f32 = 1.5;
+const MAX_CRIT_CHANCE: f32 = 0.95;
+
+#[derive(Clone, Copy, Debug)]
+struct CombatRngState {
+    state: u64,
+}
+
+impl Default for CombatRngState {
+    fn default() -> Self {
+        Self {
+            state: 0xC0DE_A710_C001_BA11_u64,
+        }
+    }
+}
+
+impl CombatRngState {
+    fn next_u32(&mut self) -> u32 {
+        self.state = self
+            .state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        (self.state >> 32) as u32
+    }
+
+    fn next_f32(&mut self) -> f32 {
+        self.next_u32() as f32 / u32::MAX as f32
+    }
+}
 
 #[derive(Component, Clone, Copy, Debug)]
 pub struct RangedAttackProfile {
@@ -113,6 +142,7 @@ fn emit_ranged_projectile_attacks(
     global_buffs: Option<Res<GlobalBuffs>>,
     conditional_effects: Option<Res<ConditionalUpgradeEffects>>,
     commander_motion: Option<Res<CommanderMotionState>>,
+    mut crit_rng: Local<CombatRngState>,
     inventory: Res<InventoryState>,
     mut ranged_attackers: Query<(
         Entity,
@@ -274,8 +304,21 @@ fn emit_ranged_projectile_attacks(
         } else {
             0.0
         };
-        let projectile_damage =
+        let mut projectile_damage =
             ((ranged_profile.damage + ranged_bonus).max(0.0) * outgoing_multiplier).max(1.0);
+        if attacker_team == Team::Friendly {
+            let crit_chance = global_buffs
+                .as_ref()
+                .map(|buff| buff.crit_chance_bonus)
+                .unwrap_or(0.0);
+            let crit_multiplier = global_buffs
+                .as_ref()
+                .map(|buff| buff.crit_damage_multiplier)
+                .unwrap_or(DEFAULT_CRIT_DAMAGE_MULTIPLIER);
+            let is_critical = roll_critical_hit(crit_chance, &mut crit_rng);
+            projectile_damage =
+                apply_critical_multiplier(projectile_damage, is_critical, crit_multiplier).max(1.0);
+        }
 
         ranged_cooldown.0.reset();
         commands.spawn((
@@ -330,6 +373,7 @@ fn emit_damage_events(
     global_buffs: Option<Res<GlobalBuffs>>,
     conditional_effects: Option<Res<ConditionalUpgradeEffects>>,
     commander_motion: Option<Res<CommanderMotionState>>,
+    mut crit_rng: Local<CombatRngState>,
     inventory: Res<InventoryState>,
     mut attackers: Query<(
         Entity,
@@ -517,11 +561,22 @@ fn emit_damage_events(
             } else {
                 0.0
             };
-            let mut damage = compute_damage(
-                (attack_profile.damage + melee_bonus).max(0.0),
-                armor,
-                outgoing_multiplier,
-            );
+            let mut outgoing_damage =
+                (attack_profile.damage + melee_bonus).max(0.0) * outgoing_multiplier;
+            if attacker_unit.team == Team::Friendly {
+                let crit_chance = global_buffs
+                    .as_ref()
+                    .map(|buff| buff.crit_chance_bonus)
+                    .unwrap_or(0.0);
+                let crit_multiplier = global_buffs
+                    .as_ref()
+                    .map(|buff| buff.crit_damage_multiplier)
+                    .unwrap_or(DEFAULT_CRIT_DAMAGE_MULTIPLIER);
+                let is_critical = roll_critical_hit(crit_chance, &mut crit_rng);
+                outgoing_damage =
+                    apply_critical_multiplier(outgoing_damage, is_critical, crit_multiplier);
+            }
+            let mut damage = (outgoing_damage - armor).max(1.0);
             let execute_threshold = conditional_effects
                 .as_deref()
                 .map(|effects| effects.execute_below_health_ratio)
@@ -610,6 +665,26 @@ pub fn effective_formation_offense_multiplier(
 
 pub fn compute_damage(base_damage: f32, armor: f32, outgoing_multiplier: f32) -> f32 {
     (base_damage * outgoing_multiplier - armor).max(1.0)
+}
+
+fn critical_hit(roll: f32, crit_chance: f32) -> bool {
+    let clamped_chance = crit_chance.clamp(0.0, MAX_CRIT_CHANCE);
+    if clamped_chance <= 0.0 {
+        return false;
+    }
+    roll.clamp(0.0, 1.0) < clamped_chance
+}
+
+fn roll_critical_hit(crit_chance: f32, rng: &mut CombatRngState) -> bool {
+    critical_hit(rng.next_f32(), crit_chance)
+}
+
+fn apply_critical_multiplier(damage: f32, is_critical: bool, crit_multiplier: f32) -> f32 {
+    if is_critical {
+        damage * crit_multiplier.max(1.0)
+    } else {
+        damage
+    }
 }
 
 pub fn should_execute_target(
@@ -766,9 +841,9 @@ mod tests {
     use bevy::prelude::{Entity, Vec2};
 
     use crate::combat::{
-        FriendlyFormationContext, commander_level_combat_multiplier, compute_damage,
-        effective_formation_offense_multiplier, enemy_target_allowed, friendly_formation_context,
-        friendly_outgoing_multiplier, inside_active_formation_bounds,
+        FriendlyFormationContext, apply_critical_multiplier, commander_level_combat_multiplier,
+        compute_damage, critical_hit, effective_formation_offense_multiplier, enemy_target_allowed,
+        friendly_formation_context, friendly_outgoing_multiplier, inside_active_formation_bounds,
         inside_formation_damage_multiplier, morale_effect_multiplier, ranged_target_in_window,
         should_execute_target,
     };
@@ -794,6 +869,20 @@ mod tests {
     fn friendly_multiplier_has_floor() {
         let multiplier = friendly_outgoing_multiplier(0.6, 0.7, 0.8, 0.9, 0.75);
         assert!((multiplier - 0.55).abs() < 0.0001);
+    }
+
+    #[test]
+    fn critical_hit_threshold_respects_roll_and_chance() {
+        assert!(critical_hit(0.19, 0.20));
+        assert!(!critical_hit(0.20, 0.20));
+        assert!(!critical_hit(0.05, 0.0));
+    }
+
+    #[test]
+    fn critical_damage_multiplier_applies_only_for_critical_hits() {
+        assert!((apply_critical_multiplier(10.0, false, 2.0) - 10.0).abs() < 0.0001);
+        assert!((apply_critical_multiplier(10.0, true, 2.0) - 20.0).abs() < 0.0001);
+        assert!((apply_critical_multiplier(10.0, true, 0.5) - 10.0).abs() < 0.0001);
     }
 
     #[test]

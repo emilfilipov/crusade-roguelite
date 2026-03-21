@@ -22,6 +22,8 @@ pub struct ArtAssets {
     pub arrow_projectile: Handle<Image>,
     pub upgrade_damage_icon: Handle<Image>,
     pub upgrade_attack_speed_icon: Handle<Image>,
+    pub upgrade_crit_chance_icon: Handle<Image>,
+    pub upgrade_crit_damage_icon: Handle<Image>,
     pub upgrade_armor_icon: Handle<Image>,
     pub upgrade_pickup_radius_icon: Handle<Image>,
     pub upgrade_aura_radius_icon: Handle<Image>,
@@ -85,6 +87,10 @@ fn load_art_assets(mut assets: ResMut<ArtAssets>, asset_server: Option<Res<Asset
         asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0107.png");
     assets.upgrade_attack_speed_icon =
         asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0062.png");
+    assets.upgrade_crit_chance_icon =
+        asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0062.png");
+    assets.upgrade_crit_damage_icon =
+        asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0107.png");
     assets.upgrade_armor_icon =
         asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0102.png");
     assets.upgrade_pickup_radius_icon =

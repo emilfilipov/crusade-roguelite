@@ -118,6 +118,14 @@ Use this for entity/component/system lookup without scanning all source files.
 - Dropped banner now uses the standard upright banner sprite for stronger in-world readability.
 - Minimap now shows dropped-banner position and rescuable-retinue positions.
 - Added one-time level-up upgrade `Encirclement Doctrine` (`formation_breach`): once acquired, enemies inside the friendly formation footprint take `+20%` damage.
+- Added critical-hit combat stats for friendlies:
+  - `crit_chance_bonus` (additive chance, clamped to 95%)
+  - `crit_damage_multiplier` (base `x1.5`, increased by upgrades)
+- Added repeatable level-up cards:
+  - `Killer Instinct` (`crit_chance`)
+  - `Deadly Precision` (`crit_damage`)
+- Stats modal now shows `Crit Chance` and `Crit Damage` bonus rows.
+- Skill Book cumulative descriptions now include crit chance and crit damage totals.
 - Removed decorative floor foliage overlay; battlefield floor now renders as pure sand tiles only.
 - Switched foliage overlay to transparent detail tile to remove opaque square artifacts on the floor.
 - Enemy waves now spawn as staggered batches at pseudo-random positions across the playable map (not border ring-only).
@@ -576,6 +584,7 @@ Friendly combined outgoing multiplier has lower clamp:
 - ranged outgoing base damage includes resolved equipment ranged bonus
 - friendly armor mitigation includes resolved equipment armor bonus
 - enemy-in-formation vulnerability check (`+20%` friendly damage when inside formation bounds)
+- friendly crit roll on melee and ranged outgoing hits (before armor mitigation)
 - damage apply + `UnitDamagedEvent` + `DamageTextEvent` (uses final applied damage, not requested pre-clamp amount)
 - death resolve + drop spawn events
 
@@ -655,6 +664,7 @@ Friendly combined outgoing multiplier has lower clamp:
 - 3-option upgrade draft cards (keyboard `1..3` and mouse click selection)
 - weighted random min/max upgrade value rolls
 - additive stacked upgrade effects
+- repeatable crit upgrades (`crit_chance`, `crit_damage`) wired into `GlobalBuffs`
 - passive commander level scaling
 - level-up full-heal sync for friendlies
 - generic conditional-upgrade ownership + typed requirement parsing/evaluation

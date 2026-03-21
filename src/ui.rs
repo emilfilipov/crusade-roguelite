@@ -440,6 +440,7 @@ const UI_REFERENCE_WIDTH: f32 = 1280.0;
 const UI_REFERENCE_HEIGHT: f32 = 720.0;
 const UI_SCALE_MIN: f32 = 0.7;
 const UI_SCALE_MAX: f32 = 3.0;
+const BASE_CRIT_DAMAGE_MULTIPLIER: f32 = 1.5;
 
 pub struct UiPlugin;
 
@@ -1682,6 +1683,8 @@ fn upgrade_icon_for(icon_kind: UpgradeCardIcon, art: &crate::visuals::ArtAssets)
     match icon_kind {
         UpgradeCardIcon::Damage => art.upgrade_damage_icon.clone(),
         UpgradeCardIcon::AttackSpeed => art.upgrade_attack_speed_icon.clone(),
+        UpgradeCardIcon::CritChance => art.upgrade_crit_chance_icon.clone(),
+        UpgradeCardIcon::CritDamage => art.upgrade_crit_damage_icon.clone(),
         UpgradeCardIcon::Armor => art.upgrade_armor_icon.clone(),
         UpgradeCardIcon::PickupRadius => art.upgrade_pickup_radius_icon.clone(),
         UpgradeCardIcon::AuraRadius => art.upgrade_aura_radius_icon.clone(),
@@ -2205,6 +2208,9 @@ fn build_stats_panel_data(
     let passive_level_percent = level.saturating_sub(1) as f32;
     let damage_upgrade_percent = (buffs.damage_multiplier - 1.0) * 100.0;
     let attack_speed_upgrade_percent = (buffs.attack_speed_multiplier - 1.0) * 100.0;
+    let crit_chance_percent = buffs.crit_chance_bonus * 100.0;
+    let crit_damage_bonus_percent =
+        (buffs.crit_damage_multiplier - BASE_CRIT_DAMAGE_MULTIPLIER) * 100.0;
     let authority_resist_percent = buffs.authority_friendly_loss_resistance * 100.0;
     let encirclement_percent = (buffs.inside_formation_damage_multiplier - 1.0) * 100.0;
 
@@ -2263,6 +2269,16 @@ fn build_stats_panel_data(
                 "Attack Speed",
                 passive_level_percent + attack_speed_upgrade_percent,
                 format_percent_bonus(passive_level_percent + attack_speed_upgrade_percent),
+            ),
+            stats_bonus_row(
+                "Crit Chance",
+                crit_chance_percent,
+                format_percent_bonus(crit_chance_percent),
+            ),
+            stats_bonus_row(
+                "Crit Damage",
+                crit_damage_bonus_percent,
+                format_percent_bonus(crit_damage_bonus_percent),
             ),
             stats_bonus_row(
                 "Armor",
@@ -5974,6 +5990,8 @@ mod tests {
             damage_multiplier: 1.15,
             armor_bonus: 3.0,
             attack_speed_multiplier: 1.20,
+            crit_chance_bonus: 0.08,
+            crit_damage_multiplier: 1.75,
             pickup_radius_bonus: 12.0,
             move_speed_bonus: 18.0,
             inside_formation_damage_multiplier: 1.0,
@@ -6005,6 +6023,10 @@ mod tests {
         assert!((hp_row.bonus_value - 7.0).abs() < 0.001);
         let damage_row = find_stats_row(&panel.rows, "Damage").expect("damage row");
         assert!(damage_row.bonus_value > 0.0);
+        let crit_chance_row = find_stats_row(&panel.rows, "Crit Chance").expect("crit chance");
+        assert!(crit_chance_row.bonus_text.contains("+8.0%"));
+        let crit_damage_row = find_stats_row(&panel.rows, "Crit Damage").expect("crit damage");
+        assert!(crit_damage_row.bonus_text.contains("+25.0%"));
         let move_row = find_stats_row(&panel.rows, "Move Speed").expect("move row");
         assert!(move_row.bonus_text.contains("+18"));
         assert!(move_row.bonus_text.contains("+8.0%"));

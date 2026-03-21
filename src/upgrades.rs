@@ -142,6 +142,8 @@ pub struct SelectUpgradeEvent {
 pub enum UpgradeCardIcon {
     Damage,
     AttackSpeed,
+    CritChance,
+    CritDamage,
     Armor,
     PickupRadius,
     AuraRadius,
@@ -515,6 +517,14 @@ pub fn skill_book_entry_cumulative_description(entry: &SkillBookEntry) -> String
             "Total army attack speed bonus: +{:.0}%.",
             (entry.total_value.max(0.0) * 100.0)
         ),
+        "crit_chance" => format!(
+            "Total critical hit chance: +{:.1}%.",
+            entry.total_value.max(0.0) * 100.0
+        ),
+        "crit_damage" => format!(
+            "Total critical hit damage bonus: +{:.0}% (base crit x1.50).",
+            entry.total_value.max(0.0) * 100.0
+        ),
         "armor" => format!(
             "Total armor bonus: +{:.1} for friendlies.",
             entry.total_value.max(0.0)
@@ -683,6 +693,8 @@ pub fn upgrade_card_icon(upgrade: &UpgradeConfig) -> UpgradeCardIcon {
     match upgrade.kind.as_str() {
         "damage" => UpgradeCardIcon::Damage,
         "attack_speed" => UpgradeCardIcon::AttackSpeed,
+        "crit_chance" => UpgradeCardIcon::CritChance,
+        "crit_damage" => UpgradeCardIcon::CritDamage,
         "armor" => UpgradeCardIcon::Armor,
         "pickup_radius" => UpgradeCardIcon::PickupRadius,
         "aura_radius" => UpgradeCardIcon::AuraRadius,
@@ -705,6 +717,8 @@ pub fn upgrade_display_title(upgrade: &UpgradeConfig) -> &'static str {
     match upgrade.kind.as_str() {
         "damage" => "Sharpened Steel",
         "attack_speed" => "Rapid Drill",
+        "crit_chance" => "Killer Instinct",
+        "crit_damage" => "Deadly Precision",
         "armor" => "Hardened Armor",
         "pickup_radius" => "Supply Reach",
         "aura_radius" => "Extended Command",
@@ -729,6 +743,14 @@ pub fn upgrade_display_description(upgrade: &UpgradeConfig) -> String {
         "damage" => format!("Increase army damage by +{:.1}%.", upgrade.value),
         "attack_speed" => format!(
             "Increase army attack speed by +{:.0}%.",
+            upgrade.value * 100.0
+        ),
+        "crit_chance" => format!(
+            "Increase critical hit chance by +{:.1}%.",
+            upgrade.value * 100.0
+        ),
+        "crit_damage" => format!(
+            "Increase critical hit damage by +{:.0}%.",
             upgrade.value * 100.0
         ),
         "armor" => format!("Add +{:.1} armor to friendlies.", upgrade.value),
@@ -774,6 +796,12 @@ fn apply_upgrade(
         }
         "attack_speed" => {
             buffs.attack_speed_multiplier += upgrade.value;
+        }
+        "crit_chance" => {
+            buffs.crit_chance_bonus = (buffs.crit_chance_bonus + upgrade.value).clamp(0.0, 0.95);
+        }
+        "crit_damage" => {
+            buffs.crit_damage_multiplier = (buffs.crit_damage_multiplier + upgrade.value).max(1.0);
         }
         "armor" => {
             buffs.armor_bonus += upgrade.value;
@@ -1380,6 +1408,30 @@ mod tests {
         assert_eq!(upgrade_card_icon(&damage_upgrade), UpgradeCardIcon::Damage);
         assert_eq!(upgrade_display_title(&damage_upgrade), "Sharpened Steel");
         assert!(upgrade_display_description(&damage_upgrade).contains("damage"));
+
+        let mut crit_chance_upgrade = upgrade("crit_chance", "crit_chance_up");
+        crit_chance_upgrade.value = 0.03;
+        assert_eq!(
+            upgrade_card_icon(&crit_chance_upgrade),
+            UpgradeCardIcon::CritChance
+        );
+        assert_eq!(
+            upgrade_display_title(&crit_chance_upgrade),
+            "Killer Instinct"
+        );
+        assert!(upgrade_display_description(&crit_chance_upgrade).contains("critical hit chance"));
+
+        let mut crit_damage_upgrade = upgrade("crit_damage", "crit_damage_up");
+        crit_damage_upgrade.value = 0.20;
+        assert_eq!(
+            upgrade_card_icon(&crit_damage_upgrade),
+            UpgradeCardIcon::CritDamage
+        );
+        assert_eq!(
+            upgrade_display_title(&crit_damage_upgrade),
+            "Deadly Precision"
+        );
+        assert!(upgrade_display_description(&crit_damage_upgrade).contains("critical hit damage"));
 
         let formation_upgrade = UpgradeConfig {
             id: "unlock_diamond".to_string(),

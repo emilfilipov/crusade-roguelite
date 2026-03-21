@@ -96,7 +96,7 @@
   - `docs/SYSTEMS_REFERENCE.md`
 
 ### CRU-063 - Critical Hit System + Upgrade Entries
-- Status: `TODO`
+- Status: `DONE`
 - Type: `Core`
 - Priority: `P0`
 - Depends on: `none`
