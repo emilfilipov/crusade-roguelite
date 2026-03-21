@@ -140,7 +140,7 @@ Use this for entity/component/system lookup without scanning all source files.
 - Fixed Windows installer asset coverage for runtime-loaded art (`assets/sprites` + `oga_ishtar` pack).
 - Switched battlefield floor to cleaner sand tile set.
 - Added visible perimeter wall ring and hard playfield confinement for units.
-- Added first minimap prototype (bottom-right HUD panel) with commander/friendly/enemy blips.
+- Added first minimap prototype (now top-right HUD panel) with commander/friendly/enemy blips.
 - Enabled `CollisionPlugin` in app wiring (enemy collision now active).
 - Added `GameOver` overlay flow with `Restart` and `Main Menu` actions.
 - Rebuilt map floor rendering into tiled desert ground.
@@ -645,12 +645,13 @@ Friendly combined outgoing multiplier has lower clamp:
 - commander aura footprint indicator (subtle world-space circle around commander)
 - world-space health bars
 - world-space floating damage text with timed rise/fade cleanup
-- bottom-right minimap prototype with periodic blip refresh
+- top-right minimap prototype with periodic blip refresh (`204px`, +20% from previous size)
   - commander/friendlies/enemies
   - XP packs (yellow)
   - wave magnet pickup symbol (cross for Christian, crescent for Muslim)
   - rescuable retinue markers
   - dropped-banner marker
+- utility action bar moved to bottom-right (swapped with minimap position)
 - bottom-center skillbar (10 slots)
   - slot `1` default Square formation (active)
   - key labels `1..0`

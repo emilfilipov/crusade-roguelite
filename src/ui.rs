@@ -412,7 +412,7 @@ const HUD_TEXT_COLOR: Color = Color::srgb(0.97, 0.95, 0.9);
 const HUD_BAR_BG: Color = Color::srgba(0.12, 0.1, 0.08, 0.8);
 const HUD_BAR_FILL: Color = Color::srgb(0.88, 0.72, 0.28);
 const HUD_VERTICAL_BAR_BG: Color = Color::srgba(0.08, 0.07, 0.06, 0.85);
-const MINIMAP_SIZE: f32 = 170.0;
+const MINIMAP_SIZE: f32 = 204.0;
 const MINIMAP_BORDER: Color = Color::srgb(0.84, 0.76, 0.62);
 const MINIMAP_BG: Color = Color::srgba(0.08, 0.07, 0.06, 0.75);
 const MINIMAP_COMMANDER_COLOR: Color = Color::srgb(1.0, 0.96, 0.78);
@@ -3734,7 +3734,7 @@ fn spawn_minimap(parent: &mut ChildBuilder) {
             style: Style {
                 position_type: PositionType::Absolute,
                 right: Val::Px(12.0),
-                bottom: Val::Px(12.0),
+                top: Val::Px(12.0),
                 width: Val::Px(MINIMAP_SIZE),
                 height: Val::Px(MINIMAP_SIZE),
                 border: UiRect::all(Val::Px(1.0)),
@@ -3872,7 +3872,7 @@ fn spawn_utility_bar(parent: &mut ChildBuilder, art: &crate::visuals::ArtAssets)
                 style: Style {
                     position_type: PositionType::Absolute,
                     right: Val::Px(12.0),
-                    top: Val::Px(12.0),
+                    bottom: Val::Px(12.0),
                     flex_direction: FlexDirection::Row,
                     align_items: AlignItems::Center,
                     column_gap: Val::Px(4.0),

@@ -280,7 +280,7 @@
   - `docs/ASSET_SOURCES.md` (if new assets are added)
 
 ### CRU-071 - Minimap + Utility Bar Layout Swap and Minimap +20%
-- Status: `TODO`
+- Status: `DONE`
 - Type: `UI`
 - Priority: `P1`
 - Depends on: `none`
