@@ -1976,7 +1976,7 @@ fn spawn_run_modal_overlay(
                         style: Style {
                             width: Val::Percent(100.0),
                             min_height: Val::Px(38.0),
-                            justify_content: JustifyContent::SpaceBetween,
+                            justify_content: JustifyContent::Center,
                             align_items: AlignItems::Center,
                             flex_direction: FlexDirection::Row,
                             ..default()
@@ -1993,33 +1993,6 @@ fn spawn_run_modal_overlay(
                                 ..default()
                             },
                         ));
-                        header
-                            .spawn((
-                                ButtonBundle {
-                                    style: Style {
-                                        width: Val::Px(40.0),
-                                        height: Val::Px(40.0),
-                                        justify_content: JustifyContent::Center,
-                                        align_items: AlignItems::Center,
-                                        border: UiRect::all(Val::Px(1.0)),
-                                        ..default()
-                                    },
-                                    background_color: BackgroundColor(Color::NONE),
-                                    border_color: BorderColor(Color::NONE),
-                                    ..default()
-                                },
-                                RunModalButtonAction::Close,
-                            ))
-                            .with_children(|button| {
-                                button.spawn(TextBundle::from_section(
-                                    "X",
-                                    TextStyle {
-                                        font_size: 22.0,
-                                        color: MENU_BUTTON_TEXT_NORMAL,
-                                        ..default()
-                                    },
-                                ));
-                            });
                     });
                 if let Some(subtitle) = subtitle {
                     panel.spawn(TextBundle {
@@ -2054,6 +2027,37 @@ fn spawn_run_modal_overlay(
                 if matches!(screen, RunModalScreen::UnitUpgrade) {
                     spawn_unit_upgrade_modal_sections(panel, unit_upgrade_panel);
                 }
+                panel
+                    .spawn((
+                        ButtonBundle {
+                            style: Style {
+                                width: Val::Px(154.0),
+                                height: Val::Px(40.0),
+                                border: UiRect::all(Val::Px(1.0)),
+                                justify_content: JustifyContent::Center,
+                                align_items: AlignItems::Center,
+                                margin: UiRect {
+                                    top: Val::Px(6.0),
+                                    ..default()
+                                },
+                                ..default()
+                            },
+                            background_color: BackgroundColor(Color::NONE),
+                            border_color: BorderColor(Color::NONE),
+                            ..default()
+                        },
+                        RunModalButtonAction::Close,
+                    ))
+                    .with_children(|button| {
+                        button.spawn(TextBundle::from_section(
+                            "CLOSE",
+                            TextStyle {
+                                font_size: 18.0,
+                                color: MENU_BUTTON_TEXT_NORMAL,
+                                ..default()
+                            },
+                        ));
+                    });
             });
         });
 }
@@ -2252,7 +2256,7 @@ fn spawn_stats_modal_sections(parent: &mut ChildBuilder, stats: &StatsPanelData)
         .spawn(NodeBundle {
             style: Style {
                 width: Val::Percent(100.0),
-                min_height: Val::Px(410.0),
+                min_height: Val::Px(360.0),
                 flex_direction: FlexDirection::Row,
                 column_gap: Val::Px(10.0),
                 ..default()
@@ -2293,7 +2297,7 @@ fn spawn_stats_modal_sections(parent: &mut ChildBuilder, stats: &StatsPanelData)
                             spawn_stats_cell(header, "Stat", 54.0, MENU_BUTTON_TEXT_HOVERED);
                             spawn_stats_cell(header, "Bonus", 46.0, MENU_BUTTON_TEXT_HOVERED);
                         });
-                    spawn_scrollable_panel(table, 322.0, |rows| {
+                    spawn_scrollable_panel(table, 272.0, |rows| {
                         for row in &stats.rows {
                             rows.spawn(NodeBundle {
                                 style: Style {
@@ -2344,7 +2348,7 @@ fn spawn_stats_modal_sections(parent: &mut ChildBuilder, stats: &StatsPanelData)
                             ..default()
                         },
                     ));
-                    spawn_scrollable_panel(buffs_col, 330.0, |buffs_list| {
+                    spawn_scrollable_panel(buffs_col, 280.0, |buffs_list| {
                         if stats.active_buffs.is_empty() {
                             buffs_list.spawn(TextBundle::from_section(
                                 "No active buffs.",
