@@ -542,6 +542,10 @@ pub fn skill_book_entry_cumulative_description(entry: &SkillBookEntry) -> String
             entry.total_value.max(0.0) * HOSPITALIER_COHESION_REGEN_SCALE,
             entry.total_value.max(0.0) * HOSPITALIER_MORALE_REGEN_SCALE
         ),
+        "formation_breach" => format!(
+            "Enemies inside formation take +{:.0}% damage.",
+            entry.total_value.max(0.0)
+        ),
         "mob_fury" | "mob_justice" | "mob_mercy" | "unlock_formation" => entry.description.clone(),
         _ => entry.description.clone(),
     }
@@ -685,6 +689,7 @@ pub fn upgrade_card_icon(upgrade: &UpgradeConfig) -> UpgradeCardIcon {
         "authority_aura" => UpgradeCardIcon::AuthorityAura,
         "move_speed" => UpgradeCardIcon::MoveSpeed,
         "hospitalier_aura" => UpgradeCardIcon::HospitalierAura,
+        "formation_breach" => UpgradeCardIcon::FormationSquare,
         "mob_fury" => UpgradeCardIcon::MobFury,
         "mob_justice" => UpgradeCardIcon::MobJustice,
         "mob_mercy" => UpgradeCardIcon::MobMercy,
@@ -706,6 +711,7 @@ pub fn upgrade_display_title(upgrade: &UpgradeConfig) -> &'static str {
         "authority_aura" => "Authority Aura",
         "move_speed" => "Forced March",
         "hospitalier_aura" => "Hospitalier Aura",
+        "formation_breach" => "Encirclement Doctrine",
         "mob_fury" => "Mob's Fury",
         "mob_justice" => "Mob's Justice",
         "mob_mercy" => "Mob's Mercy",
@@ -739,6 +745,10 @@ pub fn upgrade_display_description(upgrade: &UpgradeConfig) -> String {
             upgrade.value,
             upgrade.value * HOSPITALIER_COHESION_REGEN_SCALE,
             upgrade.value * HOSPITALIER_MORALE_REGEN_SCALE
+        ),
+        "formation_breach" => format!(
+            "Enemies inside your active formation footprint take +{:.0}% damage.",
+            upgrade.value
         ),
         "mob_fury" => "If tier-0 share requirement is met, friendlies become immune to morale/cohesion loss and gain bonus damage, attack speed, and movement speed.".to_string(),
         "mob_justice" => "If tier-0 share requirement is met, hits execute enemies below 10% HP.".to_string(),
@@ -788,6 +798,11 @@ fn apply_upgrade(
                 upgrade.value * HOSPITALIER_COHESION_REGEN_SCALE;
             buffs.hospitalier_morale_regen_per_sec +=
                 upgrade.value * HOSPITALIER_MORALE_REGEN_SCALE;
+        }
+        "formation_breach" => {
+            buffs.inside_formation_damage_multiplier = buffs
+                .inside_formation_damage_multiplier
+                .max(1.0 + upgrade.value * 0.01);
         }
         "unlock_formation" => {
             if let Some(formation) = upgrade
@@ -1185,6 +1200,32 @@ mod tests {
         buffs.move_speed_bonus += 5.0;
         buffs.move_speed_bonus += 3.0;
         assert!((buffs.move_speed_bonus - 8.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn formation_breach_upgrade_enables_inside_formation_damage_bonus() {
+        let mut buffs = GlobalBuffs::default();
+        let mut conditional = super::ConditionalUpgradeOwnership::default();
+        let mut skillbar = FormationSkillBar::default();
+        let upgrade = UpgradeConfig {
+            id: "encirclement_doctrine".to_string(),
+            kind: "formation_breach".to_string(),
+            value: 20.0,
+            min_value: None,
+            max_value: None,
+            value_step: None,
+            weight_exponent: None,
+            one_time: true,
+            adds_to_skillbar: false,
+            formation_id: None,
+            requirement_type: None,
+            requirement_min_tier0_share: None,
+            requirement_active_formation: None,
+            requirement_map_tag: None,
+        };
+
+        super::apply_upgrade(&upgrade, &mut buffs, &mut conditional, &mut skillbar);
+        assert!((buffs.inside_formation_damage_multiplier - 1.2).abs() < 0.001);
     }
 
     #[test]

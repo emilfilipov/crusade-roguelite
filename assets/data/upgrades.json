@@ -73,6 +73,12 @@
       "weight_exponent": 2.1
     },
     {
+      "id": "encirclement_doctrine",
+      "kind": "formation_breach",
+      "value": 20.0,
+      "one_time": true
+    },
+    {
       "id": "mob_fury",
       "kind": "mob_fury",
       "value": 1.0,

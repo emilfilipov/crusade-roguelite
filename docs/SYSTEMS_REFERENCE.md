@@ -12,11 +12,14 @@ Use this for entity/component/system lookup without scanning all source files.
 - Added pause-state `Escape` behavior: pressing `Escape` while paused resumes the run.
 - Added modal overlay scaffold renderer that pauses in-run simulation while open.
 - Added direct close-button modal state clear path to avoid stale open overlays from UI interaction edge cases.
+- Stabilized Unit Upgrade modal close/interaction behavior by removing per-frame refresh churn from promotion feedback updates.
 - Added top-right in-run utility bar with five icon buttons mapped to the same modal requests as hotkeys.
 - Added in-run commander aura footprint gizmo for clearer aura coverage.
+- Formation slot assignment now prioritizes melee units on outer slots and ranged/support units on inner slots.
 - Added `ArchivePlugin` + `ArchiveDataset` with generated codex entries (units/enemies/skills/stats/bonuses/drops).
 - Added shared archive renderer used by both in-run `B` modal and main-menu `Bestiary` screen.
 - Added mouse-wheel scrollable sections for `Archive`/`Bestiary` and `Skill Book` to prevent clipping.
+- Stats table content in the in-run stats modal is now scrollable to prevent overflow.
 - Main menu flow now exposes:
   - `Play Offline` (opens match setup)
   - `Play Online` (disabled placeholder)
@@ -36,6 +39,12 @@ Use this for entity/component/system lookup without scanning all source files.
   - `ProgressionLockFeedback` emits reason text when XP leveling is blocked by roster costs,
   - `RosterEconomyFeedback` emits reason text when promotions are rejected by budget/path constraints,
   - Unit Upgrade modal now displays live budget and latest block reason strings.
+- Added wave-gated tier upgrade scaffolding:
+  - tier 1 unlocks at wave 11,
+  - tier 2 at wave 21,
+  - tier 3 at wave 31,
+  - tier 4 at wave 41,
+  - tier 5 at wave 51.
 - Implemented Unit Upgrade modal runtime:
   - left roster list with selectable unit source rows,
   - right promotion-grid table with promotion options and affordability columns,
@@ -48,8 +57,9 @@ Use this for entity/component/system lookup without scanning all source files.
 - Added inventory scaffold module/resource (`InventoryState`) with serializable bag/equipment setup model.
 - Inventory modal now renders:
   - bag drops as 1-item-per-slot grid,
-  - separate 1x3 equipment rows for commander and each unit tier (`Tier 0..5`).
-- Commander slots: `Banner`, `Instrument`, `Chant`; unit-tier slots: `Melee Weapon`, `Ranged Weapon`, `Armor`.
+  - separate equipment rows for commander and each unit tier (`Tier 0..5`).
+- Commander slots: `Banner`, `Instrument`, `Chant`, `Symbol of Power`; unit-tier slots: `Melee`, `Ranged`, `Armor`, `Banner`.
+- Backpack viewport is now `5x6` slots.
 - Stats modal now renders a table (`Stat | Base | Bonus | Final`) with color-coded bonuses (green positive, red negative).
 - Skill Book modal now uses structured upgrade records with:
   - category grouping (formations/auras/combat/utility)
@@ -107,7 +117,7 @@ Use this for entity/component/system lookup without scanning all source files.
 - Raised banner follow offset so it renders visibly behind/above the commander during movement.
 - Dropped banner now uses the standard upright banner sprite for stronger in-world readability.
 - Minimap now shows dropped-banner position and rescuable-retinue positions.
-- Added melee-composition incentive: enemies inside the friendly formation footprint take `+20%` damage.
+- Added one-time level-up upgrade `Encirclement Doctrine` (`formation_breach`): once acquired, enemies inside the friendly formation footprint take `+20%` damage.
 - Removed decorative floor foliage overlay; battlefield floor now renders as pure sand tiles only.
 - Switched foliage overlay to transparent detail tile to remove opaque square artifacts on the floor.
 - Enemy waves now spawn as staggered batches at pseudo-random positions across the playable map (not border ring-only).
@@ -261,6 +271,7 @@ Procedural continuation:
 
 ### `upgrades.json`
 - `unlock_formation_diamond` (`one_time`, `adds_to_skillbar`, `formation_id=diamond`)
+- `encirclement_doctrine` (`kind=formation_breach`, `one_time`, grants inside-formation damage bonus)
 - `damage`
 - `attack_speed`
 - `armor`
@@ -372,11 +383,12 @@ Friendly combined outgoing multiplier has lower clamp:
 - minimum `0.55`
 
 ### Enemy-In-Formation Vulnerability Bonus (`src/combat.rs`)
-- If an enemy is inside the friendly square-formation footprint, friendly outgoing damage gets multiplier `1.2`.
+- Base state: no inside-formation vulnerability bonus is active.
+- After the one-time upgrade `Encirclement Doctrine` is acquired, enemies inside the friendly formation footprint take multiplier `1.2` from friendly outgoing damage.
 - Formation footprint is approximated from:
   - commander position
   - current recruit count
-  - square slot spacing (`formations.square.slot_spacing`)
+  - active formation slot spacing
 - If commander has no recruits, bonus does not apply.
 
 ### Movement Slowdown From Enemies Inside Formation (`src/squad.rs`)
@@ -613,12 +625,13 @@ Friendly combined outgoing multiplier has lower clamp:
   - `Unit Upgrade`
 - inventory modal content:
   - bag drops grid (1 item = 1 slot, with empty placeholders)
-  - fixed 5x5 backpack viewport (first 25 slots shown in-grid)
+  - fixed 5x6 backpack viewport (first 30 slots shown in-grid)
   - equipment panel with commander + unit tier rows using short labels (`C`, `T0..T5`)
-  - commander slots: `Banner`, `Instrument`, `Chant`
-  - unit-tier slots: `Melee`, `Ranged`, `Armor`
+  - commander slots: `Banner`, `Instrument`, `Chant`, `Symbol of Power`
+  - unit-tier slots: `Melee`, `Ranged`, `Armor`, `Banner`
 - stats modal content:
   - table layout (`Stat | Base | Bonus | Final`)
+  - table rows are rendered in a scrollable viewport
   - `Unit HP` row is bonus-only (`Base` and `Final` show `-`)
   - bonus color coding (green positive, red negative)
   - separate `Active Buffs` column for formation/auras/conditional effects/priest blessing

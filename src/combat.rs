@@ -22,7 +22,6 @@ pub const MIN_FRIENDLY_COMBAT_MULTIPLIER: f32 = 0.55;
 const LOW_MORALE_THRESHOLD: f32 = 0.5;
 const LOW_MORALE_MIN_MULTIPLIER: f32 = 0.75;
 const ENEMY_DROP_PICKUP_DELAY_SECS: f32 = 0.9;
-const INSIDE_FORMATION_DAMAGE_MULTIPLIER: f32 = 1.2;
 const FORMATION_BOUNDS_PADDING_SLOTS: f32 = 0.35;
 const RANGED_PROJECTILE_HIT_RADIUS: f32 = 10.0;
 const RANGED_PROJECTILE_RENDER_SIZE: f32 = 16.0;
@@ -154,6 +153,10 @@ fn emit_ranged_projectile_attacks(
         .collect();
     let formation_context = friendly_formation_context(&formation_targets);
     let slot_spacing = active_formation_config(&data, *active_formation).slot_spacing;
+    let inside_formation_bonus_multiplier = global_buffs
+        .as_ref()
+        .map(|buff| buff.inside_formation_damage_multiplier)
+        .unwrap_or(1.0);
 
     for (
         _attacker_entity,
@@ -250,6 +253,7 @@ fn emit_ranged_projectile_attacks(
                 target_kind,
                 *active_formation,
                 slot_spacing,
+                inside_formation_bonus_multiplier,
             );
             base_multiplier
                 * formation_multiplier
@@ -393,6 +397,10 @@ fn emit_damage_events(
         unit.team == Team::Friendly && unit.kind != UnitKind::Commander && *health > 0.0
     });
     let formation_context = friendly_formation_context(&formation_targets);
+    let inside_formation_bonus_multiplier = global_buffs
+        .as_ref()
+        .map(|buff| buff.inside_formation_damage_multiplier)
+        .unwrap_or(1.0);
 
     for (
         _,
@@ -488,6 +496,7 @@ fn emit_damage_events(
                     target_kind,
                     *active_formation,
                     active_formation_config(&data, *active_formation).slot_spacing,
+                    inside_formation_bonus_multiplier,
                 );
                 base * inside_multiplier
                     * conditional_effects
@@ -651,10 +660,14 @@ pub fn inside_formation_damage_multiplier(
     target_kind: UnitKind,
     active_formation: ActiveFormation,
     slot_spacing: f32,
+    inside_bonus_multiplier: f32,
 ) -> f32 {
     let Some(context) = formation_context else {
         return 1.0;
     };
+    if inside_bonus_multiplier <= 1.0 {
+        return 1.0;
+    }
     if context.recruit_count == 0 || target_kind != UnitKind::EnemyBanditRaider {
         return 1.0;
     }
@@ -665,7 +678,7 @@ pub fn inside_formation_damage_multiplier(
         context.recruit_count,
         slot_spacing,
     ) {
-        INSIDE_FORMATION_DAMAGE_MULTIPLIER
+        inside_bonus_multiplier
     } else {
         1.0
     }
@@ -837,6 +850,7 @@ mod tests {
             UnitKind::EnemyBanditRaider,
             ActiveFormation::Square,
             30.0,
+            1.2,
         );
         let outside = inside_formation_damage_multiplier(
             &context,
@@ -844,9 +858,27 @@ mod tests {
             UnitKind::EnemyBanditRaider,
             ActiveFormation::Square,
             30.0,
+            1.2,
         );
         assert!((inside - 1.2).abs() < 0.0001);
         assert!((outside - 1.0).abs() < 0.0001);
+    }
+
+    #[test]
+    fn inside_formation_bonus_requires_upgrade_multiplier_above_one() {
+        let context = Some(FriendlyFormationContext {
+            commander_position: Vec2::ZERO,
+            recruit_count: 9,
+        });
+        let without_upgrade = inside_formation_damage_multiplier(
+            &context,
+            Vec2::new(20.0, 15.0),
+            UnitKind::EnemyBanditRaider,
+            ActiveFormation::Square,
+            30.0,
+            1.0,
+        );
+        assert!((without_upgrade - 1.0).abs() < 0.0001);
     }
 
     #[test]

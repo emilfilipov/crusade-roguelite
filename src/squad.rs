@@ -3,6 +3,7 @@ use bevy::prelude::*;
 use crate::banner::BannerMovementPenalty;
 use crate::combat::{RangedAttackCooldown, RangedAttackProfile};
 use crate::data::{GameData, UnitStatsConfig};
+use crate::enemies::WaveRuntime;
 use crate::formation::{
     ActiveFormation, FormationModifiers, active_formation_config, formation_contains_position,
 };
@@ -31,7 +32,7 @@ pub struct SquadRoster {
     pub casualties: u32,
 }
 
-#[derive(Resource, Clone, Copy, Debug)]
+#[derive(Resource, Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RosterEconomy {
     pub locked_levels: u32,
     pub allowed_max_level: u32,
@@ -56,7 +57,7 @@ impl Default for RosterEconomy {
     }
 }
 
-#[derive(Resource, Clone, Debug, Default)]
+#[derive(Resource, Clone, Debug, Default, Eq, PartialEq)]
 pub struct RosterEconomyFeedback {
     pub blocked_upgrade_reason: Option<String>,
 }
@@ -440,6 +441,7 @@ fn apply_promotion_events(
     data: Res<GameData>,
     art: Res<ArtAssets>,
     progression: Option<Res<Progression>>,
+    waves: Option<Res<WaveRuntime>>,
     economy: Res<RosterEconomy>,
     mut feedback: ResMut<RosterEconomyFeedback>,
     friendlies: Query<
@@ -447,9 +449,16 @@ fn apply_promotion_events(
         (With<FriendlyUnit>, Without<CommanderUnit>),
     >,
 ) {
+    if promote_events.is_empty() {
+        return;
+    }
     let Some(current_level) = progression.as_ref().map(|value| value.level) else {
         return;
     };
+    let current_wave = waves
+        .as_deref()
+        .map(|runtime| runtime.current_wave.max(1))
+        .unwrap_or(1);
     feedback.blocked_upgrade_reason = None;
 
     for event in promote_events.read() {
@@ -467,6 +476,13 @@ fn apply_promotion_events(
             ));
             continue;
         };
+        if !is_upgrade_tier_unlocked(target_tier, current_wave) {
+            let unlock_wave = unlock_wave_for_tier(target_tier).unwrap_or(1);
+            feedback.blocked_upgrade_reason = Some(format!(
+                "Promotion blocked: tier {target_tier} upgrades unlock at wave {unlock_wave} (current wave {current_wave})."
+            ));
+            continue;
+        }
         let Some(min_step_cost) = promotion_step_cost(event.from_kind, event.to_kind) else {
             feedback.blocked_upgrade_reason = Some(format!(
                 "Promotion blocked: '{}' cannot be promoted into '{}'.",
@@ -666,10 +682,16 @@ fn sync_roster(
         With<FriendlyUnit>,
     >,
 ) {
-    roster.friendly_count = friendlies.iter().count();
-    roster.commander = friendlies
+    let next_friendly_count = friendlies.iter().count();
+    let next_commander = friendlies
         .iter()
         .find_map(|(entity, commander, _, _, _)| commander.map(|_| entity));
+    if roster.friendly_count != next_friendly_count {
+        roster.friendly_count = next_friendly_count;
+    }
+    if roster.commander != next_commander {
+        roster.commander = next_commander;
+    }
 
     let mut locked = 0u32;
     let mut tier0 = 0u32;
@@ -700,13 +722,18 @@ fn sync_roster(
         }
     }
 
-    economy.locked_levels = locked;
-    economy.allowed_max_level = level_cap_from_locked_budget(locked);
-    economy.tier0_retinue_count = tier0;
-    economy.total_retinue_count = total_retinue;
-    economy.infantry_count = infantry;
-    economy.archer_count = archer;
-    economy.priest_count = priest;
+    let next_economy = RosterEconomy {
+        locked_levels: locked,
+        allowed_max_level: level_cap_from_locked_budget(locked),
+        tier0_retinue_count: tier0,
+        total_retinue_count: total_retinue,
+        infantry_count: infantry,
+        archer_count: archer,
+        priest_count: priest,
+    };
+    if *economy != next_economy {
+        *economy = next_economy;
+    }
 }
 
 fn on_unit_died(mut roster: ResMut<SquadRoster>, mut death_events: EventReader<UnitDiedEvent>) {
@@ -738,6 +765,22 @@ pub fn promotion_step_cost(from_kind: UnitKind, to_kind: UnitKind) -> Option<u32
     let from_tier = friendly_tier_for_kind(from_kind)?;
     let to_tier = friendly_tier_for_kind(to_kind)?;
     (to_tier > from_tier).then_some((to_tier - from_tier) as u32)
+}
+
+pub fn unlocked_upgrade_tier_for_wave(current_wave: u32) -> u8 {
+    ((current_wave.max(1).saturating_sub(1) / 10).min(5)) as u8
+}
+
+pub fn unlock_wave_for_tier(tier: u8) -> Option<u32> {
+    match tier {
+        0 => Some(1),
+        1..=5 => Some(tier as u32 * 10 + 1),
+        _ => None,
+    }
+}
+
+pub fn is_upgrade_tier_unlocked(tier: u8, current_wave: u32) -> bool {
+    tier <= unlocked_upgrade_tier_for_wave(current_wave)
 }
 
 pub fn unit_kind_label(kind: UnitKind) -> &'static str {
@@ -815,8 +858,10 @@ mod tests {
     };
     use crate::squad::{
         PriestSupportCaster, PromoteUnitsEvent, RosterEconomy, RosterEconomyFeedback, SquadPlugin,
-        enemy_inside_active_formation, movement_multiplier_from_inside_enemy_count,
-        priest_should_cast, refresh_priest_blessing_remaining, tick_priest_cooldown,
+        enemy_inside_active_formation, is_upgrade_tier_unlocked,
+        movement_multiplier_from_inside_enemy_count, priest_should_cast,
+        refresh_priest_blessing_remaining, tick_priest_cooldown, unlock_wave_for_tier,
+        unlocked_upgrade_tier_for_wave,
     };
     use crate::upgrades::Progression;
     use crate::visuals::ArtAssets;
@@ -1132,5 +1177,28 @@ mod tests {
         }
         assert!(priest_has_support);
         assert!(!priest_has_direct_attack);
+    }
+
+    #[test]
+    fn upgrade_tier_unlocks_follow_wave_brackets() {
+        assert_eq!(unlocked_upgrade_tier_for_wave(1), 0);
+        assert_eq!(unlocked_upgrade_tier_for_wave(10), 0);
+        assert_eq!(unlocked_upgrade_tier_for_wave(11), 1);
+        assert_eq!(unlocked_upgrade_tier_for_wave(21), 2);
+        assert_eq!(unlocked_upgrade_tier_for_wave(31), 3);
+        assert_eq!(unlocked_upgrade_tier_for_wave(41), 4);
+        assert_eq!(unlocked_upgrade_tier_for_wave(51), 5);
+        assert_eq!(unlocked_upgrade_tier_for_wave(100), 5);
+
+        assert_eq!(unlock_wave_for_tier(1), Some(11));
+        assert_eq!(unlock_wave_for_tier(2), Some(21));
+        assert_eq!(unlock_wave_for_tier(5), Some(51));
+        assert_eq!(unlock_wave_for_tier(6), None);
+
+        assert!(is_upgrade_tier_unlocked(0, 1));
+        assert!(!is_upgrade_tier_unlocked(1, 10));
+        assert!(is_upgrade_tier_unlocked(1, 11));
+        assert!(!is_upgrade_tier_unlocked(3, 30));
+        assert!(is_upgrade_tier_unlocked(3, 31));
     }
 }

@@ -23,7 +23,8 @@ use crate::rescue::{RescueProgress, effective_rescue_duration};
 use crate::settings::AppSettings;
 use crate::squad::{
     PriestAttackSpeedBlessing, PromoteUnitsEvent, RosterEconomy, RosterEconomyFeedback,
-    SquadRoster, friendly_tier_for_kind, promotion_step_cost, unit_kind_label,
+    SquadRoster, friendly_tier_for_kind, is_upgrade_tier_unlocked, promotion_step_cost,
+    unit_kind_label, unlock_wave_for_tier,
 };
 use crate::upgrades::{
     ConditionalUpgradeEffects, ConditionalUpgradeStatus, Progression, ProgressionLockFeedback,
@@ -331,6 +332,7 @@ struct UnitUpgradePanelData {
     commander_level: u32,
     allowed_max_level: u32,
     locked_levels: u32,
+    current_wave: u32,
     selected_source: UnitKind,
     blocked_upgrade_reason: Option<String>,
     progression_lock_reason: Option<String>,
@@ -349,6 +351,8 @@ struct UnitUpgradeRosterEntry {
 struct UnitPromotionOption {
     to_kind: UnitKind,
     to_tier: u8,
+    tier_unlocked: bool,
+    unlock_wave: Option<u32>,
     source_count: u32,
     max_affordable: u32,
 }
@@ -379,6 +383,7 @@ struct RunModalOverlayDeps<'w, 's> {
     data: Res<'w, GameData>,
     archive: Res<'w, ArchiveDataset>,
     progression: Res<'w, Progression>,
+    waves: Res<'w, WaveRuntime>,
     progression_lock_feedback: Res<'w, ProgressionLockFeedback>,
     roster_economy: Res<'w, RosterEconomy>,
     roster_feedback: Res<'w, RosterEconomyFeedback>,
@@ -1856,8 +1861,6 @@ fn sync_run_modal_overlay(
             let should_refresh_unit_upgrade = screen == RunModalScreen::UnitUpgrade
                 && (deps.roster_economy.is_changed()
                     || deps.roster_feedback.is_changed()
-                    || deps.progression.is_changed()
-                    || deps.progression_lock_feedback.is_changed()
                     || deps.unit_upgrade_state.is_changed());
             if let Some((_, root)) = existing
                 && root.screen == screen
@@ -1891,6 +1894,7 @@ fn sync_run_modal_overlay(
                 &deps.roster_economy,
                 &deps.roster_feedback,
                 &deps.progression,
+                deps.waves.current_wave.max(1),
                 &deps.progression_lock_feedback,
                 &deps.unit_upgrade_state,
             );
@@ -1971,43 +1975,55 @@ fn spawn_run_modal_overlay(
             })
             .with_children(|panel| {
                 panel
-                    .spawn((
-                        ButtonBundle {
-                            style: Style {
-                                position_type: PositionType::Absolute,
-                                right: Val::Px(12.0),
-                                top: Val::Px(12.0),
-                                width: Val::Px(34.0),
-                                height: Val::Px(34.0),
-                                justify_content: JustifyContent::Center,
-                                align_items: AlignItems::Center,
-                                border: UiRect::all(Val::Px(1.0)),
-                                ..default()
-                            },
-                            background_color: BackgroundColor(Color::NONE),
-                            border_color: BorderColor(Color::NONE),
+                    .spawn(NodeBundle {
+                        style: Style {
+                            width: Val::Percent(100.0),
+                            min_height: Val::Px(38.0),
+                            justify_content: JustifyContent::SpaceBetween,
+                            align_items: AlignItems::Center,
+                            flex_direction: FlexDirection::Row,
                             ..default()
                         },
-                        RunModalButtonAction::Close,
-                    ))
-                    .with_children(|button| {
-                        button.spawn(TextBundle::from_section(
-                            "X",
+                        background_color: BackgroundColor(Color::NONE),
+                        ..default()
+                    })
+                    .with_children(|header| {
+                        header.spawn(TextBundle::from_section(
+                            title,
                             TextStyle {
-                                font_size: 20.0,
-                                color: MENU_BUTTON_TEXT_NORMAL,
+                                font_size: 34.0,
+                                color: MENU_BUTTON_TEXT_HOVERED,
                                 ..default()
                             },
                         ));
+                        header
+                            .spawn((
+                                ButtonBundle {
+                                    style: Style {
+                                        width: Val::Px(34.0),
+                                        height: Val::Px(34.0),
+                                        justify_content: JustifyContent::Center,
+                                        align_items: AlignItems::Center,
+                                        border: UiRect::all(Val::Px(1.0)),
+                                        ..default()
+                                    },
+                                    background_color: BackgroundColor(Color::NONE),
+                                    border_color: BorderColor(Color::NONE),
+                                    ..default()
+                                },
+                                RunModalButtonAction::Close,
+                            ))
+                            .with_children(|button| {
+                                button.spawn(TextBundle::from_section(
+                                    "X",
+                                    TextStyle {
+                                        font_size: 20.0,
+                                        color: MENU_BUTTON_TEXT_NORMAL,
+                                        ..default()
+                                    },
+                                ));
+                            });
                     });
-                panel.spawn(TextBundle::from_section(
-                    title,
-                    TextStyle {
-                        font_size: 34.0,
-                        color: MENU_BUTTON_TEXT_HOVERED,
-                        ..default()
-                    },
-                ));
                 if let Some(subtitle) = subtitle {
                     panel.spawn(TextBundle {
                         style: Style {
@@ -2159,6 +2175,9 @@ fn build_stats_panel_data(
     {
         active_buffs.push("Hospitalier Aura".to_string());
     }
+    if buffs.inside_formation_damage_multiplier > 1.0 {
+        active_buffs.push("Encirclement Doctrine".to_string());
+    }
     if let Some(active) = conditional_upgrade_active_state(conditional_status, "mob_fury")
         && active
     {
@@ -2295,18 +2314,17 @@ fn spawn_stats_modal_sections(parent: &mut ChildBuilder, stats: &StatsPanelData)
                             spawn_stats_cell(header, "Bonus", 19.0, MENU_BUTTON_TEXT_HOVERED);
                             spawn_stats_cell(header, "Final", 20.0, MENU_BUTTON_TEXT_HOVERED);
                         });
-
-                    for row in &stats.rows {
-                        let base_text = row
-                            .base_override
-                            .clone()
-                            .unwrap_or_else(|| format_stat_value(row.base));
-                        let final_text = row
-                            .final_override
-                            .clone()
-                            .unwrap_or_else(|| format_stat_value(row.final_value));
-                        table
-                            .spawn(NodeBundle {
+                    spawn_scrollable_panel(table, 322.0, |rows| {
+                        for row in &stats.rows {
+                            let base_text = row
+                                .base_override
+                                .clone()
+                                .unwrap_or_else(|| format_stat_value(row.base));
+                            let final_text = row
+                                .final_override
+                                .clone()
+                                .unwrap_or_else(|| format_stat_value(row.final_value));
+                            rows.spawn(NodeBundle {
                                 style: Style {
                                     width: Val::Percent(100.0),
                                     min_height: Val::Px(28.0),
@@ -2331,7 +2349,8 @@ fn spawn_stats_modal_sections(parent: &mut ChildBuilder, stats: &StatsPanelData)
                                 );
                                 spawn_stats_cell(line, final_text.as_str(), 20.0, HUD_TEXT_COLOR);
                             });
-                    }
+                        }
+                    });
                 });
             layout
                 .spawn(NodeBundle {
@@ -2845,7 +2864,7 @@ fn spawn_inventory_modal_sections(parent: &mut ChildBuilder, inventory: &Invento
                         },
                     ));
                     const BACKPACK_ROWS: usize = 5;
-                    const BACKPACK_COLS: usize = 5;
+                    const BACKPACK_COLS: usize = 6;
                     const BACKPACK_SLOTS: usize = BACKPACK_ROWS * BACKPACK_COLS;
                     bag
                         .spawn(NodeBundle {
@@ -3095,6 +3114,7 @@ fn build_unit_upgrade_panel_data(
     economy: &RosterEconomy,
     feedback: &RosterEconomyFeedback,
     progression: &Progression,
+    current_wave: u32,
     lock_feedback: &ProgressionLockFeedback,
     ui_state: &UnitUpgradeUiState,
 ) -> UnitUpgradePanelData {
@@ -3122,11 +3142,15 @@ fn build_unit_upgrade_panel_data(
         .iter()
         .filter_map(|to_kind| {
             let to_tier = friendly_tier_for_kind(*to_kind)?;
+            let tier_unlocked = is_upgrade_tier_unlocked(to_tier, current_wave);
             Some(UnitPromotionOption {
                 to_kind: *to_kind,
                 to_tier,
+                tier_unlocked,
+                unlock_wave: (!tier_unlocked).then(|| unlock_wave_for_tier(to_tier).unwrap_or(1)),
                 source_count,
                 max_affordable: max_affordable_promotions(
+                    current_wave,
                     current_level,
                     economy.locked_levels,
                     source_count,
@@ -3141,6 +3165,7 @@ fn build_unit_upgrade_panel_data(
         commander_level: current_level,
         allowed_max_level: economy.allowed_max_level,
         locked_levels: economy.locked_levels,
+        current_wave,
         selected_source,
         blocked_upgrade_reason: feedback.blocked_upgrade_reason.clone(),
         progression_lock_reason: lock_feedback.message.clone(),
@@ -3154,6 +3179,7 @@ fn spawn_unit_upgrade_modal_sections(parent: &mut ChildBuilder, panel_data: &Uni
         "Commander Level Budget: {}/{}  |  Locked by Roster: {}",
         panel_data.commander_level, panel_data.allowed_max_level, panel_data.locked_levels
     );
+    let wave_text = format!("Current Wave: {}", panel_data.current_wave);
     let upgrade_feedback = panel_data
         .blocked_upgrade_reason
         .as_deref()
@@ -3184,6 +3210,14 @@ fn spawn_unit_upgrade_modal_sections(parent: &mut ChildBuilder, panel_data: &Uni
                 TextStyle {
                     font_size: 16.0,
                     color: MENU_BUTTON_TEXT_HOVERED,
+                    ..default()
+                },
+            ));
+            root.spawn(TextBundle::from_section(
+                wave_text,
+                TextStyle {
+                    font_size: 14.0,
+                    color: MENU_BUTTON_TEXT_DISABLED,
                     ..default()
                 },
             ));
@@ -3384,11 +3418,24 @@ fn spawn_unit_upgrade_modal_sections(parent: &mut ChildBuilder, panel_data: &Uni
                                 ..default()
                             })
                             .with_children(|row| {
+                                let target_label = if let Some(unlock_wave) = option.unlock_wave {
+                                    format!(
+                                        "{} (unlocks W{})",
+                                        unit_kind_label(option.to_kind),
+                                        unlock_wave
+                                    )
+                                } else {
+                                    unit_kind_label(option.to_kind).to_string()
+                                };
                                 spawn_stats_cell(
                                     row,
-                                    unit_kind_label(option.to_kind),
+                                    target_label.as_str(),
                                     30.0,
-                                    HUD_TEXT_COLOR,
+                                    if option.tier_unlocked {
+                                        HUD_TEXT_COLOR
+                                    } else {
+                                        MENU_BUTTON_TEXT_DISABLED
+                                    },
                                 );
                                 spawn_stats_cell(
                                     row,
@@ -3510,6 +3557,7 @@ fn resolve_selected_source(
 }
 
 fn max_affordable_promotions(
+    current_wave: u32,
     current_level: u32,
     locked_levels: u32,
     source_count: u32,
@@ -3519,6 +3567,12 @@ fn max_affordable_promotions(
     let Some(step_cost) = promotion_step_cost(from_kind, to_kind) else {
         return 0;
     };
+    let Some(to_tier) = friendly_tier_for_kind(to_kind) else {
+        return 0;
+    };
+    if !is_upgrade_tier_unlocked(to_tier, current_wave) {
+        return 0;
+    }
     if step_cost == 0 || source_count == 0 {
         return 0;
     }
@@ -4574,6 +4628,7 @@ fn handle_unit_upgrade_buttons(
     >,
     mut text_query: Query<&mut Text>,
     mut ui_state: ResMut<UnitUpgradeUiState>,
+    waves: Res<WaveRuntime>,
     economy: Res<RosterEconomy>,
     progression: Res<Progression>,
     mut economy_feedback: ResMut<RosterEconomyFeedback>,
@@ -4626,8 +4681,10 @@ fn handle_unit_upgrade_buttons(
     for (interaction, button, children, mut border_color, mut background_color) in
         &mut promote_buttons
     {
+        let current_wave = waves.current_wave.max(1);
         let source_count = roster_count_for_kind(&economy, button.from);
         let max_affordable = max_affordable_promotions(
+            current_wave,
             progression.level.max(1),
             economy.locked_levels,
             source_count,
@@ -4663,11 +4720,24 @@ fn handle_unit_upgrade_buttons(
                     *border_color = BorderColor(MENU_BUTTON_BORDER_HOVERED);
                     *background_color = BackgroundColor(Color::srgba(0.11, 0.09, 0.08, 0.7));
                 } else {
-                    economy_feedback.blocked_upgrade_reason = Some(format!(
-                        "Promotion blocked: '{}' -> '{}' has no affordable quantity at current level budget.",
-                        unit_kind_label(button.from),
-                        unit_kind_label(button.to)
-                    ));
+                    let tier_locked_reason = friendly_tier_for_kind(button.to).and_then(|tier| {
+                        if is_upgrade_tier_unlocked(tier, current_wave) {
+                            None
+                        } else {
+                            Some(format!(
+                                "Promotion blocked: tier {tier} upgrades unlock at wave {} (current wave {}).",
+                                unlock_wave_for_tier(tier).unwrap_or(1),
+                                current_wave
+                            ))
+                        }
+                    });
+                    economy_feedback.blocked_upgrade_reason = tier_locked_reason.or_else(|| {
+                        Some(format!(
+                            "Promotion blocked: '{}' -> '{}' has no affordable quantity at current level budget.",
+                            unit_kind_label(button.from),
+                            unit_kind_label(button.to)
+                        ))
+                    });
                     *border_color = BorderColor(MENU_BUTTON_BORDER_DISABLED);
                     *background_color = BackgroundColor(Color::srgba(0.06, 0.055, 0.05, 0.64));
                 }
@@ -5639,6 +5709,7 @@ mod tests {
     fn max_affordable_promotions_respects_budget_and_path_rules() {
         assert_eq!(
             max_affordable_promotions(
+                1,
                 199,
                 0,
                 10,
@@ -5649,6 +5720,7 @@ mod tests {
         );
         assert_eq!(
             max_affordable_promotions(
+                1,
                 150,
                 20,
                 10,
@@ -5659,6 +5731,7 @@ mod tests {
         );
         assert_eq!(
             max_affordable_promotions(
+                1,
                 120,
                 0,
                 10,
@@ -5793,6 +5866,7 @@ mod tests {
             attack_speed_multiplier: 1.20,
             pickup_radius_bonus: 12.0,
             move_speed_bonus: 18.0,
+            inside_formation_damage_multiplier: 1.0,
             commander_aura_radius_bonus: 25.0,
             authority_friendly_loss_resistance: 0.0,
             authority_enemy_morale_drain_per_sec: 0.0,

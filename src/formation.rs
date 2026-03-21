@@ -2,7 +2,7 @@ use bevy::prelude::*;
 
 use crate::banner::BannerMovementPenalty;
 use crate::data::{FormationConfig, GameData};
-use crate::model::{CommanderUnit, FriendlyUnit, GameState, StartRunEvent};
+use crate::model::{CommanderUnit, FriendlyUnit, GameState, StartRunEvent, Unit, UnitKind};
 
 pub const SKILL_BAR_CAPACITY: usize = 10;
 
@@ -256,7 +256,10 @@ fn apply_active_formation(
     formation: Res<ActiveFormation>,
     banner_penalty: Option<Res<BannerMovementPenalty>>,
     commanders: Query<&Transform, With<CommanderUnit>>,
-    mut friendlies: Query<(Entity, &mut Transform), (With<FriendlyUnit>, Without<CommanderUnit>)>,
+    mut friendlies: Query<
+        (Entity, &Unit, &mut Transform),
+        (With<FriendlyUnit>, Without<CommanderUnit>),
+    >,
 ) {
     let Ok(commander_transform) = commanders.get_single() else {
         return;
@@ -264,15 +267,19 @@ fn apply_active_formation(
 
     let config = active_formation_config(&data, *formation);
     let spacing = config.slot_spacing;
-    let mut members: Vec<(Entity, Mut<Transform>)> = friendlies.iter_mut().collect();
-    members.sort_by_key(|(entity, _)| entity.index());
+    let mut members: Vec<(Entity, UnitKind, Mut<Transform>)> = friendlies
+        .iter_mut()
+        .map(|(entity, unit, transform)| (entity, unit.kind, transform))
+        .collect();
     let offsets = offsets_for_formation(*formation, members.len(), spacing);
+    let ordered_offsets = role_ordered_offsets(offsets);
+    members.sort_by_key(|(entity, kind, _)| (formation_slot_role_priority(*kind), entity.index()));
     let speed_multiplier = banner_penalty
         .as_ref()
         .map(|penalty| penalty.friendly_speed_multiplier)
         .unwrap_or(1.0);
 
-    for ((_, mut transform), offset) in members.into_iter().zip(offsets.into_iter()) {
+    for ((_, _, mut transform), offset) in members.into_iter().zip(ordered_offsets.into_iter()) {
         let target = commander_transform.translation.truncate() + offset;
         let current = transform.translation.truncate();
         let smooth =
@@ -281,6 +288,38 @@ fn apply_active_formation(
         let next = current.lerp(target, smooth);
         transform.translation.x = next.x;
         transform.translation.y = next.y;
+    }
+}
+
+fn role_ordered_offsets(mut offsets: Vec<Vec2>) -> Vec<Vec2> {
+    offsets.sort_by(offset_outer_first_cmp);
+    offsets
+}
+
+fn offset_outer_first_cmp(a: &Vec2, b: &Vec2) -> std::cmp::Ordering {
+    let radius_cmp = b
+        .length_squared()
+        .partial_cmp(&a.length_squared())
+        .unwrap_or(std::cmp::Ordering::Equal);
+    if radius_cmp != std::cmp::Ordering::Equal {
+        return radius_cmp;
+    }
+
+    let angle_a = diamond_clockwise_angle(*a);
+    let angle_b = diamond_clockwise_angle(*b);
+    angle_a
+        .partial_cmp(&angle_b)
+        .unwrap_or(std::cmp::Ordering::Equal)
+        .then_with(|| a.x.partial_cmp(&b.x).unwrap_or(std::cmp::Ordering::Equal))
+        .then_with(|| a.y.partial_cmp(&b.y).unwrap_or(std::cmp::Ordering::Equal))
+}
+
+fn formation_slot_role_priority(kind: UnitKind) -> u8 {
+    match kind {
+        UnitKind::ChristianPeasantInfantry => 0, // outer frontline
+        UnitKind::ChristianPeasantArcher => 1,   // inner ring
+        UnitKind::ChristianPeasantPriest => 2,   // innermost support
+        _ => 1,
     }
 }
 
@@ -424,6 +463,8 @@ mod tests {
 
     use bevy::prelude::Vec2;
 
+    use crate::model::UnitKind;
+
     use crate::formation::{
         ActiveFormation, FormationSkillBar, SKILL_BAR_CAPACITY, depth_z_for_world_y,
         formation_contains_position, square_offsets,
@@ -538,5 +579,25 @@ mod tests {
             topish_exists,
             "early diamond slots should include a top-side placement"
         );
+    }
+
+    #[test]
+    fn role_priority_prefers_melee_outer_and_support_inner() {
+        let offsets = vec![Vec2::ZERO, Vec2::new(30.0, 0.0), Vec2::new(-30.0, 0.0)];
+        let ordered_offsets = super::role_ordered_offsets(offsets);
+        assert!(ordered_offsets[0].length_squared() >= ordered_offsets[2].length_squared());
+
+        let mut members = [
+            (2u32, UnitKind::ChristianPeasantPriest),
+            (1u32, UnitKind::ChristianPeasantArcher),
+            (0u32, UnitKind::ChristianPeasantInfantry),
+        ];
+        members.sort_by_key(|(stable_id, kind)| {
+            (super::formation_slot_role_priority(*kind), *stable_id)
+        });
+
+        assert_eq!(members[0].1, UnitKind::ChristianPeasantInfantry);
+        assert_eq!(members[1].1, UnitKind::ChristianPeasantArcher);
+        assert_eq!(members[2].1, UnitKind::ChristianPeasantPriest);
     }
 }
