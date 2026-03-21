@@ -1482,21 +1482,14 @@ fn spawn_level_up_menu(
         ))
         .with_children(|parent| {
             parent.spawn(TextBundle::from_section(
-                "LEVEL UP - CHOOSE ONE",
+                "Level Up!",
                 TextStyle {
                     font_size: 40.0,
                     color: MENU_BUTTON_TEXT_HOVERED,
                     ..default()
                 },
             ));
-            parent.spawn(TextBundle::from_section(
-                "Selection is required to continue.",
-                TextStyle {
-                    font_size: 18.0,
-                    color: HUD_TEXT_COLOR,
-                    ..default()
-                },
-            ));
+            spawn_level_up_tier_legend(parent);
 
             parent
                 .spawn(NodeBundle {
@@ -1524,6 +1517,68 @@ fn spawn_level_up_menu(
                 });
         });
 }
+
+fn spawn_level_up_tier_legend(parent: &mut ChildBuilder) {
+    parent
+        .spawn(NodeBundle {
+            style: Style {
+                flex_direction: FlexDirection::Row,
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                column_gap: Val::Px(10.0),
+                flex_wrap: FlexWrap::Wrap,
+                width: Val::Percent(100.0),
+                ..default()
+            },
+            background_color: BackgroundColor(Color::NONE),
+            ..default()
+        })
+        .with_children(|row| {
+            for (tier, label) in LEVEL_UP_TIER_LEGEND {
+                row.spawn(NodeBundle {
+                    style: Style {
+                        flex_direction: FlexDirection::Row,
+                        align_items: AlignItems::Center,
+                        column_gap: Val::Px(6.0),
+                        ..default()
+                    },
+                    background_color: BackgroundColor(Color::NONE),
+                    ..default()
+                })
+                .with_children(|entry| {
+                    let color = level_up_tier_border_color(tier);
+                    entry.spawn(NodeBundle {
+                        style: Style {
+                            width: Val::Px(14.0),
+                            height: Val::Px(14.0),
+                            border: UiRect::all(Val::Px(1.0)),
+                            ..default()
+                        },
+                        background_color: BackgroundColor(Color::srgba(0.08, 0.07, 0.06, 0.7)),
+                        border_color: BorderColor(color),
+                        ..default()
+                    });
+                    entry.spawn(TextBundle::from_section(
+                        label,
+                        TextStyle {
+                            font_size: 13.0,
+                            color: HUD_TEXT_COLOR,
+                            ..default()
+                        },
+                    ));
+                });
+            }
+        });
+}
+
+const LEVEL_UP_TIER_LEGEND: [(UpgradeValueTier, &str); 6] = [
+    (UpgradeValueTier::Common, "Common"),
+    (UpgradeValueTier::Uncommon, "Uncommon"),
+    (UpgradeValueTier::Rare, "Rare"),
+    (UpgradeValueTier::Epic, "Epic"),
+    (UpgradeValueTier::Mythical, "Mythical"),
+    (UpgradeValueTier::Unique, "Unique"),
+];
 
 fn spawn_level_up_card(
     parent: &mut ChildBuilder,
@@ -5609,15 +5664,15 @@ mod tests {
         Team,
     };
     use crate::ui::{
-        HudSnapshot, MainMenuAction, MainMenuDispatch, UnitUpgradeQuantity,
+        HudSnapshot, LEVEL_UP_TIER_LEGEND, MainMenuAction, MainMenuDispatch, UnitUpgradeQuantity,
         archive_entries_for_category, build_skill_book_panel_data, build_stats_panel_data,
         can_select_match_setup_faction, conditional_upgrade_hud_status_text, displayed_wave_number,
         find_skill_section, find_stats_row, floating_damage_text_alpha,
         floating_damage_text_is_expired, floating_damage_text_spawn_data,
         format_commander_level_text, format_elapsed_mm_ss, format_enemy_count, frame_cap_label,
-        health_bar_fill_width, main_menu_dispatch, max_affordable_promotions,
-        modal_action_for_utility_button, requested_promotion_count, rescue_progress_ratio,
-        responsive_ui_scale_for_resolution, world_to_minimap_pos,
+        health_bar_fill_width, level_up_tier_border_color, main_menu_dispatch,
+        max_affordable_promotions, modal_action_for_utility_button, requested_promotion_count,
+        rescue_progress_ratio, responsive_ui_scale_for_resolution, world_to_minimap_pos,
     };
     use crate::upgrades::{
         ConditionalUpgradeStatus, ConditionalUpgradeStatusEntry, Progression, SkillBookEntry,
@@ -5814,6 +5869,16 @@ mod tests {
             .expect("center should be visible");
         assert!((pos.x - 85.0).abs() < 0.01);
         assert!((pos.y - 85.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn level_up_tier_legend_order_matches_card_rarity_scale() {
+        assert_eq!(LEVEL_UP_TIER_LEGEND.len(), 6);
+        assert_eq!(LEVEL_UP_TIER_LEGEND[0].1, "Common");
+        assert_eq!(LEVEL_UP_TIER_LEGEND[5].1, "Unique");
+        let common = level_up_tier_border_color(LEVEL_UP_TIER_LEGEND[0].0);
+        let unique = level_up_tier_border_color(LEVEL_UP_TIER_LEGEND[5].0);
+        assert_ne!(format!("{common:?}"), format!("{unique:?}"));
     }
 
     #[test]
