@@ -264,7 +264,7 @@ Runtime scripted count scaling:
 Procedural continuation:
 - Interval: 30s
 - Count: `round(base * 1.22^(index+1))`
-- Stat scale: `1.0 + (index+1)*0.08`
+- Stat scale: `1.0 + (wave-1)*0.092`
 
 ### `drops.json`
 - `initial_spawn_count=8`
@@ -454,8 +454,10 @@ Friendly combined outgoing multiplier has lower clamp:
 ### Wave Spawn Rate + Victory Gate (`src/enemies.rs`, `src/core.rs`)
 - Wave duration: `30s`.
 - Spawn pacing:
-  - `units_per_second_for_wave = ((wave_base_count * 2.0).max(1.0)) / 30.0`
+  - `units_per_second_for_wave = clamp(wave_base_count * 2.0, 1.0, 1000.0) / 30.0`
   - spawned units are queued into timed batches (`batch_size` scales by wave, interval shrinks with floor clamp).
+- Enemy stat progression:
+  - `wave_stat_multiplier = 1.0 + (wave - 1) * 0.092` (15% steeper than previous `0.08` slope).
 - Wave progression:
   - `current_wave` increases until `MAX_WAVES = 100`.
   - spawning stops after wave 100 finishes its duration window.

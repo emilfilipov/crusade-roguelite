@@ -189,7 +189,7 @@
   - `docs/ASSET_SOURCES.md`
 
 ### CRU-067 - Wave Cap and Enemy Stat Scaling Adjustment
-- Status: `TODO`
+- Status: `DONE`
 - Type: `Balance`
 - Priority: `P0`
 - Depends on: `none`

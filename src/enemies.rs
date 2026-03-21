@@ -54,8 +54,9 @@ pub const MAX_WAVES: u32 = 100;
 const STOP_FACTOR: f32 = 0.82;
 const RESUME_FACTOR: f32 = 0.98;
 const WAVE_UNITS_MULTIPLIER: f32 = 2.0;
+const MAX_ENEMIES_PER_WAVE: f32 = 1000.0;
 const POST_SCRIPTED_WAVE_COUNT_GROWTH: f32 = 1.18;
-const WAVE_STAT_GROWTH_PER_WAVE: f32 = 0.08;
+const WAVE_STAT_GROWTH_PER_WAVE: f32 = 0.092;
 const WAVE_BATCH_SIZE: u32 = 7;
 const WAVE_BATCH_INTERVAL_SECS: f32 = 0.7;
 const ENEMY_SPAWN_MIN_DISTANCE_FROM_COMMANDER: f32 = 200.0;
@@ -289,7 +290,8 @@ fn wave_base_count(config: &WavesConfigFile, wave_number: u32) -> f32 {
 
 pub fn units_per_second_for_wave(config: &WavesConfigFile, wave_number: u32) -> f32 {
     let base_count = wave_base_count(config, wave_number);
-    ((base_count * WAVE_UNITS_MULTIPLIER).max(1.0)) / WAVE_DURATION_SECS
+    let wave_total = (base_count * WAVE_UNITS_MULTIPLIER).clamp(1.0, MAX_ENEMIES_PER_WAVE);
+    wave_total / WAVE_DURATION_SECS
 }
 
 pub fn wave_stat_multiplier(wave_number: u32) -> f32 {
@@ -614,8 +616,21 @@ mod tests {
         assert!(late > second);
         assert_eq!(wave_duration_secs(), 30.0);
         assert!((wave_stat_multiplier(1) - 1.0).abs() < 0.001);
+        assert!((wave_stat_multiplier(2) - 1.092).abs() < 0.001);
         assert!(wave_stat_multiplier(8) > wave_stat_multiplier(3));
         assert!(enemy_move_speed(100.0) < 100.0);
+    }
+
+    #[test]
+    fn units_per_second_is_capped_to_thousand_enemies_per_wave() {
+        let config = WavesConfigFile {
+            waves: vec![WaveConfig {
+                time_secs: 0.0,
+                count: 700,
+            }],
+        };
+        let rate = units_per_second_for_wave(&config, 1);
+        assert!((rate - (1000.0 / 30.0)).abs() < 0.001);
     }
 
     #[test]
