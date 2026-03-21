@@ -203,6 +203,11 @@ fn default_equipment_slots(unit_type: EquipmentUnitType) -> Vec<EquippedSlot> {
                 item_id: None,
             },
             EquippedSlot {
+                slot_id: slot_id_from_label("Squire"),
+                display_name: "Squire".to_string(),
+                item_id: None,
+            },
+            EquippedSlot {
                 slot_id: slot_id_from_label("Symbol of Power"),
                 display_name: "Symbol of Power".to_string(),
                 item_id: None,
@@ -227,6 +232,11 @@ fn default_equipment_slots(unit_type: EquipmentUnitType) -> Vec<EquippedSlot> {
             EquippedSlot {
                 slot_id: "banner".to_string(),
                 display_name: "Banner".to_string(),
+                item_id: None,
+            },
+            EquippedSlot {
+                slot_id: "squire".to_string(),
+                display_name: "Squire".to_string(),
                 item_id: None,
             },
         ],
@@ -261,13 +271,15 @@ mod tests {
                 .setup_for(unit_type)
                 .expect("setup should exist for each unit type");
             assert_eq!(setup.unit_type, unit_type);
-            assert_eq!(setup.slots.len(), 4);
+            assert_eq!(setup.slots.len(), 5);
             if unit_type == EquipmentUnitType::Commander {
                 assert_eq!(setup.slots[0].display_name, "Banner");
-                assert_eq!(setup.slots[3].display_name, "Symbol of Power");
+                assert_eq!(setup.slots[3].display_name, "Squire");
+                assert_eq!(setup.slots[4].display_name, "Symbol of Power");
             } else {
                 assert_eq!(setup.slots[0].display_name, "Melee");
                 assert_eq!(setup.slots[3].display_name, "Banner");
+                assert_eq!(setup.slots[4].display_name, "Squire");
             }
         }
     }

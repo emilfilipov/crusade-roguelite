@@ -123,7 +123,7 @@
   - `docs/SYSTEM_SCOPE_MAP.md` (if scope wording needs expansion)
 
 ### CRU-064 - Add Squire Equipment Slot (All Unit Setups)
-- Status: `TODO`
+- Status: `DONE`
 - Type: `Gameplay`
 - Priority: `P1`
 - Depends on: `none`
