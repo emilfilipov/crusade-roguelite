@@ -4,16 +4,17 @@
 Single-file technical reference for current MVP runtime behavior.
 Use this for entity/component/system lookup without scanning all source files.
 
-## Latest Update (2026-03-20)
+## Latest Update (2026-03-21)
 - Added `RunModalState` state machine for in-run utility screens (`Inventory`, `Stats`, `Skill Book`, `Archive`, `Unit Upgrade`).
 - Added shared modal request event path (`RunModalRequestEvent`) so keyboard and UI button actions use the same reducer logic.
-- Added modal hotkeys in-run: `I`, `O`, `P`, `K`, `U`; `Escape` closes modal first, otherwise opens pause menu.
+- Added modal hotkeys in-run: `I`, `O`, `K`, `B`, `U`; `Escape` closes modal first, otherwise opens pause menu.
 - Added pause-state `Escape` behavior: pressing `Escape` while paused resumes the run.
 - Added modal overlay scaffold renderer that pauses in-run simulation while open.
 - Added direct close-button modal state clear path to avoid stale open overlays from UI interaction edge cases.
 - Added top-right in-run utility bar with five icon buttons mapped to the same modal requests as hotkeys.
+- Added in-run commander aura footprint gizmo for clearer aura coverage.
 - Added `ArchivePlugin` + `ArchiveDataset` with generated codex entries (units/enemies/skills/stats/bonuses/drops).
-- Added shared archive renderer used by both in-run `K` modal and main-menu `Bestiary` screen.
+- Added shared archive renderer used by both in-run `B` modal and main-menu `Bestiary` screen.
 - Added mouse-wheel scrollable sections for `Archive`/`Bestiary` and `Skill Book` to prevent clipping.
 - Main menu flow now exposes:
   - `Play Offline` (opens match setup)
@@ -496,7 +497,7 @@ Friendly combined outgoing multiplier has lower clamp:
 - Boot -> menu transition
 - Main menu cleanup
 - menu clear color handling for `MainMenu`, `MatchSetup`, `Settings`, `Archive`
-- in-run modal hotkeys (`I/O/P/K/U`) through reducer-based modal request flow
+- in-run modal hotkeys (`I/O/K/B/U`) through reducer-based modal request flow
 - `Escape` behavior priority:
   - close open run modal
   - otherwise open pause menu
@@ -587,9 +588,10 @@ Friendly combined outgoing multiplier has lower clamp:
 - pause overlay buttons (`Resume`, `Restart`, `Main Menu`)
 - level-up overlay (3 mandatory upgrade cards, icon + description, no skip)
 - game-over overlay buttons (`Restart`, `Main Menu`)
-- top HUD (wave/level/xp/time)
+- top HUD (left column: wave/time/active buffs, center: level/xp/rescue bars)
 - progress strips (rescue + banner pickup)
 - bottom-left vertical bars (average morale + cohesion)
+- commander aura footprint indicator (subtle world-space circle around commander)
 - world-space health bars
 - world-space floating damage text with timed rise/fade cleanup
 - bottom-right minimap prototype with periodic blip refresh
@@ -605,17 +607,18 @@ Friendly combined outgoing multiplier has lower clamp:
   - `Inventory`
   - `Stats`
   - `Skill Book`
-  - `Archive`
+  - `Bestiary`
   - `Unit Upgrade`
 - inventory modal content:
   - bag drops grid (1 item = 1 slot, with empty placeholders)
-  - equipment setup panel with commander row + unit tier rows (`Tier 0..5`)
+  - equipment panel with commander + unit tier rows using short labels (`C`, `T0..T5`)
   - commander slots: `Banner`, `Instrument`, `Chant`
   - unit-tier slots: `Melee Weapon`, `Ranged Weapon`, `Armor`
 - stats modal content:
-  - active formation label
   - table layout (`Stat | Base | Bonus | Final`)
+  - `Unit HP` row is bonus-only (`Base` and `Final` show `-`)
   - bonus color coding (green positive, red negative)
+  - separate `Active Buffs` column for formation/auras/conditional effects/priest blessing
 - skill book modal content:
   - grouped sections (`Formations`, `Auras`, `Combat`, `Utility`)
   - icon-backed entries with stacked counts
@@ -627,8 +630,8 @@ Friendly combined outgoing multiplier has lower clamp:
 - top-right utility icon bar:
   - `Inventory` (`I`)
   - `Stats` (`O`)
-  - `Skill Book` (`P`)
-  - `Archive` (`K`)
+  - `Skill Book` (`K`)
+  - `Bestiary` (`B`)
   - `Unit Upgrade` (`U`)
 
 ### `upgrades.rs`

@@ -120,8 +120,8 @@ fn dispatch_run_modal_hotkeys(
     for key in [
         KeyCode::KeyI,
         KeyCode::KeyO,
-        KeyCode::KeyP,
         KeyCode::KeyK,
+        KeyCode::KeyB,
         KeyCode::KeyU,
     ] {
         if keys.just_pressed(key)
@@ -138,8 +138,8 @@ pub fn hotkey_to_run_modal_screen(key: KeyCode) -> Option<RunModalScreen> {
     match key {
         KeyCode::KeyI => Some(RunModalScreen::Inventory),
         KeyCode::KeyO => Some(RunModalScreen::Stats),
-        KeyCode::KeyP => Some(RunModalScreen::SkillBook),
-        KeyCode::KeyK => Some(RunModalScreen::Archive),
+        KeyCode::KeyK => Some(RunModalScreen::SkillBook),
+        KeyCode::KeyB => Some(RunModalScreen::Archive),
         KeyCode::KeyU => Some(RunModalScreen::UnitUpgrade),
         _ => None,
     }
@@ -352,11 +352,11 @@ mod tests {
             Some(RunModalScreen::Stats)
         );
         assert_eq!(
-            hotkey_to_run_modal_screen(KeyCode::KeyP),
+            hotkey_to_run_modal_screen(KeyCode::KeyK),
             Some(RunModalScreen::SkillBook)
         );
         assert_eq!(
-            hotkey_to_run_modal_screen(KeyCode::KeyK),
+            hotkey_to_run_modal_screen(KeyCode::KeyB),
             Some(RunModalScreen::Archive)
         );
         assert_eq!(

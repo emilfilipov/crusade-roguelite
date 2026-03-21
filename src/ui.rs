@@ -12,11 +12,12 @@ use crate::formation::{ActiveFormation, FormationModifiers, FormationSkillBar, S
 use crate::inventory::{EquipmentUnitType, InventoryState};
 use crate::map::MapBounds;
 use crate::model::{
-    DamageTextEvent, FrameRateCap, FriendlyUnit, GameState, Health, MatchSetupSelection, Morale,
-    PlayerFaction, RescuableUnit, RunModalAction, RunModalRequestEvent, RunModalScreen,
-    RunModalState, RunSession, StartRunEvent, Team, Unit, UnitKind, level_cap_from_locked_budget,
+    CommanderUnit, DamageTextEvent, FrameRateCap, FriendlyUnit, GameState, Health,
+    MatchSetupSelection, Morale, PlayerFaction, RescuableUnit, RunModalAction,
+    RunModalRequestEvent, RunModalScreen, RunModalState, RunSession, StartRunEvent, Team, Unit,
+    UnitKind, level_cap_from_locked_budget,
 };
-use crate::morale::{Cohesion, average_morale_ratio};
+use crate::morale::{Cohesion, average_morale_ratio, commander_aura_radius};
 use crate::rescue::{RescueProgress, effective_rescue_duration};
 use crate::settings::AppSettings;
 use crate::squad::{
@@ -293,8 +294,8 @@ enum UnitUpgradeQuantity {
 
 #[derive(Clone, Debug)]
 struct StatsPanelData {
-    active_formation_label: String,
     rows: Vec<StatsPanelRow>,
+    active_buffs: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -303,6 +304,8 @@ struct StatsPanelRow {
     base: f32,
     bonus: f32,
     final_value: f32,
+    base_override: Option<String>,
+    final_override: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -539,6 +542,12 @@ impl Plugin for UiPlugin {
             .add_systems(
                 Update,
                 update_minimap_hud.run_if(in_state(GameState::InRun)),
+            )
+            .add_systems(
+                Update,
+                draw_commander_aura_footprint
+                    .run_if(in_state(GameState::InRun))
+                    .run_if(resource_exists::<bevy::gizmos::config::GizmoConfigStore>),
             )
             .add_systems(
                 Update,
@@ -1116,11 +1125,8 @@ fn spawn_archive_menu(
                 style: Style {
                     width: Val::Percent(100.0),
                     height: Val::Percent(100.0),
-                    justify_content: JustifyContent::FlexStart,
+                    justify_content: JustifyContent::Center,
                     align_items: AlignItems::Center,
-                    flex_direction: FlexDirection::Column,
-                    row_gap: Val::Px(16.0),
-                    padding: UiRect::all(Val::Px(14.0)),
                     ..default()
                 },
                 background_color: BackgroundColor(MENU_BACKGROUND),
@@ -1129,41 +1135,60 @@ fn spawn_archive_menu(
             },
         ))
         .with_children(|parent| {
-            parent.spawn(TextBundle::from_section(
-                "BESTIARY",
-                TextStyle {
-                    font_size: 42.0,
-                    color: MENU_BUTTON_TEXT_HOVERED,
-                    ..default()
-                },
-            ));
-            spawn_archive_sections(parent, &archive, &art, 620.0);
             parent
-                .spawn((
-                    ButtonBundle {
-                        style: Style {
-                            width: Val::Px(220.0),
-                            height: Val::Px(56.0),
-                            justify_content: JustifyContent::Center,
-                            align_items: AlignItems::Center,
-                            border: UiRect::all(Val::Px(1.0)),
-                            ..default()
-                        },
-                        background_color: BackgroundColor(Color::NONE),
-                        border_color: BorderColor(Color::NONE),
+                .spawn(NodeBundle {
+                    style: Style {
+                        width: Val::Px(980.0),
+                        height: Val::Px(620.0),
+                        border: UiRect::all(Val::Px(1.0)),
+                        flex_direction: FlexDirection::Column,
+                        justify_content: JustifyContent::SpaceBetween,
+                        align_items: AlignItems::Center,
+                        row_gap: Val::Px(14.0),
+                        padding: UiRect::all(Val::Px(16.0)),
                         ..default()
                     },
-                    ArchiveMenuAction::Back,
-                ))
-                .with_children(|button| {
-                    button.spawn(TextBundle::from_section(
-                        "BACK",
+                    background_color: BackgroundColor(Color::srgba(0.08, 0.07, 0.06, 0.95)),
+                    border_color: BorderColor(MINIMAP_BORDER),
+                    ..default()
+                })
+                .with_children(|panel| {
+                    panel.spawn(TextBundle::from_section(
+                        "BESTIARY",
                         TextStyle {
-                            font_size: 28.0,
-                            color: MENU_BUTTON_TEXT_NORMAL,
+                            font_size: 42.0,
+                            color: MENU_BUTTON_TEXT_HOVERED,
                             ..default()
                         },
                     ));
+                    spawn_archive_sections(panel, &archive, &art, 460.0);
+                    panel
+                        .spawn((
+                            ButtonBundle {
+                                style: Style {
+                                    width: Val::Px(220.0),
+                                    height: Val::Px(56.0),
+                                    justify_content: JustifyContent::Center,
+                                    align_items: AlignItems::Center,
+                                    border: UiRect::all(Val::Px(1.0)),
+                                    ..default()
+                                },
+                                background_color: BackgroundColor(Color::NONE),
+                                border_color: BorderColor(Color::NONE),
+                                ..default()
+                            },
+                            ArchiveMenuAction::Back,
+                        ))
+                        .with_children(|button| {
+                            button.spawn(TextBundle::from_section(
+                                "BACK",
+                                TextStyle {
+                                    font_size: 28.0,
+                                    color: MENU_BUTTON_TEXT_NORMAL,
+                                    ..default()
+                                },
+                            ));
+                        });
                 });
         });
 }
@@ -1583,8 +1608,8 @@ fn level_up_tier_border_color(tier: UpgradeValueTier) -> Color {
         UpgradeValueTier::Uncommon => Color::srgb(0.34, 0.58, 0.95),
         UpgradeValueTier::Rare => Color::srgb(0.95, 0.84, 0.22),
         UpgradeValueTier::Epic => Color::srgb(0.67, 0.38, 0.91),
-        UpgradeValueTier::Mythical => Color::srgb(0.96, 0.56, 0.2),
-        UpgradeValueTier::Unique => Color::srgb(0.55, 0.35, 0.2),
+        UpgradeValueTier::Mythical => Color::srgb(1.0, 0.74, 0.24),
+        UpgradeValueTier::Unique => Color::srgb(0.5, 0.31, 0.18),
     }
 }
 
@@ -1654,17 +1679,54 @@ fn spawn_in_run_hud(
                 ..default()
             })
             .with_children(|top_row| {
-                top_row.spawn((
-                    WaveHudText,
-                    TextBundle::from_section(
-                        "Wave 1",
-                        TextStyle {
-                            font_size: 26.0,
-                            color: HUD_TEXT_COLOR,
+                top_row
+                    .spawn(NodeBundle {
+                        style: Style {
+                            width: Val::Px(280.0),
+                            flex_direction: FlexDirection::Column,
+                            justify_content: JustifyContent::FlexStart,
+                            align_items: AlignItems::FlexStart,
+                            row_gap: Val::Px(4.0),
                             ..default()
                         },
-                    ),
-                ));
+                        background_color: BackgroundColor(Color::NONE),
+                        ..default()
+                    })
+                    .with_children(|left| {
+                        left.spawn((
+                            WaveHudText,
+                            TextBundle::from_section(
+                                "Wave 1",
+                                TextStyle {
+                                    font_size: 26.0,
+                                    color: HUD_TEXT_COLOR,
+                                    ..default()
+                                },
+                            ),
+                        ));
+                        left.spawn((
+                            TimeHudText,
+                            TextBundle::from_section(
+                                "00:00",
+                                TextStyle {
+                                    font_size: 20.0,
+                                    color: HUD_TEXT_COLOR,
+                                    ..default()
+                                },
+                            ),
+                        ));
+                        left.spawn((
+                            ConditionalStatusHudText,
+                            TextBundle::from_section(
+                                "",
+                                TextStyle {
+                                    font_size: 14.0,
+                                    color: Color::srgba(0.78, 0.74, 0.66, 0.95),
+                                    ..default()
+                                },
+                            ),
+                        ));
+                    });
 
                 top_row
                     .spawn(NodeBundle {
@@ -1734,32 +1796,15 @@ fn spawn_in_run_hud(
                                 ..default()
                             },
                         ));
-
-                        center.spawn((
-                            ConditionalStatusHudText,
-                            TextBundle::from_section(
-                                "",
-                                TextStyle {
-                                    font_size: 14.0,
-                                    color: Color::srgba(0.78, 0.74, 0.66, 0.95),
-                                    ..default()
-                                },
-                            )
-                            .with_text_justify(JustifyText::Center),
-                        ));
                     });
-
-                top_row.spawn((
-                    TimeHudText,
-                    TextBundle::from_section(
-                        "00:00",
-                        TextStyle {
-                            font_size: 26.0,
-                            color: HUD_TEXT_COLOR,
-                            ..default()
-                        },
-                    ),
-                ));
+                top_row.spawn(NodeBundle {
+                    style: Style {
+                        width: Val::Px(280.0),
+                        ..default()
+                    },
+                    background_color: BackgroundColor(Color::NONE),
+                    ..default()
+                });
             });
 
             root.spawn(NodeBundle {
@@ -1806,6 +1851,7 @@ fn sync_run_modal_overlay(
     mut commands: Commands,
     modal_state: Res<RunModalState>,
     deps: RunModalOverlayDeps,
+    priest_blessings: Query<&PriestAttackSpeedBlessing, With<FriendlyUnit>>,
 ) {
     let existing = deps.roots.get_single().ok();
     match *modal_state {
@@ -1836,6 +1882,11 @@ fn sync_run_modal_overlay(
                 &deps.buffs,
                 *deps.active_formation,
                 &deps.formation_modifiers,
+                &deps.conditional_status,
+                priest_blessings
+                    .iter()
+                    .map(|blessing| blessing.remaining_secs)
+                    .fold(0.0, f32::max),
             );
             let skill_book_panel = build_skill_book_panel_data(
                 &deps.skill_book,
@@ -1883,11 +1934,11 @@ fn spawn_run_modal_overlay(
     art: &crate::visuals::ArtAssets,
 ) {
     let (title, subtitle) = run_modal_titles(screen);
-    let (panel_width, panel_min_height) = match screen {
+    let (panel_width, panel_height) = match screen {
         RunModalScreen::Inventory => (Val::Px(980.0), Val::Px(560.0)),
-        RunModalScreen::Stats => (Val::Px(760.0), Val::Px(460.0)),
-        RunModalScreen::SkillBook => (Val::Px(860.0), Val::Px(560.0)),
-        RunModalScreen::Archive => (Val::Px(920.0), Val::Px(600.0)),
+        RunModalScreen::Stats => (Val::Px(980.0), Val::Px(560.0)),
+        RunModalScreen::SkillBook => (Val::Px(900.0), Val::Px(600.0)),
+        RunModalScreen::Archive => (Val::Px(980.0), Val::Px(620.0)),
         RunModalScreen::UnitUpgrade => (Val::Px(980.0), Val::Px(560.0)),
     };
     commands
@@ -1913,7 +1964,7 @@ fn spawn_run_modal_overlay(
             root.spawn(NodeBundle {
                 style: Style {
                     width: panel_width,
-                    min_height: panel_min_height,
+                    height: panel_height,
                     border: UiRect::all(Val::Px(1.0)),
                     flex_direction: FlexDirection::Column,
                     justify_content: JustifyContent::SpaceBetween,
@@ -1935,22 +1986,24 @@ fn spawn_run_modal_overlay(
                         ..default()
                     },
                 ));
-                panel.spawn(TextBundle {
-                    style: Style {
-                        max_width: Val::Px(520.0),
-                        ..default()
-                    },
-                    text: Text::from_section(
-                        subtitle,
-                        TextStyle {
-                            font_size: 18.0,
-                            color: HUD_TEXT_COLOR,
+                if let Some(subtitle) = subtitle {
+                    panel.spawn(TextBundle {
+                        style: Style {
+                            max_width: Val::Px(640.0),
                             ..default()
                         },
-                    )
-                    .with_justify(JustifyText::Center),
-                    ..default()
-                });
+                        text: Text::from_section(
+                            subtitle,
+                            TextStyle {
+                                font_size: 16.0,
+                                color: HUD_TEXT_COLOR,
+                                ..default()
+                            },
+                        )
+                        .with_justify(JustifyText::Center),
+                        ..default()
+                    });
+                }
                 if matches!(screen, RunModalScreen::Inventory) {
                     spawn_inventory_modal_sections(panel, inventory);
                 }
@@ -1961,7 +2014,7 @@ fn spawn_run_modal_overlay(
                     spawn_skill_book_modal_sections(panel, skill_book_panel, art);
                 }
                 if matches!(screen, RunModalScreen::Archive) {
-                    spawn_archive_sections(panel, archive, art, 360.0);
+                    spawn_archive_sections(panel, archive, art, 430.0);
                 }
                 if matches!(screen, RunModalScreen::UnitUpgrade) {
                     spawn_unit_upgrade_modal_sections(panel, unit_upgrade_panel);
@@ -1997,28 +2050,51 @@ fn spawn_run_modal_overlay(
         });
 }
 
-fn run_modal_titles(screen: RunModalScreen) -> (&'static str, &'static str) {
+fn run_modal_titles(screen: RunModalScreen) -> (&'static str, Option<&'static str>) {
     match screen {
-        RunModalScreen::Inventory => (
-            "INVENTORY",
-            "Gear drops and equipment layouts are managed here. This screen pauses the run.",
-        ),
+        RunModalScreen::Inventory => ("INVENTORY", None),
         RunModalScreen::Stats => (
             "STATS",
-            "Commander and army stat breakdown, including base values and active modifiers.",
+            Some(
+                "Passive level bonuses (all friendlies): +1% damage, +1% attack speed, +1 HP per level.",
+            ),
         ),
         RunModalScreen::SkillBook => (
             "SKILL BOOK",
-            "Selected formations, auras, and level-up effects appear here.",
+            Some("Selected formations, auras, and level-up effects appear here."),
         ),
-        RunModalScreen::Archive => (
-            "ARCHIVE",
-            "Bestiary and codex references for units, skills, drops, and combat rules.",
-        ),
+        RunModalScreen::Archive => ("BESTIARY", None),
         RunModalScreen::UnitUpgrade => (
             "UNIT UPGRADES",
-            "Manage roster promotions and level-cost budget usage.",
+            Some("Manage roster promotions and level-cost budget usage."),
         ),
+    }
+}
+
+fn numeric_stats_row(
+    label: &'static str,
+    base: f32,
+    bonus: f32,
+    final_value: f32,
+) -> StatsPanelRow {
+    StatsPanelRow {
+        label,
+        base,
+        bonus,
+        final_value,
+        base_override: None,
+        final_override: None,
+    }
+}
+
+fn bonus_only_stats_row(label: &'static str, bonus: f32) -> StatsPanelRow {
+    StatsPanelRow {
+        label,
+        base: 0.0,
+        bonus,
+        final_value: 0.0,
+        base_override: Some("-".to_string()),
+        final_override: Some("-".to_string()),
     }
 }
 
@@ -2028,6 +2104,8 @@ fn build_stats_panel_data(
     buffs: &crate::model::GlobalBuffs,
     active_formation: ActiveFormation,
     formation_modifiers: &FormationModifiers,
+    conditional_status: &ConditionalUpgradeStatus,
+    max_priest_blessing_secs: f32,
 ) -> StatsPanelData {
     let commander = &data.units.commander;
     let level = progression.level.max(1);
@@ -2045,85 +2123,105 @@ fn build_stats_panel_data(
     let final_pickup = base_pickup + buffs.pickup_radius_bonus;
     let base_aura = commander.aura_radius;
     let final_aura = base_aura + buffs.commander_aura_radius_bonus;
-    let base_hp = commander.max_hp;
-    let final_hp = base_hp + commander_level_hp_bonus(level);
+    let hp_bonus = commander_level_hp_bonus(level);
+
+    let mut active_buffs = vec![format!("Formation: {}", active_formation.display_name())];
+    if buffs.authority_friendly_loss_resistance > 0.0
+        || buffs.authority_enemy_morale_drain_per_sec > 0.0
+    {
+        active_buffs.push("Authority Aura".to_string());
+    }
+    if buffs.hospitalier_hp_regen_per_sec > 0.0
+        || buffs.hospitalier_cohesion_regen_per_sec > 0.0
+        || buffs.hospitalier_morale_regen_per_sec > 0.0
+    {
+        active_buffs.push("Hospitalier Aura".to_string());
+    }
+    if let Some(active) = conditional_upgrade_active_state(conditional_status, "mob_fury")
+        && active
+    {
+        active_buffs.push("Mob's Fury".to_string());
+    }
+    if let Some(active) = conditional_upgrade_active_state(conditional_status, "mob_justice")
+        && active
+    {
+        active_buffs.push("Mob's Justice".to_string());
+    }
+    if let Some(active) = conditional_upgrade_active_state(conditional_status, "mob_mercy")
+        && active
+    {
+        active_buffs.push("Mob's Mercy".to_string());
+    }
+    if max_priest_blessing_secs > 0.0 {
+        active_buffs.push(format!("Priest Blessing ({max_priest_blessing_secs:.1}s)"));
+    }
 
     StatsPanelData {
-        active_formation_label: active_formation.display_name().to_string(),
         rows: vec![
-            StatsPanelRow {
-                label: "Commander HP",
-                base: base_hp,
-                bonus: final_hp - base_hp,
-                final_value: final_hp,
-            },
-            StatsPanelRow {
-                label: "Damage",
-                base: commander.damage,
-                bonus: damage_final - commander.damage,
-                final_value: damage_final,
-            },
-            StatsPanelRow {
-                label: "Attack Speed (hits/s)",
-                base: base_attack_speed,
-                bonus: attack_speed_final - base_attack_speed,
-                final_value: attack_speed_final,
-            },
-            StatsPanelRow {
-                label: "Armor",
-                base: commander.armor,
-                bonus: buffs.armor_bonus,
-                final_value: commander.armor + buffs.armor_bonus,
-            },
-            StatsPanelRow {
-                label: "Move Speed",
-                base: base_move_speed,
-                bonus: move_final - base_move_speed,
-                final_value: move_final,
-            },
-            StatsPanelRow {
-                label: "Pickup Radius",
-                base: base_pickup,
-                bonus: final_pickup - base_pickup,
-                final_value: final_pickup,
-            },
-            StatsPanelRow {
-                label: "Aura Radius",
-                base: base_aura,
-                bonus: final_aura - base_aura,
-                final_value: final_aura,
-            },
-            StatsPanelRow {
-                label: "Authority Loss Resist",
-                base: 0.0,
-                bonus: buffs.authority_friendly_loss_resistance,
-                final_value: buffs.authority_friendly_loss_resistance,
-            },
-            StatsPanelRow {
-                label: "Authority Enemy Morale Drain/s",
-                base: 0.0,
-                bonus: buffs.authority_enemy_morale_drain_per_sec,
-                final_value: buffs.authority_enemy_morale_drain_per_sec,
-            },
-            StatsPanelRow {
-                label: "Hospitalier HP Regen/s",
-                base: 0.0,
-                bonus: buffs.hospitalier_hp_regen_per_sec,
-                final_value: buffs.hospitalier_hp_regen_per_sec,
-            },
-            StatsPanelRow {
-                label: "Hospitalier Cohesion Regen/s",
-                base: 0.0,
-                bonus: buffs.hospitalier_cohesion_regen_per_sec,
-                final_value: buffs.hospitalier_cohesion_regen_per_sec,
-            },
-            StatsPanelRow {
-                label: "Hospitalier Morale Regen/s",
-                base: 0.0,
-                bonus: buffs.hospitalier_morale_regen_per_sec,
-                final_value: buffs.hospitalier_morale_regen_per_sec,
-            },
+            bonus_only_stats_row("Unit HP", hp_bonus),
+            numeric_stats_row(
+                "Damage",
+                commander.damage,
+                damage_final - commander.damage,
+                damage_final,
+            ),
+            numeric_stats_row(
+                "Attack Speed (hits/s)",
+                base_attack_speed,
+                attack_speed_final - base_attack_speed,
+                attack_speed_final,
+            ),
+            numeric_stats_row(
+                "Armor",
+                commander.armor,
+                buffs.armor_bonus,
+                commander.armor + buffs.armor_bonus,
+            ),
+            numeric_stats_row(
+                "Move Speed",
+                base_move_speed,
+                move_final - base_move_speed,
+                move_final,
+            ),
+            numeric_stats_row(
+                "Pickup Radius",
+                base_pickup,
+                final_pickup - base_pickup,
+                final_pickup,
+            ),
+            numeric_stats_row("Aura Radius", base_aura, final_aura - base_aura, final_aura),
+            numeric_stats_row(
+                "Authority Loss Resist",
+                0.0,
+                buffs.authority_friendly_loss_resistance,
+                buffs.authority_friendly_loss_resistance,
+            ),
+            numeric_stats_row(
+                "Authority Enemy Morale Drain/s",
+                0.0,
+                buffs.authority_enemy_morale_drain_per_sec,
+                buffs.authority_enemy_morale_drain_per_sec,
+            ),
+            numeric_stats_row(
+                "Hospitalier HP Regen/s",
+                0.0,
+                buffs.hospitalier_hp_regen_per_sec,
+                buffs.hospitalier_hp_regen_per_sec,
+            ),
+            numeric_stats_row(
+                "Hospitalier Cohesion Regen/s",
+                0.0,
+                buffs.hospitalier_cohesion_regen_per_sec,
+                buffs.hospitalier_cohesion_regen_per_sec,
+            ),
+            numeric_stats_row(
+                "Hospitalier Morale Regen/s",
+                0.0,
+                buffs.hospitalier_morale_regen_per_sec,
+                buffs.hospitalier_morale_regen_per_sec,
+            ),
         ],
+        active_buffs,
     }
 }
 
@@ -2132,32 +2230,23 @@ fn spawn_stats_modal_sections(parent: &mut ChildBuilder, stats: &StatsPanelData)
         .spawn(NodeBundle {
             style: Style {
                 width: Val::Percent(100.0),
-                min_height: Val::Px(300.0),
-                border: UiRect::all(Val::Px(1.0)),
-                padding: UiRect::all(Val::Px(8.0)),
-                flex_direction: FlexDirection::Column,
-                row_gap: Val::Px(6.0),
+                min_height: Val::Px(410.0),
+                flex_direction: FlexDirection::Row,
+                column_gap: Val::Px(10.0),
                 ..default()
             },
-            background_color: BackgroundColor(Color::srgba(0.04, 0.04, 0.04, 0.34)),
-            border_color: BorderColor(UTILITY_BAR_BORDER),
+            background_color: BackgroundColor(Color::NONE),
             ..default()
         })
-        .with_children(|stats_root| {
-            stats_root.spawn(TextBundle::from_section(
-                format!("Active Formation: {}", stats.active_formation_label),
-                TextStyle {
-                    font_size: 18.0,
-                    color: MENU_BUTTON_TEXT_HOVERED,
-                    ..default()
-                },
-            ));
-            stats_root
+        .with_children(|layout| {
+            layout
                 .spawn(NodeBundle {
                     style: Style {
-                        width: Val::Percent(100.0),
+                        width: Val::Percent(72.0),
                         border: UiRect::all(Val::Px(1.0)),
+                        padding: UiRect::all(Val::Px(8.0)),
                         flex_direction: FlexDirection::Column,
+                        row_gap: Val::Px(6.0),
                         ..default()
                     },
                     background_color: BackgroundColor(Color::srgba(0.06, 0.06, 0.06, 0.4)),
@@ -2186,6 +2275,14 @@ fn spawn_stats_modal_sections(parent: &mut ChildBuilder, stats: &StatsPanelData)
                         });
 
                     for row in &stats.rows {
+                        let base_text = row
+                            .base_override
+                            .clone()
+                            .unwrap_or_else(|| format_stat_value(row.base));
+                        let final_text = row
+                            .final_override
+                            .clone()
+                            .unwrap_or_else(|| format_stat_value(row.final_value));
                         table
                             .spawn(NodeBundle {
                                 style: Style {
@@ -2203,26 +2300,80 @@ fn spawn_stats_modal_sections(parent: &mut ChildBuilder, stats: &StatsPanelData)
                             })
                             .with_children(|line| {
                                 spawn_stats_cell(line, row.label, 42.0, HUD_TEXT_COLOR);
-                                spawn_stats_cell(
-                                    line,
-                                    format_stat_value(row.base).as_str(),
-                                    19.0,
-                                    HUD_TEXT_COLOR,
-                                );
+                                spawn_stats_cell(line, base_text.as_str(), 19.0, HUD_TEXT_COLOR);
                                 spawn_stats_cell(
                                     line,
                                     format_signed_stat_value(row.bonus).as_str(),
                                     19.0,
                                     stat_bonus_color(row.bonus),
                                 );
-                                spawn_stats_cell(
-                                    line,
-                                    format_stat_value(row.final_value).as_str(),
-                                    20.0,
-                                    HUD_TEXT_COLOR,
-                                );
+                                spawn_stats_cell(line, final_text.as_str(), 20.0, HUD_TEXT_COLOR);
                             });
                     }
+                });
+            layout
+                .spawn(NodeBundle {
+                    style: Style {
+                        width: Val::Percent(28.0),
+                        border: UiRect::all(Val::Px(1.0)),
+                        padding: UiRect::all(Val::Px(8.0)),
+                        flex_direction: FlexDirection::Column,
+                        row_gap: Val::Px(6.0),
+                        ..default()
+                    },
+                    background_color: BackgroundColor(Color::srgba(0.04, 0.04, 0.04, 0.34)),
+                    border_color: BorderColor(UTILITY_BAR_BORDER),
+                    ..default()
+                })
+                .with_children(|buffs_col| {
+                    buffs_col.spawn(TextBundle::from_section(
+                        "Active Buffs",
+                        TextStyle {
+                            font_size: 19.0,
+                            color: MENU_BUTTON_TEXT_HOVERED,
+                            ..default()
+                        },
+                    ));
+                    spawn_scrollable_panel(buffs_col, 330.0, |buffs_list| {
+                        if stats.active_buffs.is_empty() {
+                            buffs_list.spawn(TextBundle::from_section(
+                                "No active buffs.",
+                                TextStyle {
+                                    font_size: 14.0,
+                                    color: MENU_BUTTON_TEXT_DISABLED,
+                                    ..default()
+                                },
+                            ));
+                            return;
+                        }
+
+                        for buff in &stats.active_buffs {
+                            buffs_list
+                                .spawn(NodeBundle {
+                                    style: Style {
+                                        width: Val::Percent(100.0),
+                                        border: UiRect::all(Val::Px(1.0)),
+                                        padding: UiRect::all(Val::Px(6.0)),
+                                        ..default()
+                                    },
+                                    background_color: BackgroundColor(Color::srgba(
+                                        0.08, 0.07, 0.06, 0.62,
+                                    )),
+                                    border_color: BorderColor(Color::srgba(0.78, 0.72, 0.58, 0.16)),
+                                    ..default()
+                                })
+                                .with_children(|line| {
+                                    line.spawn(TextBundle::from_section(
+                                        buff,
+                                        TextStyle {
+                                            font_size: 13.0,
+                                            color: HUD_TEXT_COLOR,
+                                            ..default()
+                                        },
+                                    ));
+                                });
+                        }
+                    });
                 });
         });
 }
@@ -2537,7 +2688,7 @@ fn spawn_archive_sections(
     spawn_scrollable_panel(parent, max_height, |root| {
         if archive.entries.is_empty() {
             root.spawn(TextBundle::from_section(
-                "Archive data not available yet.",
+                "Bestiary data not available yet.",
                 TextStyle {
                     font_size: 17.0,
                     color: HUD_TEXT_COLOR,
@@ -2645,8 +2796,8 @@ fn spawn_inventory_modal_sections(parent: &mut ChildBuilder, inventory: &Invento
             layout
                 .spawn(NodeBundle {
                     style: Style {
-                        width: Val::Percent(54.0),
-                        min_height: Val::Px(340.0),
+                        width: Val::Percent(50.0),
+                        min_height: Val::Px(430.0),
                         border: UiRect::all(Val::Px(1.0)),
                         padding: UiRect::all(Val::Px(8.0)),
                         flex_direction: FlexDirection::Column,
@@ -2659,16 +2810,16 @@ fn spawn_inventory_modal_sections(parent: &mut ChildBuilder, inventory: &Invento
                 })
                 .with_children(|bag| {
                     bag.spawn(TextBundle::from_section(
-                        "Bag Drops",
+                        "Backpack",
                         TextStyle {
                             font_size: 20.0,
                             color: MENU_BUTTON_TEXT_HOVERED,
                             ..default()
                         },
                     ));
-                    let min_slots = 24usize;
+                    let min_slots = 30usize;
                     let slot_count = inventory.bag.len().max(min_slots);
-                    spawn_scrollable_panel(bag, 300.0, |bag_scroll| {
+                    spawn_scrollable_panel(bag, 390.0, |bag_scroll| {
                         bag_scroll
                             .spawn(NodeBundle {
                                 style: Style {
@@ -2686,8 +2837,8 @@ fn spawn_inventory_modal_sections(parent: &mut ChildBuilder, inventory: &Invento
                                     let maybe_item = inventory.bag.get(index);
                                     grid.spawn(NodeBundle {
                                         style: Style {
-                                            width: Val::Px(80.0),
-                                            height: Val::Px(58.0),
+                                            width: Val::Px(62.0),
+                                            height: Val::Px(62.0),
                                             border: UiRect::all(Val::Px(1.0)),
                                             justify_content: JustifyContent::Center,
                                             align_items: AlignItems::Center,
@@ -2705,9 +2856,9 @@ fn spawn_inventory_modal_sections(parent: &mut ChildBuilder, inventory: &Invento
                                     .with_children(|slot| {
                                         if let Some(item) = maybe_item {
                                             slot.spawn(TextBundle::from_section(
-                                                truncate_inventory_label(&item.name, 14),
+                                                truncate_inventory_label(&item.name, 10),
                                                 TextStyle {
-                                                    font_size: 12.0,
+                                                    font_size: 10.5,
                                                     color: MENU_BUTTON_TEXT_HOVERED,
                                                     ..default()
                                                 },
@@ -2716,7 +2867,7 @@ fn spawn_inventory_modal_sections(parent: &mut ChildBuilder, inventory: &Invento
                                             slot.spawn(TextBundle::from_section(
                                                 "--",
                                                 TextStyle {
-                                                    font_size: 11.0,
+                                                    font_size: 10.0,
                                                     color: MENU_BUTTON_TEXT_DISABLED,
                                                     ..default()
                                                 },
@@ -2731,8 +2882,8 @@ fn spawn_inventory_modal_sections(parent: &mut ChildBuilder, inventory: &Invento
             layout
                 .spawn(NodeBundle {
                     style: Style {
-                        width: Val::Percent(44.0),
-                        min_height: Val::Px(340.0),
+                        width: Val::Percent(50.0),
+                        min_height: Val::Px(430.0),
                         border: UiRect::all(Val::Px(1.0)),
                         padding: UiRect::all(Val::Px(8.0)),
                         flex_direction: FlexDirection::Column,
@@ -2745,14 +2896,14 @@ fn spawn_inventory_modal_sections(parent: &mut ChildBuilder, inventory: &Invento
                 })
                 .with_children(|setups| {
                     setups.spawn(TextBundle::from_section(
-                        "Equipment Setups",
+                        "Equipment",
                         TextStyle {
                             font_size: 20.0,
                             color: MENU_BUTTON_TEXT_HOVERED,
                             ..default()
                         },
                     ));
-                    spawn_scrollable_panel(setups, 300.0, |setups_scroll| {
+                    spawn_scrollable_panel(setups, 390.0, |setups_scroll| {
                         for unit_type in EquipmentUnitType::all() {
                             let Some(setup) = inventory.setup_for(unit_type) else {
                                 continue;
@@ -2761,31 +2912,43 @@ fn spawn_inventory_modal_sections(parent: &mut ChildBuilder, inventory: &Invento
                                 .spawn(NodeBundle {
                                     style: Style {
                                         width: Val::Percent(100.0),
-                                        border: UiRect::all(Val::Px(1.0)),
-                                        padding: UiRect::all(Val::Px(6.0)),
-                                        flex_direction: FlexDirection::Column,
-                                        row_gap: Val::Px(4.0),
+                                        min_height: Val::Px(68.0),
+                                        padding: UiRect::axes(Val::Px(2.0), Val::Px(2.0)),
+                                        flex_direction: FlexDirection::Row,
+                                        align_items: AlignItems::Center,
+                                        column_gap: Val::Px(6.0),
                                         ..default()
                                     },
-                                    background_color: BackgroundColor(Color::srgba(
-                                        0.08, 0.07, 0.06, 0.62,
-                                    )),
-                                    border_color: BorderColor(Color::srgba(0.78, 0.72, 0.58, 0.24)),
+                                    background_color: BackgroundColor(Color::NONE),
                                     ..default()
                                 })
                                 .with_children(|unit_setup| {
-                                    unit_setup.spawn(TextBundle::from_section(
-                                        setup.unit_type.label(),
-                                        TextStyle {
-                                            font_size: 13.0,
-                                            color: MENU_BUTTON_TEXT_HOVERED,
-                                            ..default()
-                                        },
-                                    ));
                                     unit_setup
                                         .spawn(NodeBundle {
                                             style: Style {
-                                                width: Val::Percent(100.0),
+                                                width: Val::Px(36.0),
+                                                justify_content: JustifyContent::Center,
+                                                align_items: AlignItems::Center,
+                                                ..default()
+                                            },
+                                            background_color: BackgroundColor(Color::NONE),
+                                            ..default()
+                                        })
+                                        .with_children(|tag| {
+                                            tag.spawn(TextBundle::from_section(
+                                                equipment_unit_short_label(setup.unit_type),
+                                                TextStyle {
+                                                    font_size: 14.0,
+                                                    color: MENU_BUTTON_TEXT_HOVERED,
+                                                    ..default()
+                                                },
+                                            ));
+                                        });
+                                    unit_setup
+                                        .spawn(NodeBundle {
+                                            style: Style {
+                                                width: Val::Percent(92.0),
+                                                flex_direction: FlexDirection::Row,
                                                 column_gap: Val::Px(6.0),
                                                 ..default()
                                             },
@@ -2797,8 +2960,8 @@ fn spawn_inventory_modal_sections(parent: &mut ChildBuilder, inventory: &Invento
                                                 slot_row
                                                     .spawn(NodeBundle {
                                                         style: Style {
-                                                            width: Val::Percent(33.3),
-                                                            height: Val::Px(50.0),
+                                                            width: Val::Px(62.0),
+                                                            height: Val::Px(62.0),
                                                             border: UiRect::all(Val::Px(1.0)),
                                                             justify_content: JustifyContent::Center,
                                                             align_items: AlignItems::Center,
@@ -2817,12 +2980,12 @@ fn spawn_inventory_modal_sections(parent: &mut ChildBuilder, inventory: &Invento
                                                         let label = match &slot.item_id {
                                                             Some(item_id) => {
                                                                 truncate_inventory_label(
-                                                                    item_id, 14,
+                                                                    item_id, 10,
                                                                 )
                                                             }
                                                             None => truncate_inventory_label(
                                                                 &slot.display_name,
-                                                                14,
+                                                                10,
                                                             ),
                                                         };
                                                         let color = if slot.item_id.is_some() {
@@ -2833,7 +2996,7 @@ fn spawn_inventory_modal_sections(parent: &mut ChildBuilder, inventory: &Invento
                                                         slot_cell.spawn(TextBundle::from_section(
                                                             label,
                                                             TextStyle {
-                                                                font_size: 11.0,
+                                                                font_size: 10.0,
                                                                 color,
                                                                 ..default()
                                                             },
@@ -2855,6 +3018,18 @@ fn truncate_inventory_label(label: &str, max_chars: usize) -> String {
         format!("{clipped}...")
     } else {
         clipped
+    }
+}
+
+fn equipment_unit_short_label(unit_type: EquipmentUnitType) -> &'static str {
+    match unit_type {
+        EquipmentUnitType::Commander => "C",
+        EquipmentUnitType::Tier0 => "T0",
+        EquipmentUnitType::Tier1 => "T1",
+        EquipmentUnitType::Tier2 => "T2",
+        EquipmentUnitType::Tier3 => "T3",
+        EquipmentUnitType::Tier4 => "T4",
+        EquipmentUnitType::Tier5 => "T5",
     }
 }
 
@@ -3427,10 +3602,9 @@ fn spawn_skill_bar(parent: &mut ChildBuilder, art: &crate::visuals::ArtAssets) {
                     justify_content: JustifyContent::Center,
                     align_items: AlignItems::Center,
                     column_gap: Val::Px(6.0),
-                    padding: UiRect::all(Val::Px(6.0)),
                     ..default()
                 },
-                background_color: BackgroundColor(Color::srgba(0.05, 0.045, 0.04, 0.28)),
+                background_color: BackgroundColor(Color::NONE),
                 ..default()
             },
         ))
@@ -3616,8 +3790,8 @@ fn utility_bar_hotkey_label(screen: RunModalScreen) -> &'static str {
     match screen {
         RunModalScreen::Inventory => "I",
         RunModalScreen::Stats => "O",
-        RunModalScreen::SkillBook => "P",
-        RunModalScreen::Archive => "K",
+        RunModalScreen::SkillBook => "K",
+        RunModalScreen::Archive => "B",
         RunModalScreen::UnitUpgrade => "U",
     }
 }
@@ -4904,6 +5078,24 @@ fn update_minimap_hud(
     });
 }
 
+fn draw_commander_aura_footprint(
+    mut gizmos: Gizmos,
+    data: Res<GameData>,
+    buffs: Res<crate::model::GlobalBuffs>,
+    commanders: Query<&Transform, With<CommanderUnit>>,
+) {
+    let Ok(commander_transform) = commanders.get_single() else {
+        return;
+    };
+    let radius = commander_aura_radius(&data, Some(&buffs)).max(1.0);
+    let center = commander_transform.translation.truncate();
+    let edge_color = Color::srgba(0.62, 0.86, 1.0, 0.22);
+    let inner_color = Color::srgba(0.62, 0.86, 1.0, 0.08);
+
+    gizmos.circle_2d(center, radius, edge_color);
+    gizmos.circle_2d(center, radius * 0.66, inner_color);
+}
+
 fn spawn_minimap_dot(parent: &mut ChildBuilder, draw_pos: Vec2, dot_size: f32, color: Color) {
     parent.spawn(NodeBundle {
         style: Style {
@@ -4999,7 +5191,7 @@ pub fn conditional_upgrade_hud_status_text(
     if max_priest_blessing_secs > 0.0 {
         entries.push(format!("Priest Blessing: {:.1}s", max_priest_blessing_secs));
     }
-    entries.join(" | ")
+    entries.join("\n")
 }
 
 fn conditional_upgrade_active_state(status: &ConditionalUpgradeStatus, kind: &str) -> Option<bool> {
@@ -5424,8 +5616,8 @@ mod tests {
         for key in [
             bevy::prelude::KeyCode::KeyI,
             bevy::prelude::KeyCode::KeyO,
-            bevy::prelude::KeyCode::KeyP,
             bevy::prelude::KeyCode::KeyK,
+            bevy::prelude::KeyCode::KeyB,
             bevy::prelude::KeyCode::KeyU,
         ] {
             let Some(screen) = hotkey_to_run_modal_screen(key) else {
@@ -5476,19 +5668,23 @@ mod tests {
         let progression = Progression::default();
         let buffs = GlobalBuffs::default();
         let modifiers = FormationModifiers::default();
+        let conditional_status = ConditionalUpgradeStatus::default();
         let panel = build_stats_panel_data(
             &data,
             &progression,
             &buffs,
             ActiveFormation::Square,
             &modifiers,
+            &conditional_status,
+            0.0,
         );
 
         assert!(!panel.rows.is_empty());
         let damage_row = find_stats_row(&panel.rows, "Damage").expect("damage row");
         assert!((damage_row.base - damage_row.final_value).abs() < 0.001);
-        let hp_row = find_stats_row(&panel.rows, "Commander HP").expect("hp row");
+        let hp_row = find_stats_row(&panel.rows, "Unit HP").expect("hp row");
         assert!((hp_row.bonus - 0.0).abs() < 0.001);
+        assert_eq!(hp_row.base_override.as_deref(), Some("-"));
     }
 
     #[test]
@@ -5518,15 +5714,18 @@ mod tests {
             defense_multiplier: 1.0,
             move_speed_multiplier: 1.08,
         };
+        let conditional_status = ConditionalUpgradeStatus::default();
         let panel = build_stats_panel_data(
             &data,
             &progression,
             &buffs,
             ActiveFormation::Diamond,
             &modifiers,
+            &conditional_status,
+            0.0,
         );
 
-        let hp_row = find_stats_row(&panel.rows, "Commander HP").expect("hp row");
+        let hp_row = find_stats_row(&panel.rows, "Unit HP").expect("hp row");
         assert!((hp_row.bonus - 7.0).abs() < 0.001);
         let damage_row = find_stats_row(&panel.rows, "Damage").expect("damage row");
         assert!(damage_row.final_value > damage_row.base);
