@@ -39,6 +39,7 @@ impl Default for FpsCounterRuntime {
 }
 
 const WINDOW_TITLE_BASE: &str = "Crusade Roguelite";
+const GAME_VERSION: &str = env!("CARGO_PKG_VERSION");
 const FPS_SAMPLE_WINDOW_SECS: f32 = 0.33;
 
 pub struct PerformancePlugin;
@@ -110,10 +111,11 @@ pub fn sleep_duration_for_elapsed(elapsed: Duration, target_frame: Duration) -> 
 }
 
 pub fn format_window_title(fps: f32) -> String {
+    let versioned_title = format!("{WINDOW_TITLE_BASE} | v{GAME_VERSION}");
     if fps <= 0.0 {
-        return WINDOW_TITLE_BASE.to_string();
+        return versioned_title;
     }
-    format!("{WINDOW_TITLE_BASE} | FPS: {:.0}", fps)
+    format!("{versioned_title} | FPS: {:.0}", fps)
 }
 
 #[cfg(test)]
@@ -151,7 +153,11 @@ mod tests {
 
     #[test]
     fn window_title_includes_fps_when_available() {
-        assert_eq!(format_window_title(0.0), "Crusade Roguelite");
-        assert_eq!(format_window_title(61.2), "Crusade Roguelite | FPS: 61");
+        let expected_base = format!("Crusade Roguelite | v{}", env!("CARGO_PKG_VERSION"));
+        assert_eq!(format_window_title(0.0), expected_base);
+        assert_eq!(
+            format_window_title(61.2),
+            format!("{expected_base} | FPS: 61")
+        );
     }
 }
