@@ -233,7 +233,7 @@
   - `docs/SYSTEMS_REFERENCE.md`
 
 ### CRU-069 - Enemy Stacking/Jitter Mitigation Pass
-- Status: `TODO`
+- Status: `DONE`
 - Type: `Core`
 - Priority: `P0`
 - Depends on: `CRU-068`

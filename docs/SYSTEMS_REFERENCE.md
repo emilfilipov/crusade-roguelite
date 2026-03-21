@@ -153,6 +153,8 @@ Use this for entity/component/system lookup without scanning all source files.
 - Reduced dense enemy crowd jitter/stacking:
   - enemy collision radius is now data-driven (`enemies.bandit_raider.collision_radius`),
   - collision correction now uses frame-time-aware damping + max push clamp,
+  - collision solver now runs 2 iterative passes per frame with per-pass push cap,
+  - enemy-enemy pairs use slightly larger separation distance (`x1.14`) to reduce mass overlap,
   - chase movement step is clamped to avoid overshooting into stop distance.
 - Added per-upgrade requirement framework:
   - data schema now supports typed requirement discriminators (`tier0_share`, `formation_active`, `map_tag`),
@@ -562,7 +564,8 @@ Friendly combined outgoing multiplier has lower clamp:
 
 ### `collision.rs`
 - resolves eligible overlap pairs (enemy-enemy and enemy-inner-retinue)
-- applies damped/clamped correction vectors for frame-rate-stable separation
+- applies iterative damped/clamped correction vectors for frame-rate-stable separation
+- inflates enemy-enemy minimum spacing to reduce dense crowd overlap
 - keeps post-separation positions inside map bounds
 
 ### `squad.rs`

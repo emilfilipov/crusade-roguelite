@@ -10,6 +10,9 @@ const COLLISION_CORRECTION_DAMPING: f32 = 0.84;
 const COLLISION_MAX_PUSH_PER_FRAME: f32 = 10.0;
 const COLLISION_MIN_OVERLAP_TO_RESOLVE: f32 = 0.05;
 const COLLISION_MIN_CELL_SIZE: f32 = 24.0;
+const COLLISION_SOLVER_PASSES: usize = 2;
+const COLLISION_PAIR_MAX_PUSH: f32 = 6.0;
+const ENEMY_ENEMY_COLLISION_DISTANCE_MULTIPLIER: f32 = 1.14;
 
 pub struct CollisionPlugin;
 
@@ -66,72 +69,99 @@ fn resolve_unit_collisions(
         .map(|(_, radius, _, _)| *radius)
         .fold(0.0_f32, f32::max);
     let cell_size = (max_radius * 2.0).max(COLLISION_MIN_CELL_SIZE);
+    let mut positions: Vec<Vec2> = snapshot
+        .iter()
+        .map(|(_, _, position, _)| *position)
+        .collect();
+    let original_positions = positions.clone();
+    let per_pass_push_cap = COLLISION_MAX_PUSH_PER_FRAME / COLLISION_SOLVER_PASSES as f32;
 
-    let mut grid: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
-    for (index, (_, radius, position, _)) in snapshot.iter().enumerate() {
-        if *radius <= 0.0 {
-            continue;
-        }
-        grid.entry(spatial_cell_key(*position, cell_size))
-            .or_default()
-            .push(index);
-    }
-
-    let mut corrections = vec![Vec2::ZERO; snapshot.len()];
-    for i in 0..snapshot.len() {
-        let (_, radius_a, position_a, unit_a) = snapshot[i];
-        if radius_a <= 0.0 {
-            continue;
-        }
-        let cell = spatial_cell_key(position_a, cell_size);
-        for neighbor_cell in neighboring_cells(cell) {
-            let Some(candidates) = grid.get(&neighbor_cell) else {
+    for _ in 0..COLLISION_SOLVER_PASSES {
+        let mut grid: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
+        for (index, (_, radius, _, _)) in snapshot.iter().enumerate() {
+            if *radius <= 0.0 {
                 continue;
-            };
-            for &j in candidates {
-                if j <= i {
+            }
+            grid.entry(spatial_cell_key(positions[index], cell_size))
+                .or_default()
+                .push(index);
+        }
+
+        let mut corrections = vec![Vec2::ZERO; snapshot.len()];
+        for i in 0..snapshot.len() {
+            let (_, radius_a, _, unit_a) = snapshot[i];
+            if radius_a <= 0.0 {
+                continue;
+            }
+            let position_a = positions[i];
+            let cell = spatial_cell_key(position_a, cell_size);
+            for neighbor_cell in neighboring_cells(cell) {
+                let Some(candidates) = grid.get(&neighbor_cell) else {
                     continue;
+                };
+                for &j in candidates {
+                    if j <= i {
+                        continue;
+                    }
+                    let (_, radius_b, _, unit_b) = snapshot[j];
+                    if radius_b <= 0.0 {
+                        continue;
+                    }
+                    let position_b = positions[j];
+                    if !should_resolve_collision_pair(
+                        unit_a,
+                        position_a,
+                        unit_b,
+                        position_b,
+                        commander_position,
+                        inner_retinue_radius,
+                    ) {
+                        continue;
+                    }
+                    let min_distance = pair_min_distance(radius_a, unit_a, radius_b, unit_b);
+                    if min_distance <= 0.0 {
+                        continue;
+                    }
+                    if let Some(push) =
+                        pair_push(position_a, position_b, min_distance, (i + j) as u32)
+                    {
+                        corrections[i] -= push;
+                        corrections[j] += push;
+                    }
                 }
-                let (_, radius_b, position_b, unit_b) = snapshot[j];
-                if radius_b <= 0.0 {
-                    continue;
-                }
-                if !should_resolve_collision_pair(
-                    unit_a,
-                    position_a,
-                    unit_b,
-                    position_b,
-                    commander_position,
-                    inner_retinue_radius,
-                ) {
-                    continue;
-                }
-                let min_distance = radius_a + radius_b;
-                if min_distance <= 0.0 {
-                    continue;
-                }
-                if let Some(push) = pair_push(position_a, position_b, min_distance, (i + j) as u32)
-                {
-                    corrections[i] -= push;
-                    corrections[j] += push;
-                }
+            }
+        }
+
+        for (index, correction) in corrections.into_iter().enumerate() {
+            let damped = damp_collision_correction(
+                correction,
+                time.delta_seconds(),
+                COLLISION_CORRECTION_DAMPING,
+                per_pass_push_cap,
+            );
+            if damped.length_squared() <= 0.000001 {
+                continue;
+            }
+            positions[index] += damped;
+            if let Some(map_bounds) = &bounds {
+                positions[index].x = positions[index]
+                    .x
+                    .clamp(-map_bounds.half_width, map_bounds.half_width);
+                positions[index].y = positions[index]
+                    .y
+                    .clamp(-map_bounds.half_height, map_bounds.half_height);
             }
         }
     }
 
     for (index, (entity, _, _, _)) in snapshot.iter().enumerate() {
-        let correction = damp_collision_correction(
-            corrections[index],
-            time.delta_seconds(),
-            COLLISION_CORRECTION_DAMPING,
-            COLLISION_MAX_PUSH_PER_FRAME,
-        );
-        if correction.length_squared() <= 0.000001 {
+        let delta = positions[index] - original_positions[index];
+        if delta.length_squared() <= 0.000001 {
             continue;
         }
         if let Ok(mut transform) = unit_queries.p1().get_mut(*entity) {
-            transform.translation.x += correction.x;
-            transform.translation.y += correction.y;
+            transform.translation.x += delta.x;
+            transform.translation.y += delta.y;
             if let Some(map_bounds) = &bounds {
                 transform.translation.x = transform
                     .translation
@@ -226,6 +256,18 @@ fn is_inner_ring_retinue(
     position.distance_squared(commander_pos) <= inner_retinue_radius * inner_retinue_radius
 }
 
+fn pair_min_distance(radius_a: f32, unit_a: Unit, radius_b: f32, unit_b: Unit) -> f32 {
+    let base = radius_a + radius_b;
+    if base <= 0.0 {
+        return 0.0;
+    }
+    if unit_a.team == Team::Enemy && unit_b.team == Team::Enemy {
+        base * ENEMY_ENEMY_COLLISION_DISTANCE_MULTIPLIER
+    } else {
+        base
+    }
+}
+
 pub fn pair_push(position_a: Vec2, position_b: Vec2, min_distance: f32, seed: u32) -> Option<Vec2> {
     let delta = position_b - position_a;
     let distance_sq = delta.length_squared();
@@ -245,14 +287,16 @@ pub fn pair_push(position_a: Vec2, position_b: Vec2, min_distance: f32, seed: u3
     if overlap <= COLLISION_MIN_OVERLAP_TO_RESOLVE {
         return None;
     }
-    Some(direction * overlap * 0.5)
+    Some(direction * (overlap * 0.5).min(COLLISION_PAIR_MAX_PUSH))
 }
 
 #[cfg(test)]
 mod tests {
     use bevy::prelude::Vec2;
 
-    use crate::collision::{damp_collision_correction, pair_push, should_resolve_collision_pair};
+    use crate::collision::{
+        damp_collision_correction, pair_min_distance, pair_push, should_resolve_collision_pair,
+    };
     use crate::model::{Team, Unit, UnitKind};
 
     fn unit(team: Team, kind: UnitKind) -> Unit {
@@ -352,5 +396,15 @@ mod tests {
             commander_pos,
             inner_radius,
         ));
+    }
+
+    #[test]
+    fn enemy_enemy_pairs_use_larger_spacing_radius() {
+        let enemy_a = unit(Team::Enemy, UnitKind::EnemyBanditRaider);
+        let enemy_b = unit(Team::Enemy, UnitKind::EnemyBanditRaider);
+        let friendly = unit(Team::Friendly, UnitKind::ChristianPeasantInfantry);
+        let enemy_spacing = pair_min_distance(10.0, enemy_a, 10.0, enemy_b);
+        let mixed_spacing = pair_min_distance(10.0, enemy_a, 10.0, friendly);
+        assert!(enemy_spacing > mixed_spacing);
     }
 }
