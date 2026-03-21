@@ -13,6 +13,7 @@ use crate::squad::RosterEconomy;
 
 const LEVEL_UP_OPTION_COUNT: usize = 3;
 const DEFAULT_UPGRADE_WEIGHT_EXPONENT: f32 = 2.0;
+const UPGRADE_VALUE_TIER_COUNT: u32 = 5;
 const AUTHORITY_ENEMY_MORALE_DRAIN_SCALE: f32 = 6.0;
 const HOSPITALIER_COHESION_REGEN_SCALE: f32 = 0.35;
 const HOSPITALIER_MORALE_REGEN_SCALE: f32 = 0.18;
@@ -152,6 +153,28 @@ pub enum UpgradeCardIcon {
     MobFury,
     MobJustice,
     MobMercy,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum UpgradeValueTier {
+    Common,
+    Uncommon,
+    Rare,
+    Epic,
+    Mythical,
+    Unique,
+}
+
+impl UpgradeValueTier {
+    const fn from_weighted_index(index: u32) -> Self {
+        match index {
+            0 => Self::Common,
+            1 => Self::Uncommon,
+            2 => Self::Rare,
+            3 => Self::Epic,
+            _ => Self::Mythical,
+        }
+    }
 }
 
 #[derive(Resource, Clone, Copy, Debug)]
@@ -604,9 +627,41 @@ fn roll_upgrade_value(config: &UpgradeConfig, rng: &mut UpgradeRngState) -> f32 
         .weight_exponent
         .unwrap_or(DEFAULT_UPGRADE_WEIGHT_EXPONENT)
         .max(0.01);
-    let roll = rng.next_f32().powf(exponent);
-    let value = min_value + (max_value - min_value) * roll;
+    let tier_index = weighted_roll_tier_index(exponent, rng);
+    let value = tier_value(min_value, max_value, tier_index);
     quantize_to_step(value, min_value, max_value, config.value_step)
+}
+
+fn weighted_roll_tier_index(exponent: f32, rng: &mut UpgradeRngState) -> u32 {
+    let roll = rng.next_f32().powf(exponent);
+    let bucket_count = UPGRADE_VALUE_TIER_COUNT as f32;
+    ((roll * bucket_count).floor() as u32).min(UPGRADE_VALUE_TIER_COUNT.saturating_sub(1))
+}
+
+fn tier_value(min_value: f32, max_value: f32, tier_index: u32) -> f32 {
+    if UPGRADE_VALUE_TIER_COUNT <= 1 {
+        return min_value;
+    }
+    let clamped_index = tier_index.min(UPGRADE_VALUE_TIER_COUNT - 1);
+    let normalized = clamped_index as f32 / (UPGRADE_VALUE_TIER_COUNT - 1) as f32;
+    min_value + (max_value - min_value) * normalized
+}
+
+pub fn upgrade_value_tier(upgrade: &UpgradeConfig) -> UpgradeValueTier {
+    if upgrade.one_time {
+        return UpgradeValueTier::Unique;
+    }
+
+    let min_value = upgrade.min_value.unwrap_or(upgrade.value);
+    let max_value = upgrade.max_value.unwrap_or(min_value);
+    if (max_value - min_value).abs() <= f32::EPSILON {
+        return UpgradeValueTier::Common;
+    }
+
+    let normalized = ((upgrade.value - min_value) / (max_value - min_value)).clamp(0.0, 1.0);
+    let weighted_index =
+        (normalized * (UPGRADE_VALUE_TIER_COUNT.saturating_sub(1)) as f32).round() as u32;
+    UpgradeValueTier::from_weighted_index(weighted_index)
 }
 
 fn quantize_to_step(value: f32, min_value: f32, max_value: f32, step: Option<f32>) -> f32 {
@@ -927,10 +982,10 @@ mod tests {
     };
     use crate::model::GlobalBuffs;
     use crate::upgrades::{
-        OneTimeUpgradeTracker, SkillBookLog, UpgradeCardIcon, UpgradeRngState,
+        OneTimeUpgradeTracker, SkillBookLog, UpgradeCardIcon, UpgradeRngState, UpgradeValueTier,
         commander_level_hp_bonus, progression_lock_reason, roll_upgrade_options,
         roll_upgrade_value, upgrade_card_icon, upgrade_display_description, upgrade_display_title,
-        xp_required_for_level,
+        upgrade_value_tier, xp_required_for_level,
     };
 
     fn upgrade(kind: &str, id: &str) -> UpgradeConfig {
@@ -985,6 +1040,62 @@ mod tests {
             let value = roll_upgrade_value(&upgrade, &mut rng);
             assert!((1.0..=4.0).contains(&value));
         }
+    }
+
+    #[test]
+    fn weighted_roll_uses_fixed_five_value_buckets() {
+        let mut upgrade = upgrade("damage", "bucketed");
+        upgrade.min_value = Some(10.0);
+        upgrade.max_value = Some(30.0);
+        upgrade.value_step = None;
+        let mut rng = UpgradeRngState {
+            state: 0x1234_ABCD_9876_EF01,
+        };
+
+        let mut distinct_scaled = HashSet::new();
+        for _ in 0..300 {
+            let value = roll_upgrade_value(&upgrade, &mut rng);
+            distinct_scaled.insert((value * 1000.0).round() as i32);
+        }
+        assert!(distinct_scaled.len() <= super::UPGRADE_VALUE_TIER_COUNT as usize);
+
+        let expected = [10.0, 15.0, 20.0, 25.0, 30.0];
+        for scaled in distinct_scaled {
+            let value = scaled as f32 / 1000.0;
+            assert!(
+                expected
+                    .iter()
+                    .any(|candidate| (value - *candidate).abs() < 0.001)
+            );
+        }
+    }
+
+    #[test]
+    fn one_time_upgrades_are_classified_as_unique_tier() {
+        let mut one_time = upgrade("mob_fury", "mob_fury");
+        one_time.one_time = true;
+        one_time.min_value = None;
+        one_time.max_value = None;
+        one_time.value = 1.0;
+        assert_eq!(upgrade_value_tier(&one_time), UpgradeValueTier::Unique);
+    }
+
+    #[test]
+    fn weighted_upgrade_values_map_to_named_tiers() {
+        let mut weighted = upgrade("damage", "damage_tiered");
+        weighted.min_value = Some(10.0);
+        weighted.max_value = Some(30.0);
+
+        weighted.value = 10.0;
+        assert_eq!(upgrade_value_tier(&weighted), UpgradeValueTier::Common);
+        weighted.value = 15.0;
+        assert_eq!(upgrade_value_tier(&weighted), UpgradeValueTier::Uncommon);
+        weighted.value = 20.0;
+        assert_eq!(upgrade_value_tier(&weighted), UpgradeValueTier::Rare);
+        weighted.value = 25.0;
+        assert_eq!(upgrade_value_tier(&weighted), UpgradeValueTier::Epic);
+        weighted.value = 30.0;
+        assert_eq!(upgrade_value_tier(&weighted), UpgradeValueTier::Mythical);
     }
 
     #[test]

@@ -25,9 +25,9 @@ use crate::squad::{
 };
 use crate::upgrades::{
     ConditionalUpgradeEffects, ConditionalUpgradeStatus, Progression, ProgressionLockFeedback,
-    SelectUpgradeEvent, SkillBookLog, UpgradeCardIcon, UpgradeDraft, commander_level_hp_bonus,
-    skill_book_entry_cumulative_description, upgrade_card_icon, upgrade_display_description,
-    upgrade_display_title,
+    SelectUpgradeEvent, SkillBookLog, UpgradeCardIcon, UpgradeDraft, UpgradeValueTier,
+    commander_level_hp_bonus, skill_book_entry_cumulative_description, upgrade_card_icon,
+    upgrade_display_description, upgrade_display_title, upgrade_value_tier,
 };
 
 #[derive(Resource, Clone, Debug)]
@@ -173,6 +173,14 @@ struct LevelUpMenuRoot;
 #[derive(Component, Clone, Copy, Debug, Eq, PartialEq)]
 struct LevelUpOptionAction {
     index: usize,
+}
+
+#[derive(Component, Clone, Copy, Debug)]
+struct LevelUpCardTierStyle {
+    base_border: Color,
+    hover_border: Color,
+    base_glow: Color,
+    hover_glow: Color,
 }
 
 #[derive(Component, Clone, Copy, Debug, Eq, PartialEq)]
@@ -1475,6 +1483,7 @@ fn spawn_level_up_menu(
                             upgrade_display_title(upgrade),
                             &upgrade_display_description(upgrade),
                             upgrade_icon_for(upgrade_card_icon(upgrade), &art),
+                            upgrade_value_tier(upgrade),
                         );
                     }
                 });
@@ -1487,7 +1496,9 @@ fn spawn_level_up_card(
     title: &str,
     description: &str,
     icon: Handle<Image>,
+    tier: UpgradeValueTier,
 ) {
+    let style = level_up_card_tier_style(tier);
     parent
         .spawn((
             ButtonBundle {
@@ -1503,9 +1514,11 @@ fn spawn_level_up_card(
                     ..default()
                 },
                 background_color: BackgroundColor(Color::srgba(0.08, 0.07, 0.06, 0.74)),
-                border_color: BorderColor(Color::srgba(0.82, 0.76, 0.64, 0.34)),
+                border_color: BorderColor(style.base_border),
                 ..default()
             },
+            Outline::new(Val::Px(3.0), Val::Px(1.0), style.base_glow),
+            style,
             LevelUpOptionAction { index },
         ))
         .with_children(|card| {
@@ -1552,6 +1565,27 @@ fn spawn_level_up_card(
                 ..default()
             });
         });
+}
+
+fn level_up_card_tier_style(tier: UpgradeValueTier) -> LevelUpCardTierStyle {
+    let base = level_up_tier_border_color(tier);
+    LevelUpCardTierStyle {
+        base_border: base.with_alpha(0.72),
+        hover_border: base.with_alpha(0.98),
+        base_glow: base.with_alpha(0.28),
+        hover_glow: base.with_alpha(0.48),
+    }
+}
+
+fn level_up_tier_border_color(tier: UpgradeValueTier) -> Color {
+    match tier {
+        UpgradeValueTier::Common => Color::srgb(0.82, 0.8, 0.76),
+        UpgradeValueTier::Uncommon => Color::srgb(0.34, 0.58, 0.95),
+        UpgradeValueTier::Rare => Color::srgb(0.95, 0.84, 0.22),
+        UpgradeValueTier::Epic => Color::srgb(0.67, 0.38, 0.91),
+        UpgradeValueTier::Mythical => Color::srgb(0.96, 0.56, 0.2),
+        UpgradeValueTier::Unique => Color::srgb(0.55, 0.35, 0.2),
+    }
 }
 
 fn upgrade_icon_for(icon_kind: UpgradeCardIcon, art: &crate::visuals::ArtAssets) -> Handle<Image> {
@@ -4237,29 +4271,39 @@ fn handle_level_up_buttons(
         (
             &Interaction,
             &LevelUpOptionAction,
+            &LevelUpCardTierStyle,
             &mut BorderColor,
             &mut BackgroundColor,
+            &mut Outline,
         ),
         (Changed<Interaction>, With<Button>),
     >,
     mut select_events: EventWriter<SelectUpgradeEvent>,
 ) {
-    for (interaction, option, mut border_color, mut background) in &mut buttons {
+    for (interaction, option, tier_style, mut border_color, mut background, mut outline) in
+        &mut buttons
+    {
         match *interaction {
             Interaction::Pressed => {
-                *border_color = BorderColor(MENU_BUTTON_BORDER_HOVERED);
+                *border_color = BorderColor(tier_style.hover_border);
                 *background = BackgroundColor(Color::srgba(0.14, 0.12, 0.09, 0.82));
+                outline.color = tier_style.hover_glow;
+                outline.width = Val::Px(4.0);
                 select_events.send(SelectUpgradeEvent {
                     option_index: option.index,
                 });
             }
             Interaction::Hovered => {
-                *border_color = BorderColor(MENU_BUTTON_BORDER_HOVERED);
+                *border_color = BorderColor(tier_style.hover_border);
                 *background = BackgroundColor(Color::srgba(0.11, 0.09, 0.08, 0.78));
+                outline.color = tier_style.hover_glow;
+                outline.width = Val::Px(4.0);
             }
             Interaction::None => {
-                *border_color = BorderColor(Color::srgba(0.82, 0.76, 0.64, 0.34));
+                *border_color = BorderColor(tier_style.base_border);
                 *background = BackgroundColor(Color::srgba(0.08, 0.07, 0.06, 0.74));
+                outline.color = tier_style.base_glow;
+                outline.width = Val::Px(3.0);
             }
         }
     }

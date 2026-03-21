@@ -96,6 +96,12 @@ Use this for entity/component/system lookup without scanning all source files.
 - Added commander movement slowdown from enemy pressure inside formation bounds (capped at 50% minimum speed multiplier).
 - Pause menu button label now reads `Main Menu`.
 - Added mandatory `LevelUp` state with 3-card draft overlay (image + description) and no skip path.
+- Level-up weighted upgrades now roll into fixed 5-tier value buckets:
+  - `Common`, `Uncommon`, `Rare`, `Epic`, `Mythical`
+  - one-time upgrades (`formations`, `mob_*`) are classified as `Unique`
+- Level-up card visuals now use tier-based border + glow colors:
+  - `Common` = white/gray, `Uncommon` = blue, `Rare` = yellow,
+    `Epic` = purple, `Mythical` = orange, `Unique` = brown.
 - Raised banner follow offset so it renders visibly behind/above the commander during movement.
 - Dropped banner now uses the standard upright banner sprite for stronger in-world readability.
 - Minimap now shows dropped-banner position and rescuable-retinue positions.
