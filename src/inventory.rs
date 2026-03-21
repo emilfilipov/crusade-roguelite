@@ -12,6 +12,7 @@ pub enum EquipmentUnitType {
     Tier3,
     Tier4,
     Tier5,
+    Hero,
 }
 
 impl EquipmentUnitType {
@@ -24,10 +25,11 @@ impl EquipmentUnitType {
             Self::Tier3 => "Tier 3 Units",
             Self::Tier4 => "Tier 4 Units",
             Self::Tier5 => "Tier 5 Units",
+            Self::Hero => "Hero Units",
         }
     }
 
-    pub const fn all() -> [Self; 7] {
+    pub const fn all() -> [Self; 8] {
         [
             Self::Commander,
             Self::Tier0,
@@ -36,6 +38,7 @@ impl EquipmentUnitType {
             Self::Tier3,
             Self::Tier4,
             Self::Tier5,
+            Self::Hero,
         ]
     }
 
@@ -47,6 +50,7 @@ impl EquipmentUnitType {
             3 => Some(Self::Tier3),
             4 => Some(Self::Tier4),
             5 => Some(Self::Tier5),
+            6 => Some(Self::Hero),
             _ => None,
         }
     }

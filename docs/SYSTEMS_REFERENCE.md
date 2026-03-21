@@ -45,6 +45,7 @@ Use this for entity/component/system lookup without scanning all source files.
   - tier 3 at wave 31,
   - tier 4 at wave 41,
   - tier 5 at wave 51.
+- Added `Hero` equipment-tier scaffold for inventory/UI only (no promotion or spawn path enabled yet).
 - Implemented Unit Upgrade modal runtime:
   - left roster list with selectable unit source rows,
   - right promotion-grid table with promotion options and affordability columns,
@@ -57,7 +58,7 @@ Use this for entity/component/system lookup without scanning all source files.
 - Added inventory scaffold module/resource (`InventoryState`) with serializable bag/equipment setup model.
 - Inventory modal now renders:
   - bag drops as 1-item-per-slot grid,
-  - separate equipment rows for commander and each unit tier (`Tier 0..5`).
+  - separate equipment rows for commander and each unit tier (`Tier 0..5`) plus scaffolded `Hero` row.
 - Commander slots: `Banner`, `Instrument`, `Chant`, `Squire`, `Symbol of Power`; unit-tier slots: `Melee`, `Ranged`, `Armor`, `Banner`, `Squire`.
 - Backpack viewport is now `5x6` slots.
 - Stats modal now renders a table (`Stat | Base | Bonus | Final`) with color-coded bonuses (green positive, red negative).
@@ -635,7 +636,7 @@ Friendly combined outgoing multiplier has lower clamp:
 - inventory modal content:
   - bag drops grid (1 item = 1 slot, with empty placeholders)
   - fixed 5x6 backpack viewport (first 30 slots shown in-grid)
-  - equipment panel with commander + unit tier rows using short labels (`C`, `T0..T5`)
+  - equipment panel with commander + unit tier rows using short labels (`C`, `T0..T5`, `H`)
   - commander slots: `Banner`, `Instrument`, `Chant`, `Squire`, `Symbol of Power`
   - unit-tier slots: `Melee`, `Ranged`, `Armor`, `Banner`, `Squire`
 - stats modal content:

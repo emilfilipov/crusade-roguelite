@@ -3167,6 +3167,7 @@ fn equipment_unit_short_label(unit_type: EquipmentUnitType) -> &'static str {
         EquipmentUnitType::Tier3 => "T3",
         EquipmentUnitType::Tier4 => "T4",
         EquipmentUnitType::Tier5 => "T5",
+        EquipmentUnitType::Hero => "H",
     }
 }
 

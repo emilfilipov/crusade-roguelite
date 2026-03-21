@@ -145,7 +145,7 @@
   - `docs/SYSTEMS_REFERENCE.md`
 
 ### CRU-065 - Hero Tier Scaffolding
-- Status: `TODO`
+- Status: `DONE`
 - Type: `Core`
 - Priority: `P1`
 - Depends on: `CRU-064`
