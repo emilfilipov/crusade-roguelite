@@ -8,6 +8,7 @@ Use this for entity/component/system lookup without scanning all source files.
 - Added `RunModalState` state machine for in-run utility screens (`Inventory`, `Stats`, `Skill Book`, `Archive`, `Unit Upgrade`).
 - Added shared modal request event path (`RunModalRequestEvent`) so keyboard and UI button actions use the same reducer logic.
 - Added modal hotkeys in-run: `I`, `O`, `K`, `B`, `U`; `Escape` closes modal first, otherwise opens pause menu.
+- Added responsive UI scaling based on current primary-window resolution (reference `1280x720`, clamped range `0.7..3.0`) to keep HUD/modals usable across windowed/fullscreen/borderless modes.
 - Added pause-state `Escape` behavior: pressing `Escape` while paused resumes the run.
 - Added modal overlay scaffold renderer that pauses in-run simulation while open.
 - Added direct close-button modal state clear path to avoid stale open overlays from UI interaction edge cases.
@@ -585,6 +586,7 @@ Friendly combined outgoing multiplier has lower clamp:
 - main-menu `Bestiary` screen (same dataset/content source as in-run archive modal)
 - `MatchSetup` screen with faction + map selectors and `Start`/`Back` actions
 - settings screen with FPS selector
+- global UI scale sync from live window resolution (`UiScale`) for resolution-mode resilience
 - pause overlay buttons (`Resume`, `Restart`, `Main Menu`)
 - level-up overlay (3 mandatory upgrade cards, icon + description, no skip)
 - game-over overlay buttons (`Restart`, `Main Menu`)

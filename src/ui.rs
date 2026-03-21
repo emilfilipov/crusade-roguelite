@@ -2,6 +2,7 @@ use bevy::app::AppExit;
 use bevy::ecs::system::SystemParam;
 use bevy::input::mouse::MouseWheel;
 use bevy::prelude::*;
+use bevy::window::PrimaryWindow;
 
 use crate::archive::{ArchiveCategory, ArchiveDataset, ArchiveEntry};
 use crate::banner::{BannerState, banner_pickup_progress_ratio};
@@ -428,6 +429,10 @@ const FLOATING_DAMAGE_TEXT_LIFETIME_SECS: f32 = 0.72;
 const FLOATING_DAMAGE_TEXT_RISE_SPEED: f32 = 44.0;
 const FLOATING_DAMAGE_TEXT_MAX_ACTIVE: usize = 320;
 const FLOATING_DAMAGE_TEXT_MAX_SPAWNS_PER_FRAME: usize = 56;
+const UI_REFERENCE_WIDTH: f32 = 1280.0;
+const UI_REFERENCE_HEIGHT: f32 = 720.0;
+const UI_SCALE_MIN: f32 = 0.7;
+const UI_SCALE_MAX: f32 = 3.0;
 
 pub struct UiPlugin;
 
@@ -466,6 +471,7 @@ impl Plugin for UiPlugin {
                 Update,
                 handle_main_menu_buttons.run_if(in_state(GameState::MainMenu)),
             )
+            .add_systems(Update, sync_responsive_ui_scale)
             .add_systems(
                 Update,
                 (
@@ -4858,6 +4864,32 @@ pub fn frame_cap_label(cap: FrameRateCap) -> &'static str {
     }
 }
 
+pub fn responsive_ui_scale_for_resolution(width: f32, height: f32) -> f32 {
+    if width <= 0.0 || height <= 0.0 {
+        return 1.0;
+    }
+    (width / UI_REFERENCE_WIDTH)
+        .min(height / UI_REFERENCE_HEIGHT)
+        .clamp(UI_SCALE_MIN, UI_SCALE_MAX)
+}
+
+fn sync_responsive_ui_scale(
+    primary_window: Query<&Window, With<PrimaryWindow>>,
+    ui_scale: Option<ResMut<UiScale>>,
+) {
+    let Some(mut ui_scale) = ui_scale else {
+        return;
+    };
+    let Ok(window) = primary_window.get_single() else {
+        return;
+    };
+    let next_scale =
+        responsive_ui_scale_for_resolution(window.resolution.width(), window.resolution.height());
+    if (ui_scale.0 - next_scale).abs() > f32::EPSILON {
+        ui_scale.0 = next_scale;
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn refresh_hud_snapshot(
     cohesion: Res<Cohesion>,
@@ -5475,7 +5507,8 @@ mod tests {
         floating_damage_text_is_expired, floating_damage_text_spawn_data,
         format_commander_level_text, format_elapsed_mm_ss, frame_cap_label, health_bar_fill_width,
         main_menu_dispatch, max_affordable_promotions, modal_action_for_utility_button,
-        requested_promotion_count, rescue_progress_ratio, world_to_minimap_pos,
+        requested_promotion_count, rescue_progress_ratio, responsive_ui_scale_for_resolution,
+        world_to_minimap_pos,
     };
     use crate::upgrades::{
         ConditionalUpgradeStatus, ConditionalUpgradeStatusEntry, Progression, SkillBookEntry,
@@ -5555,6 +5588,24 @@ mod tests {
         assert_eq!(frame_cap_label(FrameRateCap::Fps60), "60");
         assert_eq!(frame_cap_label(FrameRateCap::Fps90), "90");
         assert_eq!(frame_cap_label(FrameRateCap::Fps120), "120");
+    }
+
+    #[test]
+    fn responsive_ui_scale_uses_reference_resolution_as_baseline() {
+        assert!((responsive_ui_scale_for_resolution(1280.0, 720.0) - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn responsive_ui_scale_is_limited_by_shorter_axis() {
+        // Ultrawide should scale from height, not width.
+        let scale = responsive_ui_scale_for_resolution(2560.0, 1080.0);
+        assert!((scale - 1.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn responsive_ui_scale_is_clamped_to_safe_bounds() {
+        assert!((responsive_ui_scale_for_resolution(320.0, 180.0) - 0.7).abs() < 0.001);
+        assert!((responsive_ui_scale_for_resolution(7680.0, 4320.0) - 3.0).abs() < 0.001);
     }
 
     #[test]
