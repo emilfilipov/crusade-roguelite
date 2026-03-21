@@ -9,7 +9,7 @@ use crate::model::{
 use crate::upgrades::ConditionalUpgradeEffects;
 use crate::visuals::ArtAssets;
 
-const RESCUE_RESPAWN_INTERVAL_SECS: f32 = 20.0;
+const RESCUE_RESPAWN_INTERVAL_SECS: f32 = 12.0;
 const MAX_ACTIVE_RESCUABLES: usize = 6;
 
 #[derive(Component, Clone, Copy, Debug)]
@@ -390,8 +390,8 @@ mod tests {
     }
 
     #[test]
-    fn rescue_spawn_pacing_defaults_are_slow_and_limited() {
-        assert!((rescue_respawn_interval_secs() - 20.0).abs() < 0.001);
+    fn rescue_spawn_pacing_defaults_are_faster_and_limited() {
+        assert!((rescue_respawn_interval_secs() - 12.0).abs() < 0.001);
         assert_eq!(rescue_max_active(), 6);
     }
 }

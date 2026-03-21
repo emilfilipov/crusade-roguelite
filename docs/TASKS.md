@@ -52,7 +52,7 @@
   - `docs/SYSTEMS_REFERENCE.md`
 
 ### CRU-061 - Retinue Spawn Rate Increase
-- Status: `TODO`
+- Status: `DONE`
 - Type: `Gameplay`
 - Priority: `P1`
 - Depends on: `none`
