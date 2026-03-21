@@ -208,9 +208,6 @@ struct XpBarFill;
 struct RescueProgressBarsRoot;
 
 #[derive(Component, Clone, Copy, Debug)]
-struct ConditionalStatusHudText;
-
-#[derive(Component, Clone, Copy, Debug)]
 struct MoraleBarFill;
 
 #[derive(Component, Clone, Copy, Debug)]
@@ -1715,17 +1712,6 @@ fn spawn_in_run_hud(
                                 },
                             ),
                         ));
-                        left.spawn((
-                            ConditionalStatusHudText,
-                            TextBundle::from_section(
-                                "",
-                                TextStyle {
-                                    font_size: 14.0,
-                                    color: Color::srgba(0.78, 0.74, 0.66, 0.95),
-                                    ..default()
-                                },
-                            ),
-                        ));
                     });
 
                 top_row
@@ -1935,7 +1921,7 @@ fn spawn_run_modal_overlay(
 ) {
     let (title, subtitle) = run_modal_titles(screen);
     let (panel_width, panel_height) = match screen {
-        RunModalScreen::Inventory => (Val::Px(980.0), Val::Px(560.0)),
+        RunModalScreen::Inventory => (Val::Px(920.0), Val::Px(520.0)),
         RunModalScreen::Stats => (Val::Px(980.0), Val::Px(560.0)),
         RunModalScreen::SkillBook => (Val::Px(900.0), Val::Px(600.0)),
         RunModalScreen::Archive => (Val::Px(980.0), Val::Px(620.0)),
@@ -1978,6 +1964,36 @@ fn spawn_run_modal_overlay(
                 ..default()
             })
             .with_children(|panel| {
+                panel
+                    .spawn((
+                        ButtonBundle {
+                            style: Style {
+                                position_type: PositionType::Absolute,
+                                right: Val::Px(12.0),
+                                top: Val::Px(12.0),
+                                width: Val::Px(34.0),
+                                height: Val::Px(34.0),
+                                justify_content: JustifyContent::Center,
+                                align_items: AlignItems::Center,
+                                border: UiRect::all(Val::Px(1.0)),
+                                ..default()
+                            },
+                            background_color: BackgroundColor(Color::NONE),
+                            border_color: BorderColor(Color::NONE),
+                            ..default()
+                        },
+                        RunModalButtonAction::Close,
+                    ))
+                    .with_children(|button| {
+                        button.spawn(TextBundle::from_section(
+                            "X",
+                            TextStyle {
+                                font_size: 20.0,
+                                color: MENU_BUTTON_TEXT_NORMAL,
+                                ..default()
+                            },
+                        ));
+                    });
                 panel.spawn(TextBundle::from_section(
                     title,
                     TextStyle {
@@ -2554,6 +2570,9 @@ fn spawn_scrollable_panel(
                     width: Val::Percent(100.0),
                     height: Val::Px(max_height),
                     border: UiRect::all(Val::Px(1.0)),
+                    flex_direction: FlexDirection::Column,
+                    justify_content: JustifyContent::FlexStart,
+                    align_items: AlignItems::FlexStart,
                     position_type: PositionType::Relative,
                     overflow: Overflow::clip_y(),
                     ..default()
@@ -2570,6 +2589,8 @@ fn spawn_scrollable_panel(
                     NodeBundle {
                         style: Style {
                             width: Val::Percent(100.0),
+                            flex_shrink: 0.0,
+                            align_self: AlignSelf::FlexStart,
                             position_type: PositionType::Relative,
                             top: Val::Px(0.0),
                             padding: UiRect::all(Val::Px(8.0)),
@@ -2797,7 +2818,7 @@ fn spawn_inventory_modal_sections(parent: &mut ChildBuilder, inventory: &Invento
                 .spawn(NodeBundle {
                     style: Style {
                         width: Val::Percent(50.0),
-                        min_height: Val::Px(430.0),
+                        min_height: Val::Px(380.0),
                         border: UiRect::all(Val::Px(1.0)),
                         padding: UiRect::all(Val::Px(8.0)),
                         flex_direction: FlexDirection::Column,
@@ -2817,73 +2838,104 @@ fn spawn_inventory_modal_sections(parent: &mut ChildBuilder, inventory: &Invento
                             ..default()
                         },
                     ));
-                    let min_slots = 30usize;
-                    let slot_count = inventory.bag.len().max(min_slots);
-                    spawn_scrollable_panel(bag, 390.0, |bag_scroll| {
-                        bag_scroll
-                            .spawn(NodeBundle {
-                                style: Style {
-                                    width: Val::Percent(100.0),
-                                    flex_wrap: FlexWrap::Wrap,
-                                    row_gap: Val::Px(6.0),
-                                    column_gap: Val::Px(6.0),
-                                    ..default()
-                                },
-                                background_color: BackgroundColor(Color::NONE),
+                    const BACKPACK_ROWS: usize = 5;
+                    const BACKPACK_COLS: usize = 5;
+                    const BACKPACK_SLOTS: usize = BACKPACK_ROWS * BACKPACK_COLS;
+                    bag
+                        .spawn(NodeBundle {
+                            style: Style {
+                                width: Val::Percent(100.0),
+                                border: UiRect::all(Val::Px(1.0)),
+                                padding: UiRect::all(Val::Px(8.0)),
+                                flex_direction: FlexDirection::Column,
+                                row_gap: Val::Px(6.0),
                                 ..default()
-                            })
-                            .with_children(|grid| {
-                                for index in 0..slot_count {
-                                    let maybe_item = inventory.bag.get(index);
-                                    grid.spawn(NodeBundle {
+                            },
+                            background_color: BackgroundColor(Color::srgba(0.04, 0.04, 0.04, 0.34)),
+                            border_color: BorderColor(UTILITY_BAR_BORDER),
+                            ..default()
+                        })
+                        .with_children(|bag_grid| {
+                            for row in 0..BACKPACK_ROWS {
+                                bag_grid
+                                    .spawn(NodeBundle {
                                         style: Style {
-                                            width: Val::Px(62.0),
-                                            height: Val::Px(62.0),
-                                            border: UiRect::all(Val::Px(1.0)),
-                                            justify_content: JustifyContent::Center,
-                                            align_items: AlignItems::Center,
-                                            padding: UiRect::all(Val::Px(3.0)),
+                                            width: Val::Percent(100.0),
+                                            flex_direction: FlexDirection::Row,
+                                            column_gap: Val::Px(6.0),
                                             ..default()
                                         },
-                                        background_color: BackgroundColor(Color::srgba(
-                                            0.09, 0.08, 0.07, 0.72,
-                                        )),
-                                        border_color: BorderColor(Color::srgba(
-                                            0.78, 0.72, 0.58, 0.24,
-                                        )),
+                                        background_color: BackgroundColor(Color::NONE),
                                         ..default()
                                     })
-                                    .with_children(|slot| {
-                                        if let Some(item) = maybe_item {
-                                            slot.spawn(TextBundle::from_section(
-                                                truncate_inventory_label(&item.name, 10),
-                                                TextStyle {
-                                                    font_size: 10.5,
-                                                    color: MENU_BUTTON_TEXT_HOVERED,
+                                    .with_children(|row_builder| {
+                                        for col in 0..BACKPACK_COLS {
+                                            let index = row * BACKPACK_COLS + col;
+                                            let maybe_item = inventory.bag.get(index);
+                                            row_builder
+                                                .spawn(NodeBundle {
+                                                    style: Style {
+                                                        width: Val::Px(60.0),
+                                                        height: Val::Px(60.0),
+                                                        border: UiRect::all(Val::Px(1.0)),
+                                                        justify_content: JustifyContent::Center,
+                                                        align_items: AlignItems::Center,
+                                                        padding: UiRect::all(Val::Px(3.0)),
+                                                        ..default()
+                                                    },
+                                                    background_color: BackgroundColor(Color::srgba(
+                                                        0.09, 0.08, 0.07, 0.72,
+                                                    )),
+                                                    border_color: BorderColor(Color::srgba(
+                                                        0.78, 0.72, 0.58, 0.24,
+                                                    )),
                                                     ..default()
-                                                },
-                                            ));
-                                        } else {
-                                            slot.spawn(TextBundle::from_section(
-                                                "--",
-                                                TextStyle {
-                                                    font_size: 10.0,
-                                                    color: MENU_BUTTON_TEXT_DISABLED,
-                                                    ..default()
-                                                },
-                                            ));
+                                                })
+                                                .with_children(|slot| {
+                                                    if let Some(item) = maybe_item {
+                                                        slot.spawn(TextBundle::from_section(
+                                                            truncate_inventory_label(&item.name, 10),
+                                                            TextStyle {
+                                                                font_size: 10.5,
+                                                                color: MENU_BUTTON_TEXT_HOVERED,
+                                                                ..default()
+                                                            },
+                                                        ));
+                                                    } else {
+                                                        slot.spawn(TextBundle::from_section(
+                                                            "--",
+                                                            TextStyle {
+                                                                font_size: 10.0,
+                                                                color: MENU_BUTTON_TEXT_DISABLED,
+                                                                ..default()
+                                                            },
+                                                        ));
+                                                    }
+                                                });
                                         }
                                     });
-                                }
-                            });
-                    });
+                            }
+                            if inventory.bag.len() > BACKPACK_SLOTS {
+                                bag_grid.spawn(TextBundle::from_section(
+                                    format!(
+                                        "+{} more items in reserve (backpack UI currently shows first 25).",
+                                        inventory.bag.len() - BACKPACK_SLOTS
+                                    ),
+                                    TextStyle {
+                                        font_size: 11.0,
+                                        color: MENU_BUTTON_TEXT_DISABLED,
+                                        ..default()
+                                    },
+                                ));
+                            }
+                        });
                 });
 
             layout
                 .spawn(NodeBundle {
                     style: Style {
                         width: Val::Percent(50.0),
-                        min_height: Val::Px(430.0),
+                        min_height: Val::Px(380.0),
                         border: UiRect::all(Val::Px(1.0)),
                         padding: UiRect::all(Val::Px(8.0)),
                         flex_direction: FlexDirection::Column,
@@ -2903,7 +2955,7 @@ fn spawn_inventory_modal_sections(parent: &mut ChildBuilder, inventory: &Invento
                             ..default()
                         },
                     ));
-                    spawn_scrollable_panel(setups, 390.0, |setups_scroll| {
+                    spawn_scrollable_panel(setups, 340.0, |setups_scroll| {
                         for unit_type in EquipmentUnitType::all() {
                             let Some(setup) = inventory.setup_for(unit_type) else {
                                 continue;
@@ -4839,13 +4891,10 @@ fn refresh_hud_snapshot(
 #[allow(clippy::type_complexity)]
 fn update_in_run_hud(
     hud: Res<HudSnapshot>,
-    conditional_status: Res<ConditionalUpgradeStatus>,
-    priest_blessings: Query<&PriestAttackSpeedBlessing, With<FriendlyUnit>>,
     mut texts: ParamSet<(
         Query<&mut Text, With<WaveHudText>>,
         Query<&mut Text, With<TimeHudText>>,
         Query<&mut Text, With<CommanderLevelHudText>>,
-        Query<&mut Text, With<ConditionalStatusHudText>>,
     )>,
     mut bar_styles: ParamSet<(
         Query<&mut Style, With<XpBarFill>>,
@@ -4865,14 +4914,6 @@ fn update_in_run_hud(
             hud.allowed_max_level,
             hud.progression_lock_reason.is_some(),
         );
-    }
-    let max_priest_blessing_secs = priest_blessings
-        .iter()
-        .map(|blessing| blessing.remaining_secs)
-        .fold(0.0, f32::max);
-    if let Ok(mut text) = texts.p3().get_single_mut() {
-        text.sections[0].value =
-            conditional_upgrade_hud_status_text(&conditional_status, max_priest_blessing_secs);
     }
     let xp_ratio = if hud.next_level_xp <= 0.0 {
         0.0

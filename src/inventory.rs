@@ -185,27 +185,42 @@ impl Default for InventoryState {
 }
 
 fn default_equipment_slots(unit_type: EquipmentUnitType) -> Vec<EquippedSlot> {
-    let (first, second, third) = match unit_type {
-        EquipmentUnitType::Commander => ("Banner", "Instrument", "Chant"),
-        _ => ("Melee Weapon", "Ranged Weapon", "Armor"),
-    };
-    vec![
-        EquippedSlot {
-            slot_id: slot_id_from_label(first),
-            display_name: first.to_string(),
-            item_id: None,
-        },
-        EquippedSlot {
-            slot_id: slot_id_from_label(second),
-            display_name: second.to_string(),
-            item_id: None,
-        },
-        EquippedSlot {
-            slot_id: slot_id_from_label(third),
-            display_name: third.to_string(),
-            item_id: None,
-        },
-    ]
+    match unit_type {
+        EquipmentUnitType::Commander => vec![
+            EquippedSlot {
+                slot_id: slot_id_from_label("Banner"),
+                display_name: "Banner".to_string(),
+                item_id: None,
+            },
+            EquippedSlot {
+                slot_id: slot_id_from_label("Instrument"),
+                display_name: "Instrument".to_string(),
+                item_id: None,
+            },
+            EquippedSlot {
+                slot_id: slot_id_from_label("Chant"),
+                display_name: "Chant".to_string(),
+                item_id: None,
+            },
+        ],
+        _ => vec![
+            EquippedSlot {
+                slot_id: "melee_weapon".to_string(),
+                display_name: "Melee".to_string(),
+                item_id: None,
+            },
+            EquippedSlot {
+                slot_id: "ranged_weapon".to_string(),
+                display_name: "Ranged".to_string(),
+                item_id: None,
+            },
+            EquippedSlot {
+                slot_id: "armor".to_string(),
+                display_name: "Armor".to_string(),
+                item_id: None,
+            },
+        ],
+    }
 }
 
 fn slot_id_from_label(label: &str) -> String {
@@ -240,7 +255,7 @@ mod tests {
             if unit_type == EquipmentUnitType::Commander {
                 assert_eq!(setup.slots[0].display_name, "Banner");
             } else {
-                assert_eq!(setup.slots[0].display_name, "Melee Weapon");
+                assert_eq!(setup.slots[0].display_name, "Melee");
             }
         }
     }

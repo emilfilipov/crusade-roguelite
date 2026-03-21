@@ -588,7 +588,7 @@ Friendly combined outgoing multiplier has lower clamp:
 - pause overlay buttons (`Resume`, `Restart`, `Main Menu`)
 - level-up overlay (3 mandatory upgrade cards, icon + description, no skip)
 - game-over overlay buttons (`Restart`, `Main Menu`)
-- top HUD (left column: wave/time/active buffs, center: level/xp/rescue bars)
+- top HUD (left column: wave/time, center: level/xp/rescue bars)
 - progress strips (rescue + banner pickup)
 - bottom-left vertical bars (average morale + cohesion)
 - commander aura footprint indicator (subtle world-space circle around commander)
@@ -611,9 +611,10 @@ Friendly combined outgoing multiplier has lower clamp:
   - `Unit Upgrade`
 - inventory modal content:
   - bag drops grid (1 item = 1 slot, with empty placeholders)
+  - fixed 5x5 backpack viewport (first 25 slots shown in-grid)
   - equipment panel with commander + unit tier rows using short labels (`C`, `T0..T5`)
   - commander slots: `Banner`, `Instrument`, `Chant`
-  - unit-tier slots: `Melee Weapon`, `Ranged Weapon`, `Armor`
+  - unit-tier slots: `Melee`, `Ranged`, `Armor`
 - stats modal content:
   - table layout (`Stat | Base | Bonus | Final`)
   - `Unit HP` row is bonus-only (`Base` and `Final` show `-`)

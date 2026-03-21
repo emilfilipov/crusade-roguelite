@@ -73,7 +73,7 @@ fn load_art_assets(mut assets: ResMut<ArtAssets>, asset_server: Option<Res<Asset
     assets.banner_dropped = asset_server
         .load("third_party/oga_ishtar_top-down-pack_1.1/top-down-pack-1/tiles/Slice 16.png");
     assets.terrain_desert_base_tile_a = asset_server
-        .load("third_party/oga_ishtar_top-down-pack_1.1/top-down-pack-1/tiles/Slice 39.png");
+        .load("third_party/oga_ishtar_top-down-pack_1.1/top-down-pack-1/tiles/Slice 66.png");
     assets.terrain_desert_foliage_tile_a = asset_server
         .load("third_party/oga_ishtar_top-down-pack_1.1/top-down-pack-1/tiles/Slice 70.png");
     assets.terrain_boundary_wall_tile_a = asset_server
