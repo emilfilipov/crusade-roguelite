@@ -168,7 +168,7 @@
   - `docs/SYSTEM_SCOPE_MAP.md`
 
 ### CRU-066 - Peasant Priest Visual Replacement
-- Status: `TODO`
+- Status: `DONE`
 - Type: `UI`
 - Priority: `P1`
 - Depends on: `none`

@@ -59,7 +59,7 @@ fn load_art_assets(mut assets: ResMut<ArtAssets>, asset_server: Option<Res<Asset
     assets.friendly_peasant_archer_rescuable_variant =
         asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0112.png");
     assets.friendly_peasant_priest_idle =
-        asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0113.png");
+        asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0109.png");
     assets.enemy_bandit_raider_idle =
         asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0105.png");
     assets.enemy_bandit_raider_move =

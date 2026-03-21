@@ -59,7 +59,7 @@ Track external art sources, licenses, and current runtime mapping.
 - `friendly_peasant_infantry_rescuable_variant` -> `third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0111.png`
 - `friendly_peasant_archer_idle` -> `third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0112.png`
 - `friendly_peasant_archer_rescuable_variant` -> `third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0112.png`
-- `friendly_peasant_priest_idle` -> `third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0113.png`
+- `friendly_peasant_priest_idle` -> `third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0109.png`
 - `enemy_bandit_raider_idle` -> `third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0105.png`
 - `enemy_bandit_raider_move` -> `third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0100.png`
 - `enemy_bandit_raider_attack` -> `third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0099.png`

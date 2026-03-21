@@ -46,6 +46,7 @@ Use this for entity/component/system lookup without scanning all source files.
   - tier 4 at wave 41,
   - tier 5 at wave 51.
 - Added `Hero` equipment-tier scaffold for inventory/UI only (no promotion or spawn path enabled yet).
+- Replaced peasant-priest potion placeholder sprite with a character sprite (`tile_0109`) for clearer class readability.
 - Implemented Unit Upgrade modal runtime:
   - left roster list with selectable unit source rows,
   - right promotion-grid table with promotion options and affordability columns,
