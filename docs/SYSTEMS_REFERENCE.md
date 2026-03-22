@@ -4,7 +4,10 @@
 Single-file technical reference for current MVP runtime behavior.
 Use this for entity/component/system lookup without scanning all source files.
 
-## Latest Update (2026-03-21)
+## Latest Update (2026-03-22)
+- Formation footprint occupancy cap now uses a strict retinue ratio: `floor(retinue_count / 4)` enemies allowed inside.
+- Floating critical-hit damage text now renders as magenta, slightly larger text, and appends `!` (example: `75!`).
+- Stats modal table now reports aggregated stat bonuses by stat name (for example `Health`, `Damage`, `Morale Regen/s`, `Morale Loss Resist`) instead of effect-source row names.
 - Added `RunModalState` state machine for in-run utility screens (`Inventory`, `Stats`, `Skill Book`, `Archive`, `Unit Upgrade`).
 - Added shared modal request event path (`RunModalRequestEvent`) so keyboard and UI button actions use the same reducer logic.
 - Added modal hotkeys in-run: `I`, `O`, `K`, `B`, `U`; `Escape` closes modal first, otherwise opens pause menu.
@@ -413,8 +416,7 @@ Friendly combined outgoing multiplier has lower clamp:
 ### Formation Footprint Occupancy Cap + Repel (`src/enemies.rs`)
 - Enemies allowed inside the active formation footprint are capped dynamically by retinue size.
 - Cap model:
-  - derives from estimated formation perimeter slots + small recruit-count bonus
-  - clamped to `[4, 96]`
+  - `max_inside = floor(retinue_count / 4)`
 - Overflow enemies are sorted deterministically by distance-to-commander and redirected toward the formation perimeter projection (square/diamond-specific boundary math).
 - Repel movement is step-limited each frame for stability (`280 units/sec`).
 

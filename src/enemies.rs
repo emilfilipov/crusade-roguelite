@@ -56,10 +56,6 @@ const STOP_FACTOR: f32 = 0.82;
 const RESUME_FACTOR: f32 = 0.98;
 const ENEMY_INSIDE_FORMATION_PADDING_SLOTS: f32 = 0.35;
 const ENEMY_FORMATION_OVERFLOW_REPEL_SPEED: f32 = 280.0;
-const INSIDE_ENEMY_CAP_PERIMETER_FACTOR: f32 = 0.65;
-const INSIDE_ENEMY_CAP_RECRUIT_BONUS_FACTOR: f32 = 0.04;
-const INSIDE_ENEMY_CAP_MIN: usize = 4;
-const INSIDE_ENEMY_CAP_MAX: usize = 96;
 const WAVE_UNITS_MULTIPLIER: f32 = 2.0;
 const MAX_ENEMIES_PER_WAVE: f32 = 1000.0;
 const POST_SCRIPTED_WAVE_COUNT_GROWTH: f32 = 1.18;
@@ -521,12 +517,7 @@ pub fn max_inside_enemy_count_for_formation(recruit_count: usize) -> usize {
     if recruit_count == 0 {
         return 0;
     }
-    let side = ((recruit_count + 1) as f32).sqrt().ceil();
-    let perimeter_slots = (side * 4.0).max(4.0);
-    let recruit_bonus = (recruit_count as f32 * INSIDE_ENEMY_CAP_RECRUIT_BONUS_FACTOR).floor();
-    ((perimeter_slots * INSIDE_ENEMY_CAP_PERIMETER_FACTOR) + recruit_bonus)
-        .round()
-        .clamp(INSIDE_ENEMY_CAP_MIN as f32, INSIDE_ENEMY_CAP_MAX as f32) as usize
+    recruit_count / 4
 }
 
 pub fn overflow_indices_by_distance(distances_sq: &[f32], cap: usize) -> Vec<usize> {
@@ -811,12 +802,11 @@ mod tests {
 
     #[test]
     fn inside_formation_cap_scales_with_roster_size() {
-        let small = max_inside_enemy_count_for_formation(4);
-        let medium = max_inside_enemy_count_for_formation(32);
-        let large = max_inside_enemy_count_for_formation(180);
-        assert!(small >= 4);
-        assert!(medium > small);
-        assert!(large >= medium);
+        assert_eq!(max_inside_enemy_count_for_formation(0), 0);
+        assert_eq!(max_inside_enemy_count_for_formation(3), 0);
+        assert_eq!(max_inside_enemy_count_for_formation(4), 1);
+        assert_eq!(max_inside_enemy_count_for_formation(40), 10);
+        assert_eq!(max_inside_enemy_count_for_formation(180), 45);
     }
 
     #[test]
