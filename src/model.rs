@@ -258,6 +258,7 @@ pub struct DamageEvent {
     pub source_team: Team,
     pub amount: f32,
     pub execute: bool,
+    pub critical: bool,
 }
 
 #[derive(Event, Clone, Copy, Debug)]
@@ -273,6 +274,7 @@ pub struct DamageTextEvent {
     pub target_team: Team,
     pub amount: f32,
     pub execute: bool,
+    pub critical: bool,
 }
 
 #[derive(Event, Clone, Copy, Debug)]

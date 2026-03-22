@@ -11,6 +11,7 @@ pub struct Projectile {
     pub remaining_distance: f32,
     pub radius: f32,
     pub source_team: Team,
+    pub is_critical: bool,
 }
 
 pub struct ProjectilePlugin;
@@ -92,6 +93,7 @@ fn projectile_collisions(
                     source_team: projectile.source_team,
                     amount: damage,
                     execute,
+                    critical: projectile.is_critical,
                 });
                 hit = true;
                 break;
@@ -117,6 +119,7 @@ mod tests {
             remaining_distance: 50.0,
             radius: 4.0,
             source_team: crate::model::Team::Friendly,
+            is_critical: false,
         };
         let mut transform = Transform::from_xyz(0.0, 0.0, 0.0);
         let dt = 0.5;

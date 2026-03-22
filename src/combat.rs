@@ -306,6 +306,7 @@ fn emit_ranged_projectile_attacks(
         };
         let mut projectile_damage =
             ((ranged_profile.damage + ranged_bonus).max(0.0) * outgoing_multiplier).max(1.0);
+        let mut projectile_is_critical = false;
         if attacker_team == Team::Friendly {
             let crit_chance = global_buffs
                 .as_ref()
@@ -318,6 +319,7 @@ fn emit_ranged_projectile_attacks(
             let is_critical = roll_critical_hit(crit_chance, &mut crit_rng);
             projectile_damage =
                 apply_critical_multiplier(projectile_damage, is_critical, crit_multiplier).max(1.0);
+            projectile_is_critical = is_critical;
         }
 
         ranged_cooldown.0.reset();
@@ -328,6 +330,7 @@ fn emit_ranged_projectile_attacks(
                 remaining_distance: ranged_profile.projectile_max_distance,
                 radius: RANGED_PROJECTILE_HIT_RADIUS,
                 source_team: commander_unit.team,
+                is_critical: projectile_is_critical,
             },
             SpriteBundle {
                 texture: art.arrow_projectile.clone(),
@@ -563,6 +566,7 @@ fn emit_damage_events(
             };
             let mut outgoing_damage =
                 (attack_profile.damage + melee_bonus).max(0.0) * outgoing_multiplier;
+            let mut is_critical = false;
             if attacker_unit.team == Team::Friendly {
                 let crit_chance = global_buffs
                     .as_ref()
@@ -572,7 +576,7 @@ fn emit_damage_events(
                     .as_ref()
                     .map(|buff| buff.crit_damage_multiplier)
                     .unwrap_or(DEFAULT_CRIT_DAMAGE_MULTIPLIER);
-                let is_critical = roll_critical_hit(crit_chance, &mut crit_rng);
+                is_critical = roll_critical_hit(crit_chance, &mut crit_rng);
                 outgoing_damage =
                     apply_critical_multiplier(outgoing_damage, is_critical, crit_multiplier);
             }
@@ -602,6 +606,7 @@ fn emit_damage_events(
                 source_team: attacker_unit.team,
                 amount: damage,
                 execute,
+                critical: is_critical,
             });
         }
     }
@@ -802,6 +807,7 @@ fn apply_damage_events(
                 target_team: unit.team,
                 amount: applied_damage,
                 execute: event.execute,
+                critical: event.critical,
             });
         }
     }

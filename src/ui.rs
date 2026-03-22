@@ -378,6 +378,7 @@ struct FloatingDamageTextSpawnData {
     translation: Vec3,
     text: String,
     base_rgb: Vec3,
+    font_size: f32,
 }
 
 #[derive(SystemParam)]
@@ -434,6 +435,7 @@ const UTILITY_BAR_BORDER: Color = Color::srgba(0.78, 0.72, 0.58, 0.35);
 const FLOATING_DAMAGE_TEXT_START_Y_OFFSET: f32 = 24.0;
 const FLOATING_DAMAGE_TEXT_Z: f32 = 60.0;
 const FLOATING_DAMAGE_TEXT_FONT_SIZE: f32 = 18.0;
+const FLOATING_DAMAGE_TEXT_CRIT_FONT_SIZE: f32 = 22.0;
 const FLOATING_DAMAGE_TEXT_LIFETIME_SECS: f32 = 0.72;
 const FLOATING_DAMAGE_TEXT_RISE_SPEED: f32 = 44.0;
 const FLOATING_DAMAGE_TEXT_MAX_ACTIVE: usize = 320;
@@ -2196,7 +2198,7 @@ fn format_raw_and_percent_bonus(raw: f32, percent: f32) -> String {
 }
 
 fn build_stats_panel_data(
-    data: &GameData,
+    _data: &GameData,
     progression: &Progression,
     buffs: &crate::model::GlobalBuffs,
     active_formation: ActiveFormation,
@@ -2204,7 +2206,6 @@ fn build_stats_panel_data(
     conditional_status: &ConditionalUpgradeStatus,
     max_priest_blessing_secs: f32,
 ) -> StatsPanelData {
-    let commander = &data.units.commander;
     let level = progression.level.max(1);
     let hp_bonus = commander_level_hp_bonus(level);
     let passive_level_percent = level.saturating_sub(1) as f32;
@@ -2214,7 +2215,6 @@ fn build_stats_panel_data(
     let crit_damage_bonus_percent =
         (buffs.crit_damage_multiplier - BASE_CRIT_DAMAGE_MULTIPLIER) * 100.0;
     let authority_resist_percent = buffs.authority_friendly_loss_resistance * 100.0;
-    let encirclement_percent = (buffs.inside_formation_damage_multiplier - 1.0) * 100.0;
 
     let mut active_buffs = vec![format!("Formation: {}", active_formation.display_name())];
     if buffs.authority_friendly_loss_resistance > 0.0
@@ -2252,16 +2252,7 @@ fn build_stats_panel_data(
 
     StatsPanelData {
         rows: vec![
-            stats_bonus_row(
-                "Commander Base HP",
-                0.0,
-                format_stat_value(commander.max_hp),
-            ),
-            stats_bonus_row(
-                "Unit HP (level passive)",
-                hp_bonus,
-                format_raw_bonus(hp_bonus),
-            ),
+            stats_bonus_row("Health", hp_bonus, format_raw_bonus(hp_bonus)),
             stats_bonus_row(
                 "Damage",
                 passive_level_percent + damage_upgrade_percent,
@@ -2306,34 +2297,34 @@ fn build_stats_panel_data(
                 format_raw_bonus(buffs.commander_aura_radius_bonus),
             ),
             stats_bonus_row(
-                "Encirclement Damage",
-                encirclement_percent,
-                format_percent_bonus(encirclement_percent),
-            ),
-            stats_bonus_row(
-                "Authority Loss Resist",
+                "Morale Loss Resist",
                 authority_resist_percent,
                 format_percent_bonus(authority_resist_percent),
             ),
             stats_bonus_row(
-                "Authority Enemy Morale Drain/s",
+                "Cohesion Loss Resist",
+                authority_resist_percent,
+                format_percent_bonus(authority_resist_percent),
+            ),
+            stats_bonus_row(
+                "Enemy Morale Drain/s",
                 buffs.authority_enemy_morale_drain_per_sec,
                 format_raw_bonus(buffs.authority_enemy_morale_drain_per_sec),
             ),
             stats_bonus_row(
-                "Hospitalier HP Regen/s",
+                "Health Regen/s",
                 buffs.hospitalier_hp_regen_per_sec,
                 format_raw_bonus(buffs.hospitalier_hp_regen_per_sec),
             ),
             stats_bonus_row(
-                "Hospitalier Cohesion Regen/s",
-                buffs.hospitalier_cohesion_regen_per_sec,
-                format_raw_bonus(buffs.hospitalier_cohesion_regen_per_sec),
-            ),
-            stats_bonus_row(
-                "Hospitalier Morale Regen/s",
+                "Morale Regen/s",
                 buffs.hospitalier_morale_regen_per_sec,
                 format_raw_bonus(buffs.hospitalier_morale_regen_per_sec),
+            ),
+            stats_bonus_row(
+                "Cohesion Regen/s",
+                buffs.hospitalier_cohesion_regen_per_sec,
+                format_raw_bonus(buffs.hospitalier_cohesion_regen_per_sec),
             ),
         ],
         active_buffs,
@@ -5580,7 +5571,7 @@ fn spawn_floating_damage_text(
                 text: Text::from_section(
                     spawn_data.text,
                     TextStyle {
-                        font_size: FLOATING_DAMAGE_TEXT_FONT_SIZE,
+                        font_size: spawn_data.font_size,
                         color: Color::srgba(
                             spawn_data.base_rgb.x,
                             spawn_data.base_rgb.y,
@@ -5649,12 +5640,23 @@ fn floating_damage_text_spawn_data(
     let row = ((spawn_index / X_JITTER_LANES.len()) % 3) as f32;
     let x_offset = X_JITTER_LANES[lane_index];
     let y_offset = FLOATING_DAMAGE_TEXT_START_Y_OFFSET + row * 4.0;
-    let (text, base_rgb) = if event.execute {
-        ("EXECUTE".to_string(), Vec3::new(0.98, 0.28, 0.18))
+    let (text, base_rgb, font_size) = if event.execute {
+        (
+            "EXECUTE".to_string(),
+            Vec3::new(0.98, 0.28, 0.18),
+            FLOATING_DAMAGE_TEXT_FONT_SIZE,
+        )
+    } else if event.critical {
+        (
+            format!("{}!", format_damage_text_amount(event.amount)),
+            Vec3::new(0.94, 0.22, 0.86),
+            FLOATING_DAMAGE_TEXT_CRIT_FONT_SIZE,
+        )
     } else {
         (
             format_damage_text_amount(event.amount),
             floating_damage_text_team_rgb(event.target_team),
+            FLOATING_DAMAGE_TEXT_FONT_SIZE,
         )
     };
     FloatingDamageTextSpawnData {
@@ -5665,6 +5667,7 @@ fn floating_damage_text_spawn_data(
         ),
         text,
         base_rgb,
+        font_size,
     }
 }
 
@@ -5722,7 +5725,8 @@ mod tests {
         Team,
     };
     use crate::ui::{
-        HudSnapshot, LEVEL_UP_TIER_LEGEND, MainMenuAction, MainMenuDispatch, UnitUpgradeQuantity,
+        FLOATING_DAMAGE_TEXT_CRIT_FONT_SIZE, FLOATING_DAMAGE_TEXT_FONT_SIZE, HudSnapshot,
+        LEVEL_UP_TIER_LEGEND, MainMenuAction, MainMenuDispatch, UnitUpgradeQuantity,
         archive_entries_for_category, build_skill_book_panel_data, build_stats_panel_data,
         can_select_match_setup_faction, conditional_upgrade_hud_status_text, displayed_wave_number,
         find_skill_section, find_stats_row, floating_damage_text_alpha,
@@ -5773,6 +5777,7 @@ mod tests {
             target_team: Team::Enemy,
             amount: 12.6,
             execute: false,
+            critical: false,
         };
         let data = floating_damage_text_spawn_data(&event, 0);
         assert_eq!(data.text, "13");
@@ -5780,6 +5785,24 @@ mod tests {
         assert!((data.translation.y - -26.0).abs() < 0.001);
         assert!((data.translation.z - 60.0).abs() < 0.001);
         assert!((data.base_rgb.x - 0.98).abs() < 0.001);
+        assert!((data.font_size - FLOATING_DAMAGE_TEXT_FONT_SIZE).abs() < 0.001);
+    }
+
+    #[test]
+    fn damage_text_spawn_data_uses_critical_feedback_style() {
+        let event = DamageTextEvent {
+            world_position: bevy::prelude::Vec2::new(0.0, 0.0),
+            target_team: Team::Enemy,
+            amount: 74.6,
+            execute: false,
+            critical: true,
+        };
+        let data = floating_damage_text_spawn_data(&event, 1);
+        assert_eq!(data.text, "75!");
+        assert!((data.base_rgb.x - 0.94).abs() < 0.001);
+        assert!((data.base_rgb.y - 0.22).abs() < 0.001);
+        assert!((data.base_rgb.z - 0.86).abs() < 0.001);
+        assert!((data.font_size - FLOATING_DAMAGE_TEXT_CRIT_FONT_SIZE).abs() < 0.001);
     }
 
     #[test]
@@ -5789,12 +5812,14 @@ mod tests {
             target_team: Team::Enemy,
             amount: 999.0,
             execute: true,
+            critical: false,
         };
         let data = floating_damage_text_spawn_data(&event, 2);
         assert_eq!(data.text, "EXECUTE");
         assert!((data.base_rgb.x - 0.98).abs() < 0.001);
         assert!((data.base_rgb.y - 0.28).abs() < 0.001);
         assert!((data.base_rgb.z - 0.18).abs() < 0.001);
+        assert!((data.font_size - FLOATING_DAMAGE_TEXT_FONT_SIZE).abs() < 0.001);
     }
 
     #[test]
@@ -6016,7 +6041,7 @@ mod tests {
         assert!(!panel.rows.is_empty());
         let damage_row = find_stats_row(&panel.rows, "Damage").expect("damage row");
         assert!((damage_row.bonus_value - 0.0).abs() < 0.001);
-        let hp_row = find_stats_row(&panel.rows, "Unit HP (level passive)").expect("hp row");
+        let hp_row = find_stats_row(&panel.rows, "Health").expect("hp row");
         assert!((hp_row.bonus_value - 0.0).abs() < 0.001);
     }
 
@@ -6061,7 +6086,7 @@ mod tests {
             0.0,
         );
 
-        let hp_row = find_stats_row(&panel.rows, "Unit HP (level passive)").expect("hp row");
+        let hp_row = find_stats_row(&panel.rows, "Health").expect("hp row");
         assert!((hp_row.bonus_value - 7.0).abs() < 0.001);
         let damage_row = find_stats_row(&panel.rows, "Damage").expect("damage row");
         assert!(damage_row.bonus_value > 0.0);
@@ -6072,6 +6097,9 @@ mod tests {
         let move_row = find_stats_row(&panel.rows, "Move Speed").expect("move row");
         assert!(move_row.bonus_text.contains("+18"));
         assert!(move_row.bonus_text.contains("+8.0%"));
+        let morale_resist_row =
+            find_stats_row(&panel.rows, "Morale Loss Resist").expect("morale resist");
+        assert_eq!(morale_resist_row.bonus_text, "0%");
     }
 
     #[test]
