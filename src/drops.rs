@@ -13,7 +13,7 @@ use crate::visuals::ArtAssets;
 const DROP_HOMING_SPEED_MULTIPLIER: f32 = 1.2;
 const DROP_CONSUME_RADIUS: f32 = 16.0;
 const AMBIENT_PICKUP_DELAY_SECS: f32 = 0.0;
-const DROP_RENDER_SIZE: f32 = 24.0;
+const DROP_RENDER_SIZE: f32 = 16.0;
 const DROP_RENDER_Z: f32 = 40.0;
 const MAGNET_PICKUP_SIZE: f32 = 30.0;
 const MAGNET_PICKUP_Z: f32 = 42.0;
