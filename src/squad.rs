@@ -4,7 +4,7 @@ use bevy::{math::primitives::Circle, render::mesh::Mesh};
 
 use crate::banner::BannerMovementPenalty;
 use crate::combat::{RangedAttackCooldown, RangedAttackProfile};
-use crate::data::{GameData, UnitStatsConfig};
+use crate::data::{FactionGameplayConfig, GameData, UnitStatsConfig};
 use crate::enemies::WaveRuntime;
 use crate::formation::{
     ActiveFormation, FormationModifiers, active_formation_config, formation_contains_position,
@@ -13,8 +13,8 @@ use crate::map::{MapBounds, playable_bounds};
 use crate::model::{
     Armor, AttackCooldown, AttackProfile, BaseMaxHealth, ColliderRadius, CommanderUnit, EnemyUnit,
     FriendlyUnit, GameState, GlobalBuffs, Health, MatchSetupSelection, Morale, MoveSpeed,
-    PlayerControlled, RecruitEvent, RecruitUnitKind, RescuableUnit, StartRunEvent, Team, Unit,
-    UnitDiedEvent, UnitKind, UnitTier, level_cap_from_locked_budget,
+    PlayerControlled, PlayerFaction, RecruitEvent, RecruitUnitKind, RescuableUnit, StartRunEvent,
+    Team, Unit, UnitDiedEvent, UnitKind, UnitTier, level_cap_from_locked_budget,
 };
 use crate::upgrades::{ConditionalUpgradeEffects, Progression};
 use crate::visuals::ArtAssets;
@@ -203,7 +203,10 @@ fn spawn_commander(
     art: &ArtAssets,
     faction: crate::model::PlayerFaction,
 ) -> Entity {
-    let cfg = data.units.commander_for_faction(faction);
+    let cfg = faction_adjusted_friendly_stats(
+        data.units.commander_for_faction(faction),
+        data.factions.for_faction(faction),
+    );
     let texture = match faction {
         crate::model::PlayerFaction::Christian => art.commander_idle.clone(),
         crate::model::PlayerFaction::Muslim => art.commander_saladin_idle.clone(),
@@ -275,7 +278,10 @@ fn spawn_recruit(
     recruit_kind: RecruitUnitKind,
     position: Vec2,
 ) -> Entity {
-    let cfg = data.units.recruit_for_kind(recruit_kind);
+    let cfg = faction_adjusted_friendly_stats(
+        data.units.recruit_for_kind(recruit_kind),
+        data.factions.for_faction(recruit_kind.faction()),
+    );
     let unit_kind = recruit_kind.as_unit_kind();
     let (texture, collider_radius, sprite_tint) = match recruit_kind {
         RecruitUnitKind::ChristianPeasantInfantry => (
@@ -377,6 +383,39 @@ fn spawn_recruit(
     }
 
     entity.id()
+}
+
+fn faction_adjusted_friendly_stats(
+    base: &UnitStatsConfig,
+    faction: &FactionGameplayConfig,
+) -> UnitStatsConfig {
+    let mut adjusted = base.clone();
+    adjusted.max_hp = (adjusted.max_hp * faction.friendly_health_multiplier).max(1.0);
+    adjusted.armor = (adjusted.armor + faction.friendly_armor_bonus).max(0.0);
+    adjusted.damage = (adjusted.damage * faction.friendly_damage_multiplier).max(0.0);
+    adjusted.attack_cooldown_secs = scale_cooldown_for_attack_speed(
+        adjusted.attack_cooldown_secs,
+        faction.friendly_attack_speed_multiplier,
+        0.05,
+    );
+    adjusted.move_speed = (adjusted.move_speed * faction.friendly_move_speed_multiplier).max(1.0);
+    adjusted.morale = (adjusted.morale * faction.friendly_morale_multiplier).max(1.0);
+
+    if adjusted.ranged_attack_damage > 0.0 {
+        adjusted.ranged_attack_damage =
+            (adjusted.ranged_attack_damage * faction.friendly_damage_multiplier).max(0.0);
+        adjusted.ranged_attack_cooldown_secs = scale_cooldown_for_attack_speed(
+            adjusted.ranged_attack_cooldown_secs,
+            faction.friendly_attack_speed_multiplier,
+            0.05,
+        );
+    }
+    adjusted
+}
+
+fn scale_cooldown_for_attack_speed(base_cooldown: f32, speed_multiplier: f32, min: f32) -> f32 {
+    let safe_speed = speed_multiplier.max(0.01);
+    (base_cooldown / safe_speed).max(min)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -613,6 +652,9 @@ fn apply_promotion_events(
             else {
                 continue;
             };
+            let friendly_faction = event.to_kind.faction().unwrap_or(PlayerFaction::Christian);
+            let cfg =
+                faction_adjusted_friendly_stats(cfg, data.factions.for_faction(friendly_faction));
 
             let mut updated_unit = unit;
             updated_unit.kind = event.to_kind;

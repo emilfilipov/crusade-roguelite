@@ -262,6 +262,67 @@ pub struct DropsConfig {
     pub max_active_packs: u32,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+pub struct FactionGameplayConfig {
+    #[serde(default = "default_multiplier")]
+    pub friendly_health_multiplier: f32,
+    #[serde(default = "default_multiplier")]
+    pub friendly_damage_multiplier: f32,
+    #[serde(default = "default_multiplier")]
+    pub friendly_attack_speed_multiplier: f32,
+    #[serde(default = "default_multiplier")]
+    pub friendly_move_speed_multiplier: f32,
+    #[serde(default)]
+    pub friendly_armor_bonus: f32,
+    #[serde(default = "default_multiplier")]
+    pub friendly_morale_multiplier: f32,
+    #[serde(default = "default_multiplier")]
+    pub friendly_morale_gain_multiplier: f32,
+    #[serde(default = "default_multiplier")]
+    pub friendly_morale_loss_multiplier: f32,
+    #[serde(default = "default_multiplier")]
+    pub friendly_cohesion_gain_multiplier: f32,
+    #[serde(default = "default_multiplier")]
+    pub friendly_cohesion_loss_multiplier: f32,
+    #[serde(default)]
+    pub commander_aura_radius_bonus: f32,
+    #[serde(default = "default_multiplier")]
+    pub xp_gain_multiplier: f32,
+    #[serde(default = "default_multiplier")]
+    pub rescue_time_multiplier: f32,
+    #[serde(default = "default_multiplier")]
+    pub authority_enemy_morale_drain_multiplier: f32,
+    #[serde(default)]
+    pub authority_enemy_cohesion_drain_per_sec: f32,
+    #[serde(default = "default_multiplier")]
+    pub enemy_health_multiplier: f32,
+    #[serde(default = "default_multiplier")]
+    pub enemy_damage_multiplier: f32,
+    #[serde(default = "default_multiplier")]
+    pub enemy_attack_speed_multiplier: f32,
+    #[serde(default = "default_multiplier")]
+    pub enemy_move_speed_multiplier: f32,
+    #[serde(default = "default_multiplier")]
+    pub enemy_morale_multiplier: f32,
+    #[serde(default = "default_multiplier")]
+    pub enemy_cohesion_multiplier: f32,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct FactionsConfigFile {
+    pub christian: FactionGameplayConfig,
+    pub muslim: FactionGameplayConfig,
+}
+
+impl FactionsConfigFile {
+    pub fn for_faction(&self, faction: PlayerFaction) -> &FactionGameplayConfig {
+        match faction {
+            PlayerFaction::Christian => &self.christian,
+            PlayerFaction::Muslim => &self.muslim,
+        }
+    }
+}
+
 #[derive(Resource, Clone, Debug)]
 pub struct GameData {
     pub units: UnitsConfigFile,
@@ -272,6 +333,7 @@ pub struct GameData {
     pub map: MapConfig,
     pub rescue: RescueConfig,
     pub drops: DropsConfig,
+    pub factions: FactionsConfigFile,
 }
 
 impl GameData {
@@ -284,6 +346,7 @@ impl GameData {
         let map: MapConfig = read_json(base_dir.join("map.json"))?;
         let rescue: RescueConfig = read_json(base_dir.join("rescue.json"))?;
         let drops: DropsConfig = read_json(base_dir.join("drops.json"))?;
+        let factions: FactionsConfigFile = read_json(base_dir.join("factions.json"))?;
 
         validate_units(&units)?;
         validate_enemies(&enemies)?;
@@ -293,6 +356,7 @@ impl GameData {
         validate_map(&map)?;
         validate_rescue(&rescue)?;
         validate_drops(&drops)?;
+        validate_factions(&factions)?;
 
         Ok(Self {
             units,
@@ -303,6 +367,7 @@ impl GameData {
             map,
             rescue,
             drops,
+            factions,
         })
     }
 }
@@ -672,6 +737,98 @@ fn validate_drops(config: &DropsConfig) -> Result<()> {
     Ok(())
 }
 
+fn validate_factions(config: &FactionsConfigFile) -> Result<()> {
+    validate_faction_profile("factions.christian", &config.christian)?;
+    validate_faction_profile("factions.muslim", &config.muslim)?;
+    Ok(())
+}
+
+fn validate_multiplier_field(label: &str, value: f32) -> Result<()> {
+    if value <= 0.0 {
+        bail!("{label} must be > 0");
+    }
+    Ok(())
+}
+
+fn validate_faction_profile(label: &str, profile: &FactionGameplayConfig) -> Result<()> {
+    validate_multiplier_field(
+        &format!("{label}.friendly_health_multiplier"),
+        profile.friendly_health_multiplier,
+    )?;
+    validate_multiplier_field(
+        &format!("{label}.friendly_damage_multiplier"),
+        profile.friendly_damage_multiplier,
+    )?;
+    validate_multiplier_field(
+        &format!("{label}.friendly_attack_speed_multiplier"),
+        profile.friendly_attack_speed_multiplier,
+    )?;
+    validate_multiplier_field(
+        &format!("{label}.friendly_move_speed_multiplier"),
+        profile.friendly_move_speed_multiplier,
+    )?;
+    validate_multiplier_field(
+        &format!("{label}.friendly_morale_multiplier"),
+        profile.friendly_morale_multiplier,
+    )?;
+    validate_multiplier_field(
+        &format!("{label}.friendly_morale_gain_multiplier"),
+        profile.friendly_morale_gain_multiplier,
+    )?;
+    validate_multiplier_field(
+        &format!("{label}.friendly_morale_loss_multiplier"),
+        profile.friendly_morale_loss_multiplier,
+    )?;
+    validate_multiplier_field(
+        &format!("{label}.friendly_cohesion_gain_multiplier"),
+        profile.friendly_cohesion_gain_multiplier,
+    )?;
+    validate_multiplier_field(
+        &format!("{label}.friendly_cohesion_loss_multiplier"),
+        profile.friendly_cohesion_loss_multiplier,
+    )?;
+    validate_multiplier_field(
+        &format!("{label}.xp_gain_multiplier"),
+        profile.xp_gain_multiplier,
+    )?;
+    validate_multiplier_field(
+        &format!("{label}.rescue_time_multiplier"),
+        profile.rescue_time_multiplier,
+    )?;
+    validate_multiplier_field(
+        &format!("{label}.authority_enemy_morale_drain_multiplier"),
+        profile.authority_enemy_morale_drain_multiplier,
+    )?;
+    validate_multiplier_field(
+        &format!("{label}.enemy_health_multiplier"),
+        profile.enemy_health_multiplier,
+    )?;
+    validate_multiplier_field(
+        &format!("{label}.enemy_damage_multiplier"),
+        profile.enemy_damage_multiplier,
+    )?;
+    validate_multiplier_field(
+        &format!("{label}.enemy_attack_speed_multiplier"),
+        profile.enemy_attack_speed_multiplier,
+    )?;
+    validate_multiplier_field(
+        &format!("{label}.enemy_move_speed_multiplier"),
+        profile.enemy_move_speed_multiplier,
+    )?;
+    validate_multiplier_field(
+        &format!("{label}.enemy_morale_multiplier"),
+        profile.enemy_morale_multiplier,
+    )?;
+    validate_multiplier_field(
+        &format!("{label}.enemy_cohesion_multiplier"),
+        profile.enemy_cohesion_multiplier,
+    )?;
+    if profile.authority_enemy_cohesion_drain_per_sec < 0.0 {
+        bail!("{label}.authority_enemy_cohesion_drain_per_sec must be >= 0");
+    }
+    Ok(())
+}
+
 pub struct DataPlugin;
 
 impl Plugin for DataPlugin {
@@ -772,6 +929,58 @@ mod tests {
             dir,
             "drops.json",
             r#"{"initial_spawn_count":3,"spawn_interval_secs":1.5,"pickup_radius":15.0,"xp_per_pack":5.0,"max_active_packs":30}"#,
+        );
+        write_config(
+            dir,
+            "factions.json",
+            r#"{
+              "christian":{
+                "friendly_health_multiplier":1.0,
+                "friendly_damage_multiplier":1.0,
+                "friendly_attack_speed_multiplier":1.0,
+                "friendly_move_speed_multiplier":1.0,
+                "friendly_armor_bonus":0.0,
+                "friendly_morale_multiplier":1.0,
+                "friendly_morale_gain_multiplier":1.0,
+                "friendly_morale_loss_multiplier":1.0,
+                "friendly_cohesion_gain_multiplier":1.0,
+                "friendly_cohesion_loss_multiplier":1.0,
+                "commander_aura_radius_bonus":0.0,
+                "xp_gain_multiplier":1.0,
+                "rescue_time_multiplier":1.0,
+                "authority_enemy_morale_drain_multiplier":1.0,
+                "authority_enemy_cohesion_drain_per_sec":0.0,
+                "enemy_health_multiplier":1.0,
+                "enemy_damage_multiplier":1.0,
+                "enemy_attack_speed_multiplier":1.0,
+                "enemy_move_speed_multiplier":1.0,
+                "enemy_morale_multiplier":1.0,
+                "enemy_cohesion_multiplier":1.0
+              },
+              "muslim":{
+                "friendly_health_multiplier":1.0,
+                "friendly_damage_multiplier":1.0,
+                "friendly_attack_speed_multiplier":1.0,
+                "friendly_move_speed_multiplier":1.0,
+                "friendly_armor_bonus":0.0,
+                "friendly_morale_multiplier":1.0,
+                "friendly_morale_gain_multiplier":1.0,
+                "friendly_morale_loss_multiplier":1.0,
+                "friendly_cohesion_gain_multiplier":1.0,
+                "friendly_cohesion_loss_multiplier":1.0,
+                "commander_aura_radius_bonus":0.0,
+                "xp_gain_multiplier":1.0,
+                "rescue_time_multiplier":1.0,
+                "authority_enemy_morale_drain_multiplier":1.0,
+                "authority_enemy_cohesion_drain_per_sec":0.0,
+                "enemy_health_multiplier":1.0,
+                "enemy_damage_multiplier":1.0,
+                "enemy_attack_speed_multiplier":1.0,
+                "enemy_move_speed_multiplier":1.0,
+                "enemy_morale_multiplier":1.0,
+                "enemy_cohesion_multiplier":1.0
+              }
+            }"#,
         );
     }
 
@@ -955,5 +1164,22 @@ mod tests {
             err.to_string()
                 .contains("unknown requirement_active_formation")
         );
+    }
+
+    #[test]
+    fn rejects_non_positive_faction_multiplier() {
+        let tmp = TempDir::new().expect("tmp");
+        write_valid_set(tmp.path());
+        write_config(
+            tmp.path(),
+            "factions.json",
+            r#"{
+              "christian":{"friendly_health_multiplier":0.0},
+              "muslim":{"friendly_health_multiplier":1.0}
+            }"#,
+        );
+
+        let err = GameData::load_from_dir(tmp.path()).expect_err("expected bad faction config");
+        assert!(err.to_string().contains("friendly_health_multiplier"));
     }
 }

@@ -5198,6 +5198,7 @@ fn update_skill_bar_hud(
 fn update_rescue_progress_hud(
     mut commands: Commands,
     data: Res<GameData>,
+    setup_selection: Option<Res<MatchSetupSelection>>,
     conditional_effects: Option<Res<ConditionalUpgradeEffects>>,
     banner_state: Res<BannerState>,
     rescue_bars_root: Query<Entity, With<RescueProgressBarsRoot>>,
@@ -5211,6 +5212,14 @@ fn update_rescue_progress_hud(
     let duration = effective_rescue_duration(
         data.rescue.rescue_duration_secs,
         conditional_effects.as_deref(),
+        data.factions
+            .for_faction(
+                setup_selection
+                    .as_deref()
+                    .map(|selection| selection.faction)
+                    .unwrap_or(PlayerFaction::Christian),
+            )
+            .rescue_time_multiplier,
     );
     let mut bars: Vec<(f32, Color)> = Vec::new();
     if let Some(progress_ratio) = banner_pickup_progress_ratio(&banner_state) {
@@ -5380,6 +5389,7 @@ fn draw_commander_aura_footprint(
     mut gizmos: Gizmos,
     data: Res<GameData>,
     buffs: Res<crate::model::GlobalBuffs>,
+    setup_selection: Option<Res<MatchSetupSelection>>,
     commanders: Query<&Transform, With<CommanderUnit>>,
 ) {
     if !has_active_aura_footprint(&buffs) {
@@ -5388,7 +5398,11 @@ fn draw_commander_aura_footprint(
     let Ok(commander_transform) = commanders.get_single() else {
         return;
     };
-    let radius = commander_aura_radius(&data, Some(&buffs)).max(1.0);
+    let player_faction = setup_selection
+        .as_deref()
+        .map(|selection| selection.faction)
+        .unwrap_or(PlayerFaction::Christian);
+    let radius = commander_aura_radius(&data, Some(&buffs), player_faction).max(1.0);
     let center = commander_transform.translation.truncate();
     let edge_color = Color::srgba(0.62, 0.86, 1.0, 0.18);
     gizmos.circle_2d(center, radius, edge_color);

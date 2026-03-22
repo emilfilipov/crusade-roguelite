@@ -168,10 +168,12 @@ fn spawn_rescuables_over_time(
     runtime.sequence = runtime.sequence.saturating_add(1);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn tick_rescue_progress(
     mut commands: Commands,
     time: Res<Time>,
     data: Res<GameData>,
+    setup_selection: Option<Res<MatchSetupSelection>>,
     conditional_effects: Option<Res<ConditionalUpgradeEffects>>,
     friendlies: Query<&Transform, With<FriendlyUnit>>,
     mut rescuables: Query<
@@ -188,9 +190,16 @@ fn tick_rescue_progress(
         return;
     }
     let rescue_radius = data.rescue.rescue_radius;
+    let player_faction = setup_selection
+        .as_deref()
+        .map(|selection| selection.faction)
+        .unwrap_or(PlayerFaction::Christian);
     let rescue_duration = effective_rescue_duration(
         data.rescue.rescue_duration_secs,
         conditional_effects.as_deref(),
+        data.factions
+            .for_faction(player_faction)
+            .rescue_time_multiplier,
     );
 
     for (entity, transform, rescuable_unit, mut rescue_progress) in &mut rescuables {
@@ -399,12 +408,13 @@ pub fn advance_rescue_progress(
 pub fn effective_rescue_duration(
     base_duration_secs: f32,
     conditional_effects: Option<&ConditionalUpgradeEffects>,
+    faction_multiplier: f32,
 ) -> f32 {
     let multiplier = conditional_effects
         .map(|effects| effects.rescue_time_multiplier)
         .unwrap_or(1.0)
         .max(0.0);
-    base_duration_secs.max(0.0) * multiplier
+    base_duration_secs.max(0.0) * multiplier * faction_multiplier.max(0.0)
 }
 
 pub const fn rescue_respawn_interval_secs() -> f32 {
@@ -570,14 +580,16 @@ mod tests {
     #[test]
     fn rescue_duration_uses_mob_mercy_multiplier_when_active() {
         let base = 4.0;
-        let default_duration = effective_rescue_duration(base, None);
+        let default_duration = effective_rescue_duration(base, None, 1.0);
         let mercy_effects = ConditionalUpgradeEffects {
             rescue_time_multiplier: 0.5,
             ..ConditionalUpgradeEffects::default()
         };
-        let mercy_duration = effective_rescue_duration(base, Some(&mercy_effects));
+        let mercy_duration = effective_rescue_duration(base, Some(&mercy_effects), 1.0);
+        let faction_adjusted_duration = effective_rescue_duration(base, Some(&mercy_effects), 0.9);
         assert!((default_duration - 4.0).abs() < 0.001);
         assert!((mercy_duration - 2.0).abs() < 0.001);
+        assert!((faction_adjusted_duration - 1.8).abs() < 0.001);
     }
 
     #[test]

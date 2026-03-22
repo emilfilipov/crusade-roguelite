@@ -324,9 +324,12 @@ fn pickup_exp_packs(
 }
 
 #[allow(clippy::type_complexity)]
+#[allow(clippy::too_many_arguments)]
 fn transit_drops_to_commander(
     mut commands: Commands,
     time: Res<Time>,
+    data: Res<GameData>,
+    setup_selection: Option<Res<MatchSetupSelection>>,
     buffs: Option<Res<GlobalBuffs>>,
     commanders: Query<(&Transform, &MoveSpeed), With<CommanderUnit>>,
     mut packs: Query<
@@ -338,6 +341,11 @@ fn transit_drops_to_commander(
     let Ok((commander_transform, commander_speed)) = commanders.get_single() else {
         return;
     };
+    let player_faction = setup_selection
+        .as_deref()
+        .map(|selection| selection.faction)
+        .unwrap_or(PlayerFaction::Christian);
+    let faction_xp_multiplier = data.factions.for_faction(player_faction).xp_gain_multiplier;
     let target = commander_transform.translation.truncate();
     let homing_speed = homing_speed_from_commander_base(commander_speed.0);
     let max_step = homing_speed * time.delta_seconds();
@@ -349,7 +357,8 @@ fn transit_drops_to_commander(
         transform.translation.y = next.y;
 
         if reached_target(next, target, DROP_CONSUME_RADIUS) {
-            let xp_gain = apply_xp_gain_multiplier(pack.xp_value, buffs.as_deref());
+            let xp_gain =
+                apply_xp_gain_multiplier(pack.xp_value, buffs.as_deref(), faction_xp_multiplier);
             xp_events.send(GainXpEvent(xp_gain));
             commands.entity(entity).despawn_recursive();
         }
@@ -432,11 +441,16 @@ pub fn scaled_pack_xp(base_xp: f32, wave_number: u32, commander_level: u32) -> f
     (base_xp * wave_scale * level_scale).max(1.0)
 }
 
-pub fn apply_xp_gain_multiplier(base_xp: f32, buffs: Option<&GlobalBuffs>) -> f32 {
+pub fn apply_xp_gain_multiplier(
+    base_xp: f32,
+    buffs: Option<&GlobalBuffs>,
+    faction_multiplier: f32,
+) -> f32 {
     let multiplier = buffs
         .map(|value| value.xp_gain_multiplier)
         .unwrap_or(1.0)
-        .max(0.0);
+        .max(0.0)
+        * faction_multiplier.max(0.0);
     (base_xp * multiplier).max(0.0)
 }
 
@@ -551,15 +565,18 @@ mod tests {
     #[test]
     fn xp_gain_multiplier_scales_consumed_pack_xp() {
         let base = 12.0;
-        let default_gain = apply_xp_gain_multiplier(base, None);
+        let default_gain = apply_xp_gain_multiplier(base, None, 1.0);
         assert!((default_gain - 12.0).abs() < 0.001);
 
         let buffs = GlobalBuffs {
             xp_gain_multiplier: 1.35,
             ..GlobalBuffs::default()
         };
-        let boosted = apply_xp_gain_multiplier(base, Some(&buffs));
+        let boosted = apply_xp_gain_multiplier(base, Some(&buffs), 1.0);
         assert!((boosted - 16.2).abs() < 0.001);
+
+        let faction_boosted = apply_xp_gain_multiplier(base, Some(&buffs), 1.1);
+        assert!((faction_boosted - 17.82).abs() < 0.001);
     }
 
     #[test]

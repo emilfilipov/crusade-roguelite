@@ -5,8 +5,8 @@ use crate::formation::{ActiveFormation, active_formation_config, formation_conta
 use crate::map::{MapBounds, playable_bounds};
 use crate::model::{
     Armor, AttackCooldown, AttackProfile, ColliderRadius, CommanderUnit, EnemyUnit, FriendlyUnit,
-    GameState, Health, MatchSetupSelection, Morale, MoveSpeed, StartRunEvent, Team, Unit,
-    UnitCohesion, UnitKind,
+    GameState, Health, MatchSetupSelection, Morale, MoveSpeed, PlayerFaction, StartRunEvent, Team,
+    Unit, UnitCohesion, UnitKind,
 };
 use crate::visuals::ArtAssets;
 
@@ -160,7 +160,7 @@ fn spawn_pending_enemy_batches(
     let player_faction = setup_selection
         .as_ref()
         .map(|selection| selection.faction)
-        .unwrap_or(crate::model::PlayerFaction::Christian);
+        .unwrap_or(PlayerFaction::Christian);
     let spawn_bounds = bounds
         .as_deref()
         .copied()
@@ -208,7 +208,7 @@ fn spawn_enemy_batch(
     count: u32,
     data: &GameData,
     art: &ArtAssets,
-    player_faction: crate::model::PlayerFaction,
+    player_faction: PlayerFaction,
     bounds: MapBounds,
     commander_position: Vec2,
     wave_number: u32,
@@ -224,12 +224,19 @@ fn spawn_enemy_batch(
         let Some(cfg) = data.enemies.enemy_profile_for_kind(enemy_kind) else {
             continue;
         };
-        let hp = cfg.max_hp * stat_scale;
+        let enemy_faction = enemy_kind.faction().unwrap_or(player_faction.opposing());
+        let faction_mods = data.factions.for_faction(enemy_faction);
+        let hp = cfg.max_hp * stat_scale * faction_mods.enemy_health_multiplier;
         let armor = cfg.armor + (stat_scale - 1.0) * 2.0;
-        let damage = cfg.damage * stat_scale;
-        let attack_cooldown_secs = (cfg.attack_cooldown_secs / (1.0 + (stat_scale - 1.0) * 0.15))
+        let damage = cfg.damage * stat_scale * faction_mods.enemy_damage_multiplier;
+        let base_cooldown = (cfg.attack_cooldown_secs / (1.0 + (stat_scale - 1.0) * 0.15))
             .clamp(0.2, cfg.attack_cooldown_secs);
-        let move_speed = enemy_move_speed(cfg.move_speed);
+        let attack_cooldown_secs =
+            scale_enemy_attack_cooldown(base_cooldown, faction_mods.enemy_attack_speed_multiplier);
+        let move_speed =
+            enemy_move_speed(cfg.move_speed * faction_mods.enemy_move_speed_multiplier);
+        let morale = (cfg.morale * faction_mods.enemy_morale_multiplier).max(1.0);
+        let cohesion = (cfg.cohesion * faction_mods.enemy_cohesion_multiplier).max(1.0);
         let texture = enemy_texture_for_kind(art, enemy_kind);
         let pos = random_spawn_position(bounds, commander_position, wave_number, seq);
         commands.spawn((
@@ -245,8 +252,8 @@ fn spawn_enemy_batch(
             },
             EnemyMovementState { moving: true },
             Health::new(hp),
-            Morale::new(cfg.morale),
-            UnitCohesion::new(cfg.cohesion),
+            Morale::new(morale),
+            UnitCohesion::new(cohesion),
             Armor(armor),
             AttackProfile {
                 damage,
@@ -271,6 +278,10 @@ fn spawn_enemy_batch(
             },
         ));
     }
+}
+
+fn scale_enemy_attack_cooldown(base_cooldown: f32, speed_multiplier: f32) -> f32 {
+    (base_cooldown / speed_multiplier.max(0.01)).max(0.08)
 }
 
 fn enqueue_wave_batch(

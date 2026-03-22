@@ -5,6 +5,16 @@ Single-file technical reference for current MVP runtime behavior.
 Use this for entity/component/system lookup without scanning all source files.
 
 ## Latest Update (2026-03-22)
+- Added data-driven faction gameplay edge config in `assets/data/factions.json`:
+  - per-faction friendly modifiers (HP, damage, attack speed, move speed, armor bonus, morale baseline),
+  - per-faction morale/cohesion flow modifiers (gain/loss scaling),
+  - per-faction XP gain multiplier and rescue-time multiplier,
+  - per-faction authority-aura enemy drain modifiers (morale multiplier + optional cohesion drain),
+  - per-faction enemy-side modifiers applied when that faction is spawned as enemies (HP/damage/attack speed/move speed/morale/cohesion).
+- Commander aura radius now resolves by selected faction commander profile + faction aura bonus (instead of maxing Christian/Muslim commander aura radius).
+- Friendly unit spawn/promotion stat setup now consumes faction modifiers, so faction identity applies consistently to commander and retinue.
+- Enemy spawn stat setup now consumes the spawned enemy faction's modifiers, enabling asymmetric Christian vs Muslim enemy behavior tuning.
+- XP consumption and rescue-channel duration now include selected-faction multipliers.
 - Added dual-faction runtime scaffold:
   - playable factions: `Christian` and `Muslim`,
   - selected faction controls commander + rescue recruit pool,
