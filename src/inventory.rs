@@ -212,8 +212,8 @@ fn default_equipment_slots(unit_type: EquipmentUnitType) -> Vec<EquippedSlot> {
                 item_id: None,
             },
             EquippedSlot {
-                slot_id: slot_id_from_label("Symbol of Power"),
-                display_name: "Symbol of Power".to_string(),
+                slot_id: slot_id_from_label("Symbol"),
+                display_name: "Symbol".to_string(),
                 item_id: None,
             },
         ],
@@ -279,7 +279,7 @@ mod tests {
             if unit_type == EquipmentUnitType::Commander {
                 assert_eq!(setup.slots[0].display_name, "Banner");
                 assert_eq!(setup.slots[3].display_name, "Squire");
-                assert_eq!(setup.slots[4].display_name, "Symbol of Power");
+                assert_eq!(setup.slots[4].display_name, "Symbol");
             } else {
                 assert_eq!(setup.slots[0].display_name, "Melee");
                 assert_eq!(setup.slots[3].display_name, "Banner");
