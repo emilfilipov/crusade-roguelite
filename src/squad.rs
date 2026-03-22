@@ -1,4 +1,6 @@
 use bevy::prelude::*;
+use bevy::sprite::{ColorMaterial, MaterialMesh2dBundle, Mesh2dHandle};
+use bevy::{math::primitives::Circle, render::mesh::Mesh};
 
 use crate::banner::BannerMovementPenalty;
 use crate::combat::{RangedAttackCooldown, RangedAttackProfile};
@@ -24,6 +26,12 @@ const PRIEST_BLESSING_RANGE: f32 = 190.0;
 const PRIEST_BLESSING_DURATION_SECS: f32 = 10.0;
 const PRIEST_BLESSING_COOLDOWN_SECS: f32 = 20.0;
 const PRIEST_BLESSING_ATTACK_SPEED_MULTIPLIER: f32 = 1.24;
+const PRIEST_BLESSING_VFX_Y_OFFSET: f32 = -8.0;
+const PRIEST_BLESSING_VFX_Z_OFFSET: f32 = -0.25;
+const PRIEST_BLESSING_VFX_ALPHA: f32 = 0.28;
+const PRIEST_BLESSING_VFX_SCALE_X: f32 = 1.75;
+const PRIEST_BLESSING_VFX_SCALE_Y: f32 = 0.92;
+const PRIEST_BLESSING_VFX_MIN_RADIUS: f32 = 8.0;
 
 #[derive(Resource, Clone, Debug, Default)]
 pub struct SquadRoster {
@@ -80,6 +88,22 @@ pub struct PriestAttackSpeedBlessing {
     pub remaining_secs: f32,
 }
 
+#[derive(Component)]
+struct PriestBlessingVfx;
+
+#[derive(Resource, Clone)]
+struct PriestBlessingVfxAssets {
+    mesh: Handle<Mesh>,
+    material: Handle<ColorMaterial>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PriestBlessingVfxAction {
+    Spawn,
+    Despawn,
+    Keep,
+}
+
 #[derive(Event, Clone, Copy, Debug)]
 pub struct PromoteUnitsEvent {
     pub from_kind: UnitKind,
@@ -95,6 +119,7 @@ impl Plugin for SquadPlugin {
             .init_resource::<RosterEconomy>()
             .init_resource::<RosterEconomyFeedback>()
             .init_resource::<CommanderMotionState>()
+            .add_systems(Startup, setup_priest_blessing_vfx_assets)
             .add_event::<RecruitEvent>()
             .add_event::<PromoteUnitsEvent>()
             .add_event::<UnitDiedEvent>()
@@ -109,6 +134,7 @@ impl Plugin for SquadPlugin {
                     apply_recruit_events,
                     apply_promotion_events,
                     run_priest_support_logic,
+                    sync_priest_blessing_vfx,
                     sync_roster,
                 )
                     .chain()
@@ -116,6 +142,24 @@ impl Plugin for SquadPlugin {
             );
         app.add_systems(Update, on_unit_died);
     }
+}
+
+fn setup_priest_blessing_vfx_assets(
+    mut commands: Commands,
+    meshes: Option<ResMut<Assets<Mesh>>>,
+    materials: Option<ResMut<Assets<ColorMaterial>>>,
+) {
+    let (Some(mut meshes), Some(mut materials)) = (meshes, materials) else {
+        return;
+    };
+    let mesh = meshes.add(Mesh::from(Circle::new(1.0)));
+    let material = materials.add(ColorMaterial::from(Color::srgba(
+        1.0,
+        0.83,
+        0.29,
+        PRIEST_BLESSING_VFX_ALPHA,
+    )));
+    commands.insert_resource(PriestBlessingVfxAssets { mesh, material });
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -655,6 +699,96 @@ fn run_priest_support_logic(
     }
 }
 
+#[allow(clippy::type_complexity)]
+fn sync_priest_blessing_vfx(
+    mut commands: Commands,
+    assets: Option<Res<PriestBlessingVfxAssets>>,
+    friendlies: Query<
+        (
+            Entity,
+            Option<&PriestAttackSpeedBlessing>,
+            Option<&Children>,
+            Option<&ColliderRadius>,
+        ),
+        With<FriendlyUnit>,
+    >,
+    vfx_nodes: Query<Entity, With<PriestBlessingVfx>>,
+) {
+    let Some(assets) = assets else {
+        return;
+    };
+
+    for (entity, blessing, children, collider_radius) in &friendlies {
+        let mut vfx_children: Vec<Entity> = Vec::new();
+        if let Some(children) = children {
+            for child in children.iter() {
+                if vfx_nodes.get(*child).is_ok() {
+                    vfx_children.push(*child);
+                }
+            }
+        }
+
+        match priest_blessing_vfx_action(blessing.is_some(), !vfx_children.is_empty()) {
+            PriestBlessingVfxAction::Spawn => {
+                let base_radius = collider_radius
+                    .map(|radius| radius.0)
+                    .unwrap_or(PRIEST_BLESSING_VFX_MIN_RADIUS)
+                    .max(PRIEST_BLESSING_VFX_MIN_RADIUS);
+                let shadow_scale = priest_blessing_shadow_scale(base_radius);
+                let vfx = commands
+                    .spawn((
+                        Name::new("PriestBlessingVfx"),
+                        PriestBlessingVfx,
+                        MaterialMesh2dBundle {
+                            mesh: Mesh2dHandle(assets.mesh.clone()),
+                            material: assets.material.clone(),
+                            transform: Transform::from_xyz(
+                                0.0,
+                                PRIEST_BLESSING_VFX_Y_OFFSET,
+                                PRIEST_BLESSING_VFX_Z_OFFSET,
+                            )
+                            .with_scale(Vec3::new(
+                                shadow_scale.x,
+                                shadow_scale.y,
+                                1.0,
+                            )),
+                            ..default()
+                        },
+                    ))
+                    .id();
+                commands.entity(entity).add_child(vfx);
+            }
+            PriestBlessingVfxAction::Despawn => {
+                for child in vfx_children {
+                    commands.entity(child).despawn_recursive();
+                }
+            }
+            PriestBlessingVfxAction::Keep => {
+                // Clean up accidental duplicates while keeping one marker active.
+                for duplicate in vfx_children.into_iter().skip(1) {
+                    commands.entity(duplicate).despawn_recursive();
+                }
+            }
+        }
+    }
+}
+
+fn priest_blessing_vfx_action(has_blessing: bool, has_vfx: bool) -> PriestBlessingVfxAction {
+    match (has_blessing, has_vfx) {
+        (true, false) => PriestBlessingVfxAction::Spawn,
+        (false, true) => PriestBlessingVfxAction::Despawn,
+        _ => PriestBlessingVfxAction::Keep,
+    }
+}
+
+fn priest_blessing_shadow_scale(collider_radius: f32) -> Vec2 {
+    let radius = collider_radius.max(PRIEST_BLESSING_VFX_MIN_RADIUS);
+    Vec2::new(
+        radius * PRIEST_BLESSING_VFX_SCALE_X,
+        radius * PRIEST_BLESSING_VFX_SCALE_Y,
+    )
+}
+
 pub fn tick_priest_cooldown(current_cooldown: f32, delta_seconds: f32) -> f32 {
     (current_cooldown - delta_seconds.max(0.0)).max(0.0)
 }
@@ -1116,6 +1250,36 @@ mod tests {
         let overlap_refresh = refresh_priest_blessing_remaining(5.0);
         assert!((first_apply - 10.0).abs() < 0.001);
         assert!((overlap_refresh - 10.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn priest_blessing_vfx_action_matches_blessing_state() {
+        assert_eq!(
+            super::priest_blessing_vfx_action(true, false),
+            super::PriestBlessingVfxAction::Spawn
+        );
+        assert_eq!(
+            super::priest_blessing_vfx_action(false, true),
+            super::PriestBlessingVfxAction::Despawn
+        );
+        assert_eq!(
+            super::priest_blessing_vfx_action(true, true),
+            super::PriestBlessingVfxAction::Keep
+        );
+        assert_eq!(
+            super::priest_blessing_vfx_action(false, false),
+            super::PriestBlessingVfxAction::Keep
+        );
+    }
+
+    #[test]
+    fn priest_blessing_shadow_scale_respects_minimum_radius() {
+        let below_min = super::priest_blessing_shadow_scale(2.0);
+        let at_min = super::priest_blessing_shadow_scale(8.0);
+        let larger = super::priest_blessing_shadow_scale(12.0);
+        assert_eq!(below_min, at_min);
+        assert!(larger.x > at_min.x);
+        assert!(larger.y > at_min.y);
     }
 
     #[test]

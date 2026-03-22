@@ -185,7 +185,8 @@ Use this for entity/component/system lookup without scanning all source files.
   - priest promotion now initializes full `20s` support cooldown and does not attach direct attack profiles,
   - priest outgoing damage is hard-blocked in combat runtime (they deal `0` damage even with global damage upgrades),
   - priests auto-cast a `10s` attack-speed blessing on friendlies in range and overlapping casts refresh duration,
-  - in-run HUD status line now surfaces active priest blessing remaining time.
+  - in-run HUD status line now surfaces active priest blessing remaining time,
+  - blessed friendlies render a subtle golden ground-shadow marker while the priest blessing is active.
 - Replaced placeholder `morale_weight` usage with active per-unit `Morale` (friendlies and enemies).
 - Added morale-based combat debuff below 50% morale.
 - Refactored cohesion to event-driven behavior (damage/death/kill events + low-morale pressure).
