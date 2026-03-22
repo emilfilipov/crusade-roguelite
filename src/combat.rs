@@ -462,6 +462,11 @@ fn emit_damage_events(
         if !attack_cd.0.finished() {
             continue;
         }
+        if unit_is_non_damaging_support(*attacker_unit) {
+            // Keep timer cadence without emitting any damage for pure support units.
+            attack_cd.0.reset();
+            continue;
+        }
 
         let attacker_position = attacker_transform.translation.truncate();
         let opposite_team = match attacker_unit.team {
@@ -610,6 +615,10 @@ fn emit_damage_events(
             });
         }
     }
+}
+
+pub fn unit_is_non_damaging_support(unit: Unit) -> bool {
+    unit.team == Team::Friendly && unit.kind == UnitKind::ChristianPeasantPriest
 }
 
 pub fn enemy_target_allowed(
@@ -851,10 +860,10 @@ mod tests {
         compute_damage, critical_hit, effective_formation_offense_multiplier, enemy_target_allowed,
         friendly_formation_context, friendly_outgoing_multiplier, inside_active_formation_bounds,
         inside_formation_damage_multiplier, morale_effect_multiplier, ranged_target_in_window,
-        should_execute_target,
+        should_execute_target, unit_is_non_damaging_support,
     };
     use crate::formation::{ActiveFormation, FormationModifiers};
-    use crate::model::{Team, UnitKind};
+    use crate::model::{Team, Unit, UnitKind};
     use crate::squad::CommanderMotionState;
 
     #[test]
@@ -1067,5 +1076,27 @@ mod tests {
             100.0,
             0.10
         ));
+    }
+
+    #[test]
+    fn priest_is_always_non_damaging_support() {
+        let friendly_priest = Unit {
+            team: Team::Friendly,
+            kind: UnitKind::ChristianPeasantPriest,
+            level: 1,
+        };
+        let enemy_raider = Unit {
+            team: Team::Enemy,
+            kind: UnitKind::EnemyBanditRaider,
+            level: 1,
+        };
+        let friendly_infantry = Unit {
+            team: Team::Friendly,
+            kind: UnitKind::ChristianPeasantInfantry,
+            level: 1,
+        };
+        assert!(unit_is_non_damaging_support(friendly_priest));
+        assert!(!unit_is_non_damaging_support(enemy_raider));
+        assert!(!unit_is_non_damaging_support(friendly_infantry));
     }
 }

@@ -44,7 +44,7 @@
     "id": "christian_peasant_priest",
     "max_hp": 78.0,
     "armor": 3.0,
-    "damage": 0.1,
+    "damage": 0.0,
     "attack_cooldown_secs": 1.4,
     "attack_range": 20.0,
     "move_speed": 148.0,

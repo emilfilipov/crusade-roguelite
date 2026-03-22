@@ -263,11 +263,14 @@ fn default_enemy_collision_radius() -> f32 {
     15.0
 }
 
-fn validate_unit_stats(unit: &UnitStatsConfig, label: &str) -> Result<()> {
+fn validate_unit_stats(unit: &UnitStatsConfig, label: &str, allow_zero_damage: bool) -> Result<()> {
     if unit.max_hp <= 0.0 {
         bail!("{label} max_hp must be > 0");
     }
-    if unit.damage <= 0.0 {
+    if (allow_zero_damage && unit.damage < 0.0) || (!allow_zero_damage && unit.damage <= 0.0) {
+        if allow_zero_damage {
+            bail!("{label} damage must be >= 0");
+        }
         bail!("{label} damage must be > 0");
     }
     if unit.attack_cooldown_secs <= 0.0 {
@@ -297,18 +300,21 @@ fn validate_unit_stats(unit: &UnitStatsConfig, label: &str) -> Result<()> {
 }
 
 fn validate_units(config: &UnitsConfigFile) -> Result<()> {
-    validate_unit_stats(&config.commander, "commander")?;
+    validate_unit_stats(&config.commander, "commander", false)?;
     validate_unit_stats(
         &config.recruit_christian_peasant_infantry,
         "recruit_christian_peasant_infantry",
+        false,
     )?;
     validate_unit_stats(
         &config.recruit_christian_peasant_archer,
         "recruit_christian_peasant_archer",
+        false,
     )?;
     validate_unit_stats(
         &config.recruit_christian_peasant_priest,
         "recruit_christian_peasant_priest",
+        true,
     )
 }
 
@@ -587,7 +593,7 @@ mod tests {
               "commander":{"id":"c","max_hp":10.0,"armor":1.0,"damage":2.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":100.0,"morale":100.0,"aura_radius":10.0},
               "recruit_christian_peasant_infantry":{"id":"r1","max_hp":9.0,"armor":1.0,"damage":2.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":90.0,"morale":90.0},
               "recruit_christian_peasant_archer":{"id":"r2","max_hp":7.0,"armor":0.5,"damage":1.5,"attack_cooldown_secs":1.1,"attack_range":80.0,"move_speed":95.0,"morale":85.0},
-              "recruit_christian_peasant_priest":{"id":"r3","max_hp":8.0,"armor":0.5,"damage":0.1,"attack_cooldown_secs":1.1,"attack_range":20.0,"move_speed":92.0,"morale":88.0}
+              "recruit_christian_peasant_priest":{"id":"r3","max_hp":8.0,"armor":0.5,"damage":0.0,"attack_cooldown_secs":1.1,"attack_range":20.0,"move_speed":92.0,"morale":88.0}
             }"#,
         );
         write_config(
@@ -664,7 +670,7 @@ mod tests {
               "commander":{"id":"c","max_hp":10.0,"armor":1.0,"damage":2.0,"attack_cooldown_secs":-1.0,"attack_range":20.0,"move_speed":100.0,"morale":100.0,"aura_radius":10.0},
               "recruit_christian_peasant_infantry":{"id":"r1","max_hp":9.0,"armor":1.0,"damage":2.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":90.0,"morale":90.0},
               "recruit_christian_peasant_archer":{"id":"r2","max_hp":7.0,"armor":0.5,"damage":1.5,"attack_cooldown_secs":1.1,"attack_range":80.0,"move_speed":95.0,"morale":85.0},
-              "recruit_christian_peasant_priest":{"id":"r3","max_hp":8.0,"armor":0.5,"damage":0.1,"attack_cooldown_secs":1.1,"attack_range":20.0,"move_speed":92.0,"morale":88.0}
+              "recruit_christian_peasant_priest":{"id":"r3","max_hp":8.0,"armor":0.5,"damage":0.0,"attack_cooldown_secs":1.1,"attack_range":20.0,"move_speed":92.0,"morale":88.0}
             }"#,
         );
 
