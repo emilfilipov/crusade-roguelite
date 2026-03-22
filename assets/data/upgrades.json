@@ -27,10 +27,8 @@
     {
       "id": "fast_learner_up",
       "kind": "fast_learner",
-      "min_value": 0.04,
-      "max_value": 0.20,
-      "value_step": 0.02,
-      "weight_exponent": 2.1
+      "value": 0.05,
+      "one_time": true
     },
     {
       "id": "crit_chance_up",
