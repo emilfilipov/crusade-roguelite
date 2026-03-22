@@ -5,7 +5,7 @@ use crate::formation::{ActiveFormation, active_formation_config, formation_conta
 use crate::map::{MapBounds, playable_bounds};
 use crate::model::{
     Armor, AttackCooldown, AttackProfile, ColliderRadius, CommanderUnit, EnemyUnit, FriendlyUnit,
-    GameState, Health, Morale, MoveSpeed, StartRunEvent, Team, Unit, UnitKind,
+    GameState, Health, Morale, MoveSpeed, StartRunEvent, Team, Unit, UnitCohesion, UnitKind,
 };
 use crate::visuals::ArtAssets;
 
@@ -229,6 +229,7 @@ fn spawn_enemy_batch(
             EnemyMovementState { moving: true },
             Health::new(hp),
             Morale::new(cfg.morale),
+            UnitCohesion::new(cfg.cohesion),
             Armor(armor),
             AttackProfile {
                 damage,

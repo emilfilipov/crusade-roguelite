@@ -49,6 +49,7 @@ pub struct EnemyStatsConfig {
     pub attack_range: f32,
     pub move_speed: f32,
     pub morale: f32,
+    pub cohesion: f32,
     #[serde(default = "default_enemy_collision_radius")]
     pub collision_radius: f32,
 }
@@ -330,6 +331,9 @@ fn validate_enemies(config: &EnemiesConfigFile) -> Result<()> {
     if config.bandit_raider.morale <= 0.0 {
         bail!("enemy bandit_raider morale must be > 0");
     }
+    if config.bandit_raider.cohesion <= 0.0 {
+        bail!("enemy bandit_raider cohesion must be > 0");
+    }
     if config.bandit_raider.collision_radius <= 0.0 {
         bail!("enemy bandit_raider collision_radius must be > 0");
     }
@@ -589,7 +593,7 @@ mod tests {
         write_config(
             dir,
             "enemies.json",
-            r#"{"bandit_raider":{"id":"e","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0}}"#,
+            r#"{"bandit_raider":{"id":"e","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0,"cohesion":70.0}}"#,
         );
         write_config(
             dir,
@@ -666,6 +670,20 @@ mod tests {
 
         let err = GameData::load_from_dir(tmp.path()).expect_err("expected invalid config");
         assert!(err.to_string().contains("attack_cooldown_secs"));
+    }
+
+    #[test]
+    fn rejects_enemy_cohesion_below_or_equal_zero() {
+        let tmp = TempDir::new().expect("tmp");
+        write_valid_set(tmp.path());
+        write_config(
+            tmp.path(),
+            "enemies.json",
+            r#"{"bandit_raider":{"id":"e","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0,"cohesion":0.0}}"#,
+        );
+
+        let err = GameData::load_from_dir(tmp.path()).expect_err("expected invalid enemy cohesion");
+        assert!(err.to_string().contains("cohesion"));
     }
 
     #[test]

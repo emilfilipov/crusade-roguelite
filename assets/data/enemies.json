@@ -8,6 +8,7 @@
     "attack_range": 30.0,
     "move_speed": 118.0,
     "morale": 90.0,
+    "cohesion": 80.0,
     "collision_radius": 18.0
   }
 }

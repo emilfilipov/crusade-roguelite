@@ -7,12 +7,12 @@ use crate::map::MapBounds;
 use crate::model::{ColliderRadius, GameState, Team, Unit, UnitKind};
 
 const COLLISION_CORRECTION_DAMPING: f32 = 0.84;
-const COLLISION_MAX_PUSH_PER_FRAME: f32 = 10.0;
+const COLLISION_MAX_PUSH_PER_FRAME: f32 = 12.0;
 const COLLISION_MIN_OVERLAP_TO_RESOLVE: f32 = 0.05;
 const COLLISION_MIN_CELL_SIZE: f32 = 24.0;
-const COLLISION_SOLVER_PASSES: usize = 2;
-const COLLISION_PAIR_MAX_PUSH: f32 = 6.0;
-const ENEMY_ENEMY_COLLISION_DISTANCE_MULTIPLIER: f32 = 1.14;
+const COLLISION_SOLVER_PASSES: usize = 3;
+const COLLISION_PAIR_MAX_PUSH: f32 = 7.0;
+const ENEMY_ENEMY_COLLISION_DISTANCE_MULTIPLIER: f32 = 1.20;
 
 pub struct CollisionPlugin;
 
@@ -205,11 +205,18 @@ pub fn damp_collision_correction(
     damping: f32,
     max_push_per_frame: f32,
 ) -> Vec2 {
-    if correction.length_squared() <= 0.000001 || damping <= 0.0 || max_push_per_frame <= 0.0 {
+    if correction.length_squared() <= 0.000001
+        || damping <= 0.0
+        || max_push_per_frame <= 0.0
+        || delta_seconds <= 0.0
+    {
         return Vec2::ZERO;
     }
     // Clamp frame scaling to avoid low-FPS over-corrections that create visible jitter.
-    let frame_scale = (delta_seconds.max(0.0) * 60.0).clamp(0.75, 1.0);
+    let frame_scale = (delta_seconds * 60.0).clamp(0.0, 1.0);
+    if frame_scale <= 0.0 {
+        return Vec2::ZERO;
+    }
     let mut damped = correction * damping * frame_scale;
     let max_len = max_push_per_frame.max(0.0);
     let len = damped.length();
@@ -353,6 +360,13 @@ mod tests {
         assert!(medium.length() >= fast.length());
         assert!(slow.length() >= medium.length());
         assert!(slow.length() <= 6.0 + 0.001);
+    }
+
+    #[test]
+    fn damped_correction_is_zero_while_virtual_time_is_paused() {
+        let correction = Vec2::new(8.0, -2.0);
+        let paused = damp_collision_correction(correction, 0.0, 0.62, 6.0);
+        assert!(paused.length() <= 0.000001);
     }
 
     #[test]

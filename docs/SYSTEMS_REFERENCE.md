@@ -8,6 +8,11 @@ Use this for entity/component/system lookup without scanning all source files.
 - Formation footprint occupancy cap now uses a strict retinue ratio: `floor(retinue_count / 4)` enemies allowed inside.
 - Floating critical-hit damage text now renders as magenta, slightly larger text, and appends `!` (example: `75!`).
 - Stats modal table now reports aggregated stat bonuses by stat name (for example `Health`, `Damage`, `Morale Regen/s`, `Morale Loss Resist`) instead of effect-source row names.
+- Collision pause artifact fix: collision correction now applies `0` movement when simulation `delta_seconds == 0` (modal/paused virtual-time frames), preventing enemies from spreading while menus are open.
+- Added enemy unit cohesion stat scaffold:
+  - `enemies.json` now includes `cohesion` per enemy archetype,
+  - enemy spawn now attaches `UnitCohesion { current, max }`,
+  - data validation now requires enemy cohesion to be `> 0`.
 - Added `RunModalState` state machine for in-run utility screens (`Inventory`, `Stats`, `Skill Book`, `Archive`, `Unit Upgrade`).
 - Added shared modal request event path (`RunModalRequestEvent`) so keyboard and UI button actions use the same reducer logic.
 - Added modal hotkeys in-run: `I`, `O`, `K`, `B`, `U`; `Escape` closes modal first, otherwise opens pause menu.
@@ -156,8 +161,8 @@ Use this for entity/component/system lookup without scanning all source files.
 - Reduced dense enemy crowd jitter/stacking:
   - enemy collision radius is now data-driven (`enemies.bandit_raider.collision_radius`),
   - collision correction now uses frame-time-aware damping + max push clamp,
-  - collision solver now runs 2 iterative passes per frame with per-pass push cap,
-  - enemy-enemy pairs use slightly larger separation distance (`x1.14`) to reduce mass overlap,
+  - collision solver now runs 3 iterative passes per frame with per-pass push cap,
+  - enemy-enemy pairs use larger separation distance (`x1.20`) to reduce mass overlap,
   - chase movement step is clamped to avoid overshooting into stop distance.
 - Added per-upgrade requirement framework:
   - data schema now supports typed requirement discriminators (`tier0_share`, `formation_active`, `map_tag`),
@@ -249,7 +254,7 @@ Loaded from `assets/data` by `GameData::load_from_dir`.
   - Ranged profile: `damage=9`, `cd=1.15`, `range=220`, `projectile_speed=460`, `max_distance=235`
 
 ### `enemies.json`
-- `bandit_raider`: `hp=34`, `armor=1`, `damage=6`, `cd=1.3`, `range=30`, `move=118`, `morale=90`, `collision_radius=16`
+- `bandit_raider`: `hp=34`, `armor=1`, `damage=6`, `cd=1.3`, `range=30`, `move=118`, `morale=90`, `cohesion=80`, `collision_radius=18`
 
 ### `formations.json`
 - `square`: `slot_spacing=30`, `offense=1.0`, `offense_while_moving=1.0`, `defense=1.0`, `anti_cavalry=1.0`, `move_speed=1.0`
@@ -329,6 +334,7 @@ Roll fields:
 - `Health { current, max }`
 - `BaseMaxHealth`
 - `Morale { current, max }`
+- `UnitCohesion { current, max }`
 - `Armor`
 - `AttackProfile`
 - `AttackCooldown`
