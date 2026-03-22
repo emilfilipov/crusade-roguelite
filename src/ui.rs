@@ -1674,7 +1674,7 @@ fn level_up_tier_border_color(tier: UpgradeValueTier) -> Color {
     match tier {
         UpgradeValueTier::Common => Color::srgb(0.82, 0.8, 0.76),
         UpgradeValueTier::Uncommon => Color::srgb(0.34, 0.58, 0.95),
-        UpgradeValueTier::Rare => Color::srgb(0.95, 0.84, 0.22),
+        UpgradeValueTier::Rare => Color::srgb(0.22, 0.78, 0.35),
         UpgradeValueTier::Epic => Color::srgb(0.67, 0.38, 0.91),
         UpgradeValueTier::Mythical => Color::srgb(1.0, 0.74, 0.24),
         UpgradeValueTier::Unique => Color::srgb(0.5, 0.31, 0.18),

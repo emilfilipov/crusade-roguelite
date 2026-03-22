@@ -114,7 +114,7 @@ Use this for entity/component/system lookup without scanning all source files.
   - `Common`, `Uncommon`, `Rare`, `Epic`, `Mythical`
   - one-time upgrades (`formations`, `mob_*`) are classified as `Unique`
 - Level-up card visuals now use tier-based border + glow colors:
-  - `Common` = white/gray, `Uncommon` = blue, `Rare` = yellow,
+  - `Common` = white/gray, `Uncommon` = blue, `Rare` = green,
     `Epic` = purple, `Mythical` = orange, `Unique` = brown.
 - Raised banner follow offset so it renders visibly behind/above the commander during movement.
 - Dropped banner now uses the standard upright banner sprite for stronger in-world readability.
