@@ -287,6 +287,7 @@ fn spawn_recruit(
                 0u32,
             ),
         };
+    let is_priest = unit_kind == UnitKind::ChristianPeasantPriest;
 
     let mut entity = commands.spawn((
         Unit {
@@ -324,7 +325,19 @@ fn spawn_recruit(
         },
     ));
 
-    if cfg.ranged_attack_damage > 0.0 {
+    if is_priest {
+        entity
+            .insert(PriestSupportCaster {
+                cooldown: PRIEST_BLESSING_COOLDOWN_SECS,
+            })
+            .remove::<(
+                AttackProfile,
+                AttackCooldown,
+                RangedAttackProfile,
+                RangedAttackCooldown,
+                PriestAttackSpeedBlessing,
+            )>();
+    } else if cfg.ranged_attack_damage > 0.0 {
         entity.insert((
             RangedAttackProfile {
                 damage: cfg.ranged_attack_damage,
@@ -1087,6 +1100,82 @@ mod tests {
             })
         };
         assert!(found_archer_with_ranged);
+    }
+
+    #[test]
+    fn priest_recruit_starts_as_support_without_direct_attack_profiles() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, bevy::state::app::StatesPlugin));
+        app.init_state::<GameState>();
+        app.add_event::<StartRunEvent>();
+        app.insert_resource(
+            GameData::load_from_dir(std::path::Path::new("assets/data")).expect("data"),
+        );
+        app.insert_resource(ArtAssets::default());
+        app.insert_resource(ActiveFormation::Square);
+        app.insert_resource(FormationModifiers::default());
+        app.add_plugins(SquadPlugin);
+
+        app.world_mut().send_event(StartRunEvent);
+        app.update();
+
+        app.world_mut()
+            .resource_mut::<NextState<GameState>>()
+            .set(GameState::InRun);
+        app.update();
+
+        app.world_mut().send_event(RecruitEvent {
+            world_position: Vec2::new(24.0, 8.0),
+            recruit_kind: RecruitUnitKind::ChristianPeasantPriest,
+        });
+        app.update();
+
+        let mut found = false;
+        let mut has_support = false;
+        let mut has_direct_attack = false;
+        {
+            let world = app.world_mut();
+            let mut query = world.query::<(
+                &crate::model::Unit,
+                Option<&AttackProfile>,
+                Option<&RangedAttackProfile>,
+                Option<&PriestSupportCaster>,
+            )>();
+            for (unit, melee, ranged, support) in query.iter(world) {
+                if unit.kind != UnitKind::ChristianPeasantPriest {
+                    continue;
+                }
+                found = true;
+                has_support |= support.is_some();
+                has_direct_attack |= melee.is_some() || ranged.is_some();
+            }
+        }
+
+        assert!(found);
+        assert!(has_support);
+        assert!(!has_direct_attack);
+    }
+
+    #[test]
+    fn priest_support_logic_applies_blessing_to_nearby_friendlies() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.add_systems(Update, super::run_priest_support_logic);
+
+        let _priest = app.world_mut().spawn((
+            FriendlyUnit,
+            Transform::from_xyz(0.0, 0.0, 0.0),
+            PriestSupportCaster { cooldown: 0.0 },
+        ));
+        let ally = app
+            .world_mut()
+            .spawn((FriendlyUnit, Transform::from_xyz(30.0, 0.0, 0.0)))
+            .id();
+
+        app.update();
+
+        let blessing = app.world().get::<super::PriestAttackSpeedBlessing>(ally);
+        assert!(blessing.is_some());
     }
 
     #[test]
