@@ -1684,9 +1684,9 @@ fn level_up_tier_border_color(tier: UpgradeValueTier) -> Color {
     match tier {
         UpgradeValueTier::Common => Color::srgb(0.82, 0.8, 0.76),
         UpgradeValueTier::Uncommon => Color::srgb(0.34, 0.58, 0.95),
-        UpgradeValueTier::Rare => Color::srgb(0.22, 0.78, 0.35),
+        UpgradeValueTier::Rare => Color::srgb(0.1, 0.95, 0.28),
         UpgradeValueTier::Epic => Color::srgb(0.67, 0.38, 0.91),
-        UpgradeValueTier::Mythical => Color::srgb(1.0, 0.74, 0.24),
+        UpgradeValueTier::Mythical => Color::srgb(1.0, 0.56, 0.08),
         UpgradeValueTier::Unique => Color::srgb(0.5, 0.31, 0.18),
     }
 }
@@ -2315,11 +2315,6 @@ fn build_stats_panel_data(
                 "Pickup Radius",
                 buffs.pickup_radius_bonus,
                 format_raw_bonus(buffs.pickup_radius_bonus),
-            ),
-            stats_bonus_row(
-                "Aura Radius",
-                buffs.commander_aura_radius_bonus,
-                format_raw_bonus(buffs.commander_aura_radius_bonus),
             ),
             stats_bonus_row(
                 "Morale Loss Resist",
