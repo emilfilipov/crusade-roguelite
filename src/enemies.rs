@@ -62,7 +62,7 @@ const ENEMY_FORMATION_REPEL_MARGIN_SLOTS: f32 = 0.12;
 const WAVE_UNITS_MULTIPLIER: f32 = 2.0;
 const MAX_ENEMIES_PER_WAVE: f32 = 1000.0;
 const POST_SCRIPTED_WAVE_COUNT_GROWTH: f32 = 1.18;
-const WAVE_STAT_GROWTH_PER_WAVE: f32 = 0.092;
+const WAVE_STAT_GROWTH_PER_WAVE: f32 = 0.102;
 const WAVE_BATCH_SIZE: u32 = 7;
 const WAVE_BATCH_INTERVAL_SECS: f32 = 0.7;
 const ENEMY_SPAWN_MIN_DISTANCE_FROM_COMMANDER: f32 = 200.0;
@@ -879,7 +879,7 @@ mod tests {
         assert!(late > second);
         assert_eq!(wave_duration_secs(), 30.0);
         assert!((wave_stat_multiplier(1) - 1.0).abs() < 0.001);
-        assert!((wave_stat_multiplier(2) - 1.092).abs() < 0.001);
+        assert!((wave_stat_multiplier(2) - 1.102).abs() < 0.001);
         assert!(wave_stat_multiplier(8) > wave_stat_multiplier(3));
         assert!(enemy_move_speed(100.0) < 100.0);
     }
