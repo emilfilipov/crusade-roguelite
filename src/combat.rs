@@ -308,14 +308,8 @@ fn emit_ranged_projectile_attacks(
             ((ranged_profile.damage + ranged_bonus).max(0.0) * outgoing_multiplier).max(1.0);
         let mut projectile_is_critical = false;
         if attacker_team == Team::Friendly {
-            let crit_chance = global_buffs
-                .as_ref()
-                .map(|buff| buff.crit_chance_bonus)
-                .unwrap_or(0.0);
-            let crit_multiplier = global_buffs
-                .as_ref()
-                .map(|buff| buff.crit_damage_multiplier)
-                .unwrap_or(DEFAULT_CRIT_DAMAGE_MULTIPLIER);
+            let (crit_chance, crit_multiplier) =
+                friendly_critical_parameters(global_buffs.as_deref());
             let is_critical = roll_critical_hit(crit_chance, &mut crit_rng);
             projectile_damage =
                 apply_critical_multiplier(projectile_damage, is_critical, crit_multiplier).max(1.0);
@@ -573,14 +567,8 @@ fn emit_damage_events(
                 (attack_profile.damage + melee_bonus).max(0.0) * outgoing_multiplier;
             let mut is_critical = false;
             if attacker_unit.team == Team::Friendly {
-                let crit_chance = global_buffs
-                    .as_ref()
-                    .map(|buff| buff.crit_chance_bonus)
-                    .unwrap_or(0.0);
-                let crit_multiplier = global_buffs
-                    .as_ref()
-                    .map(|buff| buff.crit_damage_multiplier)
-                    .unwrap_or(DEFAULT_CRIT_DAMAGE_MULTIPLIER);
+                let (crit_chance, crit_multiplier) =
+                    friendly_critical_parameters(global_buffs.as_deref());
                 is_critical = roll_critical_hit(crit_chance, &mut crit_rng);
                 outgoing_damage =
                     apply_critical_multiplier(outgoing_damage, is_critical, crit_multiplier);
@@ -699,6 +687,16 @@ fn apply_critical_multiplier(damage: f32, is_critical: bool, crit_multiplier: f3
     } else {
         damage
     }
+}
+
+fn friendly_critical_parameters(global_buffs: Option<&GlobalBuffs>) -> (f32, f32) {
+    let crit_chance = global_buffs
+        .map(|buff| buff.crit_chance_bonus)
+        .unwrap_or(0.0);
+    let crit_multiplier = global_buffs
+        .map(|buff| buff.crit_damage_multiplier)
+        .unwrap_or(DEFAULT_CRIT_DAMAGE_MULTIPLIER);
+    (crit_chance, crit_multiplier)
 }
 
 pub fn should_execute_target(
@@ -858,12 +856,13 @@ mod tests {
     use crate::combat::{
         FriendlyFormationContext, apply_critical_multiplier, commander_level_combat_multiplier,
         compute_damage, critical_hit, effective_formation_offense_multiplier, enemy_target_allowed,
-        friendly_formation_context, friendly_outgoing_multiplier, inside_active_formation_bounds,
-        inside_formation_damage_multiplier, morale_effect_multiplier, ranged_target_in_window,
-        should_execute_target, unit_is_non_damaging_support,
+        friendly_critical_parameters, friendly_formation_context, friendly_outgoing_multiplier,
+        inside_active_formation_bounds, inside_formation_damage_multiplier,
+        morale_effect_multiplier, ranged_target_in_window, should_execute_target,
+        unit_is_non_damaging_support,
     };
     use crate::formation::{ActiveFormation, FormationModifiers};
-    use crate::model::{Team, Unit, UnitKind};
+    use crate::model::{GlobalBuffs, Team, Unit, UnitKind};
     use crate::squad::CommanderMotionState;
 
     #[test]
@@ -898,6 +897,31 @@ mod tests {
         assert!((apply_critical_multiplier(10.0, false, 2.0) - 10.0).abs() < 0.0001);
         assert!((apply_critical_multiplier(10.0, true, 2.0) - 20.0).abs() < 0.0001);
         assert!((apply_critical_multiplier(10.0, true, 0.5) - 10.0).abs() < 0.0001);
+    }
+
+    #[test]
+    fn critical_hit_chance_is_capped_at_ninety_five_percent() {
+        assert!(critical_hit(0.949, 5.0));
+        assert!(!critical_hit(0.95, 5.0));
+    }
+
+    #[test]
+    fn friendly_critical_parameters_default_without_buffs() {
+        let (chance, multiplier) = friendly_critical_parameters(None);
+        assert!((chance - 0.0).abs() < 0.0001);
+        assert!((multiplier - 1.2).abs() < 0.0001);
+    }
+
+    #[test]
+    fn friendly_critical_parameters_read_global_buffs() {
+        let buffs = GlobalBuffs {
+            crit_chance_bonus: 0.17,
+            crit_damage_multiplier: 1.75,
+            ..GlobalBuffs::default()
+        };
+        let (chance, multiplier) = friendly_critical_parameters(Some(&buffs));
+        assert!((chance - 0.17).abs() < 0.0001);
+        assert!((multiplier - 1.75).abs() < 0.0001);
     }
 
     #[test]

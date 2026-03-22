@@ -1297,6 +1297,25 @@ mod tests {
     }
 
     #[test]
+    fn crit_upgrades_apply_to_global_buffs_with_expected_bounds() {
+        let mut buffs = GlobalBuffs::default();
+        let mut conditional = super::ConditionalUpgradeOwnership::default();
+        let mut skillbar = FormationSkillBar::default();
+
+        let mut crit_chance = upgrade("crit_chance", "crit_chance_up");
+        crit_chance.value = 0.60;
+        super::apply_upgrade(&crit_chance, &mut buffs, &mut conditional, &mut skillbar);
+        super::apply_upgrade(&crit_chance, &mut buffs, &mut conditional, &mut skillbar);
+        assert!((buffs.crit_chance_bonus - 0.95).abs() < 0.001);
+
+        let mut crit_damage = upgrade("crit_damage", "crit_damage_up");
+        crit_damage.value = 0.20;
+        super::apply_upgrade(&crit_damage, &mut buffs, &mut conditional, &mut skillbar);
+        super::apply_upgrade(&crit_damage, &mut buffs, &mut conditional, &mut skillbar);
+        assert!((buffs.crit_damage_multiplier - 1.60).abs() < 0.001);
+    }
+
+    #[test]
     fn xp_requirements_increase_each_level() {
         assert!((xp_required_for_level(1) - 300.0).abs() < 0.001);
         assert!(xp_required_for_level(2) > xp_required_for_level(1));
