@@ -41,9 +41,9 @@
     {
       "id": "crit_damage_up",
       "kind": "crit_damage",
-      "min_value": 0.10,
-      "max_value": 0.50,
-      "value_step": 0.05,
+      "min_value": 0.08,
+      "max_value": 0.40,
+      "value_step": 0.04,
       "weight_exponent": 2.2
     },
     {

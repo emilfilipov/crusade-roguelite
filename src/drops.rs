@@ -428,7 +428,7 @@ fn commander_spawn_center(commanders: &Query<&Transform, With<CommanderUnit>>) -
 
 pub fn scaled_pack_xp(base_xp: f32, wave_number: u32, commander_level: u32) -> f32 {
     let wave_scale = 1.0 + wave_number.saturating_sub(1) as f32 * 0.06;
-    let level_scale = 1.0 + commander_level.saturating_sub(1) as f32 * 0.04;
+    let level_scale = 1.0 + commander_level.saturating_sub(1) as f32 * 0.03;
     (base_xp * wave_scale * level_scale).max(1.0)
 }
 

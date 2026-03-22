@@ -15,6 +15,7 @@ const LEVEL_UP_OPTION_COUNT: usize = 3;
 const DEFAULT_UPGRADE_WEIGHT_EXPONENT: f32 = 2.0;
 const UPGRADE_VALUE_TIER_COUNT: u32 = 5;
 const AUTHORITY_ENEMY_MORALE_DRAIN_SCALE: f32 = 10.8;
+const MAX_AUTHORITY_LOSS_RESISTANCE: f32 = 0.75;
 const HOSPITALIER_COHESION_REGEN_SCALE: f32 = 0.35;
 const HOSPITALIER_MORALE_REGEN_SCALE: f32 = 0.18;
 
@@ -382,8 +383,8 @@ pub fn xp_required_for_level(level: u32) -> f32 {
     }
 
     const BASE_REQUIREMENT: f32 = 300.0;
-    const BRACKET_SIZE: u32 = 10;
-    const BRACKET_GROWTH: f32 = 1.7;
+    const BRACKET_SIZE: u32 = 5;
+    const BRACKET_GROWTH: f32 = 1.3;
     const INTRA_BRACKET_GROWTH: f32 = 1.03;
 
     let safe_level = level.max(1);
@@ -827,7 +828,9 @@ fn apply_upgrade(
             buffs.commander_aura_radius_bonus += upgrade.value;
         }
         "authority_aura" => {
-            buffs.authority_friendly_loss_resistance += upgrade.value;
+            buffs.authority_friendly_loss_resistance = (buffs.authority_friendly_loss_resistance
+                + upgrade.value)
+                .clamp(0.0, MAX_AUTHORITY_LOSS_RESISTANCE);
             buffs.authority_enemy_morale_drain_per_sec +=
                 upgrade.value * AUTHORITY_ENEMY_MORALE_DRAIN_SCALE;
         }
