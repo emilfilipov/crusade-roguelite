@@ -58,8 +58,8 @@ fn load_art_assets(mut assets: ResMut<ArtAssets>, asset_server: Option<Res<Asset
 
     assets.commander_idle =
         asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0097.png");
-    assets.commander_saladin_idle =
-        asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0100.png");
+    assets.commander_saladin_idle = asset_server
+        .load("third_party/kenney_desert-shooter-pack_1.0/PNG/Players/Tiles/tile_0010.png");
     assets.friendly_peasant_infantry_idle =
         asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0111.png");
     assets.friendly_peasant_infantry_rescuable_variant =
@@ -70,16 +70,16 @@ fn load_art_assets(mut assets: ResMut<ArtAssets>, asset_server: Option<Res<Asset
         asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0112.png");
     assets.friendly_peasant_priest_idle =
         asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0109.png");
-    assets.muslim_peasant_infantry_idle =
-        asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0097.png");
-    assets.muslim_peasant_infantry_rescuable_variant =
-        asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0097.png");
-    assets.muslim_peasant_archer_idle =
-        asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0099.png");
-    assets.muslim_peasant_archer_rescuable_variant =
-        asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0099.png");
-    assets.muslim_peasant_priest_idle =
-        asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0096.png");
+    assets.muslim_peasant_infantry_idle = asset_server
+        .load("third_party/kenney_desert-shooter-pack_1.0/PNG/Players/Tiles/tile_0008.png");
+    assets.muslim_peasant_infantry_rescuable_variant = asset_server
+        .load("third_party/kenney_desert-shooter-pack_1.0/PNG/Players/Tiles/tile_0008.png");
+    assets.muslim_peasant_archer_idle = asset_server
+        .load("third_party/kenney_desert-shooter-pack_1.0/PNG/Players/Tiles/tile_0009.png");
+    assets.muslim_peasant_archer_rescuable_variant = asset_server
+        .load("third_party/kenney_desert-shooter-pack_1.0/PNG/Players/Tiles/tile_0009.png");
+    assets.muslim_peasant_priest_idle = asset_server
+        .load("third_party/kenney_desert-shooter-pack_1.0/PNG/Players/Tiles/tile_0011.png");
     assets.enemy_bandit_raider_idle =
         asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0105.png");
     assets.enemy_bandit_raider_move =

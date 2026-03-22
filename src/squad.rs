@@ -976,18 +976,6 @@ pub fn friendly_tier_for_kind(kind: UnitKind) -> Option<u8> {
 }
 
 pub fn promotion_step_cost(from_kind: UnitKind, to_kind: UnitKind) -> Option<u32> {
-    if matches!(
-        (from_kind, to_kind),
-        (
-            UnitKind::ChristianPeasantInfantry,
-            UnitKind::ChristianPeasantArcher | UnitKind::ChristianPeasantPriest
-        ) | (
-            UnitKind::MuslimPeasantInfantry,
-            UnitKind::MuslimPeasantArcher | UnitKind::MuslimPeasantPriest
-        )
-    ) {
-        return Some(1);
-    }
     let from_tier = friendly_tier_for_kind(from_kind)?;
     let to_tier = friendly_tier_for_kind(to_kind)?;
     (to_tier > from_tier).then_some((to_tier - from_tier) as u32)
@@ -1407,7 +1395,7 @@ mod tests {
                 UnitKind::ChristianPeasantInfantry,
                 UnitKind::ChristianPeasantArcher
             ),
-            Some(1)
+            None
         );
         assert_eq!(
             crate::squad::promotion_step_cost(
@@ -1480,7 +1468,7 @@ mod tests {
     }
 
     #[test]
-    fn priest_promotion_removes_direct_attack_profiles() {
+    fn priest_promotion_event_is_blocked_without_paths() {
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, bevy::state::app::StatesPlugin));
         app.init_state::<GameState>();
@@ -1518,8 +1506,8 @@ mod tests {
         });
         app.update();
 
-        let mut priest_has_support = false;
-        let mut priest_has_direct_attack = false;
+        let mut priest_count = 0usize;
+        let mut infantry_count = 0usize;
         {
             let world = app.world_mut();
             let mut query = world.query::<(
@@ -1529,15 +1517,24 @@ mod tests {
                 Option<&PriestSupportCaster>,
             )>();
             for (unit, melee, ranged, support) in query.iter(world) {
-                if unit.kind != UnitKind::ChristianPeasantPriest {
-                    continue;
+                match unit.kind {
+                    UnitKind::ChristianPeasantPriest => {
+                        priest_count += 1;
+                        assert!(support.is_some());
+                        assert!(melee.is_none());
+                        assert!(ranged.is_none());
+                    }
+                    UnitKind::ChristianPeasantInfantry => {
+                        infantry_count += 1;
+                    }
+                    _ => {}
                 }
-                priest_has_support |= support.is_some();
-                priest_has_direct_attack |= melee.is_some() || ranged.is_some();
             }
         }
-        assert!(priest_has_support);
-        assert!(!priest_has_direct_attack);
+        assert_eq!(priest_count, 0);
+        assert!(infantry_count >= 1);
+        let feedback = app.world().resource::<RosterEconomyFeedback>();
+        assert!(feedback.blocked_upgrade_reason.is_some());
     }
 
     #[test]

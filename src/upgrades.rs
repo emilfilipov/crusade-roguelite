@@ -14,6 +14,8 @@ use crate::squad::RosterEconomy;
 const LEVEL_UP_OPTION_COUNT: usize = 3;
 const DEFAULT_UPGRADE_WEIGHT_EXPONENT: f32 = 2.0;
 const UPGRADE_VALUE_TIER_COUNT: u32 = 5;
+const UPGRADE_HIGH_TIER_DROP_OFF_MULTIPLIER: f32 = 1.35;
+const MAX_UNIQUE_UPGRADES: usize = 5;
 const AUTHORITY_ENEMY_MORALE_DRAIN_SCALE: f32 = 10.8;
 const MAX_AUTHORITY_LOSS_RESISTANCE: f32 = 0.75;
 const HOSPITALIER_COHESION_REGEN_SCALE: f32 = 0.35;
@@ -568,11 +570,15 @@ fn roll_upgrade_options(
     if pool.is_empty() || count == 0 {
         return Vec::new();
     }
+    let unique_cap_reached = one_time_tracker.acquired_ids.len() >= MAX_UNIQUE_UPGRADES;
     let mut candidate_indices: Vec<usize> = pool
         .iter()
         .enumerate()
         .filter(|(_, upgrade)| {
             if upgrade.one_time && one_time_tracker.acquired_ids.contains(&upgrade.id) {
+                return false;
+            }
+            if unique_cap_reached && upgrade.one_time {
                 return false;
             }
             if upgrade.adds_to_skillbar
@@ -637,7 +643,8 @@ fn roll_upgrade_value(config: &UpgradeConfig, rng: &mut UpgradeRngState) -> f32 
     let exponent = config
         .weight_exponent
         .unwrap_or(DEFAULT_UPGRADE_WEIGHT_EXPONENT)
-        .max(0.01);
+        .max(1.01)
+        * UPGRADE_HIGH_TIER_DROP_OFF_MULTIPLIER;
     let tier_index = weighted_roll_tier_index(exponent, rng);
     let value = tier_value(min_value, max_value, tier_index);
     quantize_to_step(value, min_value, max_value, config.value_step)
@@ -1122,6 +1129,38 @@ mod tests {
     }
 
     #[test]
+    fn weighted_roll_distribution_descends_by_tier_rarity() {
+        let mut upgrade = upgrade("damage", "rarity_distribution");
+        upgrade.min_value = Some(10.0);
+        upgrade.max_value = Some(30.0);
+        upgrade.value_step = None;
+        upgrade.weight_exponent = Some(2.0);
+
+        let mut counts = [0u32; 5];
+        let mut rng = UpgradeRngState {
+            state: 0x9ABC_DEF0_1234_5678,
+        };
+
+        for _ in 0..20_000 {
+            let value = roll_upgrade_value(&upgrade, &mut rng);
+            upgrade.value = value;
+            match upgrade_value_tier(&upgrade) {
+                UpgradeValueTier::Common => counts[0] += 1,
+                UpgradeValueTier::Uncommon => counts[1] += 1,
+                UpgradeValueTier::Rare => counts[2] += 1,
+                UpgradeValueTier::Epic => counts[3] += 1,
+                UpgradeValueTier::Mythical => counts[4] += 1,
+                UpgradeValueTier::Unique => unreachable!("weighted non-one-time roll"),
+            }
+        }
+
+        assert!(counts[0] > counts[1]);
+        assert!(counts[1] > counts[2]);
+        assert!(counts[2] > counts[3]);
+        assert!(counts[3] > counts[4]);
+    }
+
+    #[test]
     fn one_time_upgrades_are_classified_as_unique_tier() {
         let mut one_time = upgrade("mob_fury", "mob_fury");
         one_time.one_time = true;
@@ -1176,6 +1215,36 @@ mod tests {
         let picks =
             roll_upgrade_options(&pool, &mut rng, 3, &tracker, &FormationSkillBar::default());
         assert!(picks.is_empty());
+    }
+
+    #[test]
+    fn unique_upgrades_are_filtered_after_unique_cap() {
+        let mut unique_a = upgrade("mob_fury", "unique_a");
+        unique_a.one_time = true;
+        unique_a.min_value = None;
+        unique_a.max_value = None;
+        unique_a.value = 1.0;
+        let mut unique_b = upgrade("mob_justice", "unique_b");
+        unique_b.one_time = true;
+        unique_b.min_value = None;
+        unique_b.max_value = None;
+        unique_b.value = 1.0;
+        let normal = upgrade("damage", "normal_damage");
+        let pool = vec![unique_a, unique_b, normal];
+
+        let mut tracker = OneTimeUpgradeTracker::default();
+        for idx in 0..super::MAX_UNIQUE_UPGRADES {
+            tracker.acquired_ids.insert(format!("picked_{idx}"));
+        }
+
+        let mut rng = UpgradeRngState {
+            state: 0xBEEF_CAFE_1020_3040,
+        };
+        let picks =
+            roll_upgrade_options(&pool, &mut rng, 3, &tracker, &FormationSkillBar::default());
+
+        assert!(!picks.iter().any(|upgrade| upgrade.one_time));
+        assert!(picks.iter().any(|upgrade| upgrade.id == "normal_damage"));
     }
 
     #[test]

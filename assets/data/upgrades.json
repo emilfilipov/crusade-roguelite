@@ -19,9 +19,9 @@
     {
       "id": "attack_speed_up",
       "kind": "attack_speed",
-      "min_value": 0.04,
-      "max_value": 0.16,
-      "value_step": 0.02,
+      "min_value": 0.032,
+      "max_value": 0.128,
+      "value_step": 0.016,
       "weight_exponent": 2.0
     },
     {

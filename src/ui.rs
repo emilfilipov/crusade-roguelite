@@ -3621,18 +3621,9 @@ fn roster_upgrade_kinds_for_faction(faction: PlayerFaction) -> [UnitKind; 3] {
 }
 
 fn promotion_targets_for(kind: UnitKind) -> &'static [UnitKind] {
-    const CHRISTIAN_INFANTRY_PROMOTIONS: [UnitKind; 2] = [
-        UnitKind::ChristianPeasantArcher,
-        UnitKind::ChristianPeasantPriest,
-    ];
-    const MUSLIM_INFANTRY_PROMOTIONS: [UnitKind; 2] =
-        [UnitKind::MuslimPeasantArcher, UnitKind::MuslimPeasantPriest];
     const NO_PROMOTIONS: [UnitKind; 0] = [];
-    match kind {
-        UnitKind::ChristianPeasantInfantry => &CHRISTIAN_INFANTRY_PROMOTIONS,
-        UnitKind::MuslimPeasantInfantry => &MUSLIM_INFANTRY_PROMOTIONS,
-        _ => &NO_PROMOTIONS,
-    }
+    let _ = kind;
+    &NO_PROMOTIONS
 }
 
 fn resolve_selected_source(
@@ -5971,7 +5962,7 @@ mod tests {
                 crate::model::UnitKind::ChristianPeasantInfantry,
                 crate::model::UnitKind::ChristianPeasantArcher
             ),
-            1
+            0
         );
         assert_eq!(
             max_affordable_promotions(
@@ -5982,7 +5973,7 @@ mod tests {
                 crate::model::UnitKind::ChristianPeasantInfantry,
                 crate::model::UnitKind::ChristianPeasantPriest
             ),
-            10
+            0
         );
         assert_eq!(
             max_affordable_promotions(
