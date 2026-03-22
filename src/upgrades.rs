@@ -731,7 +731,7 @@ pub fn upgrade_display_title(upgrade: &UpgradeConfig) -> &'static str {
         "authority_aura" => "Authority Aura",
         "move_speed" => "Forced March",
         "hospitalier_aura" => "Hospitalier Aura",
-        "formation_breach" => "Encirclement Doctrine",
+        "formation_breach" => "Into the Wolf's Dev",
         "mob_fury" => "Mob's Fury",
         "mob_justice" => "Mob's Justice",
         "mob_mercy" => "Mob's Mercy",

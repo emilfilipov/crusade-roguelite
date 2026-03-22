@@ -150,7 +150,7 @@ Use this for entity/component/system lookup without scanning all source files.
 - Raised banner follow offset so it renders visibly behind/above the commander during movement.
 - Dropped banner now uses the standard upright banner sprite for stronger in-world readability.
 - Minimap now shows dropped-banner position and rescuable-retinue positions.
-- Added one-time level-up upgrade `Encirclement Doctrine` (`formation_breach`): once acquired, enemies inside the friendly formation footprint take `+20%` damage.
+- Added one-time level-up upgrade `Into the Wolf's Dev` (`formation_breach`): once acquired, enemies inside the friendly formation footprint take `+20%` damage.
 - Added critical-hit combat stats for friendlies:
   - `crit_chance_bonus` (additive chance, clamped to 95%)
   - `crit_damage_multiplier` (base `x1.2`, increased by upgrades)
@@ -443,7 +443,7 @@ Friendly combined outgoing multiplier has lower clamp:
 
 ### Enemy-In-Formation Vulnerability Bonus (`src/combat.rs`)
 - Base state: no inside-formation vulnerability bonus is active.
-- After the one-time upgrade `Encirclement Doctrine` is acquired, enemies inside the friendly formation footprint take multiplier `1.2` from friendly outgoing damage.
+- After the one-time upgrade `Into the Wolf's Dev` is acquired, enemies inside the friendly formation footprint take multiplier `1.2` from friendly outgoing damage.
 - Formation footprint is approximated from:
   - commander position
   - current recruit count

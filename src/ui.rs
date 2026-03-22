@@ -2258,7 +2258,7 @@ fn build_stats_panel_data(
         active_buffs.push("Hospitalier Aura".to_string());
     }
     if buffs.inside_formation_damage_multiplier > 1.0 {
-        active_buffs.push("Encirclement Doctrine".to_string());
+        active_buffs.push("Into the Wolf's Dev".to_string());
     }
     if let Some(active) = conditional_upgrade_active_state(conditional_status, "mob_fury")
         && active
