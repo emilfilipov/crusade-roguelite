@@ -39,6 +39,7 @@ pub struct HudSnapshot {
     pub cohesion: f32,
     pub banner_dropped: bool,
     pub squad_size: usize,
+    pub retinue_count: usize,
     pub level: u32,
     pub allowed_max_level: u32,
     pub xp: f32,
@@ -57,6 +58,7 @@ impl Default for HudSnapshot {
             cohesion: 100.0,
             banner_dropped: false,
             squad_size: 1,
+            retinue_count: 0,
             level: 1,
             allowed_max_level: 200,
             xp: 0.0,
@@ -205,6 +207,9 @@ struct TimeHudText;
 
 #[derive(Component, Clone, Copy, Debug)]
 struct EnemyCountHudText;
+
+#[derive(Component, Clone, Copy, Debug)]
+struct RetinueCountHudText;
 
 #[derive(Component, Clone, Copy, Debug)]
 struct CommanderLevelHudText;
@@ -1811,6 +1816,17 @@ fn spawn_in_run_hud(
                             EnemyCountHudText,
                             TextBundle::from_section(
                                 "Enemies: 0",
+                                TextStyle {
+                                    font_size: 18.0,
+                                    color: HUD_TEXT_COLOR,
+                                    ..default()
+                                },
+                            ),
+                        ));
+                        left.spawn((
+                            RetinueCountHudText,
+                            TextBundle::from_section(
+                                "Retinue: 0",
                                 TextStyle {
                                     font_size: 18.0,
                                     color: HUD_TEXT_COLOR,
@@ -5072,6 +5088,7 @@ fn refresh_hud_snapshot(
         cohesion: cohesion.value,
         banner_dropped: banner_state.is_dropped,
         squad_size: roster.friendly_count,
+        retinue_count: roster_economy.total_retinue_count as usize,
         level: progression.level,
         allowed_max_level: roster_economy.allowed_max_level,
         xp: progression.xp,
@@ -5092,6 +5109,7 @@ fn update_in_run_hud(
         Query<&mut Text, With<WaveHudText>>,
         Query<&mut Text, With<TimeHudText>>,
         Query<&mut Text, With<EnemyCountHudText>>,
+        Query<&mut Text, With<RetinueCountHudText>>,
         Query<&mut Text, With<CommanderLevelHudText>>,
     )>,
     mut bar_styles: ParamSet<(
@@ -5110,6 +5128,9 @@ fn update_in_run_hud(
         text.sections[0].value = format_enemy_count(hud.alive_enemy_count);
     }
     if let Ok(mut text) = texts.p3().get_single_mut() {
+        text.sections[0].value = format_retinue_count(hud.retinue_count);
+    }
+    if let Ok(mut text) = texts.p4().get_single_mut() {
         text.sections[0].value = format_commander_level_text(
             hud.level,
             hud.allowed_max_level,
@@ -5463,6 +5484,10 @@ pub fn format_enemy_count(count: usize) -> String {
     format!("Enemies: {count}")
 }
 
+pub fn format_retinue_count(count: usize) -> String {
+    format!("Retinue: {count}")
+}
+
 pub fn conditional_upgrade_hud_status_text(
     status: &ConditionalUpgradeStatus,
     max_priest_blessing_secs: f32,
@@ -5746,10 +5771,11 @@ mod tests {
         can_select_match_setup_faction, conditional_upgrade_hud_status_text, displayed_wave_number,
         find_skill_section, find_stats_row, floating_damage_text_alpha,
         floating_damage_text_is_expired, floating_damage_text_spawn_data,
-        format_commander_level_text, format_elapsed_mm_ss, format_enemy_count, frame_cap_label,
-        health_bar_fill_width, level_up_tier_border_color, main_menu_dispatch,
-        max_affordable_promotions, modal_action_for_utility_button, requested_promotion_count,
-        rescue_progress_ratio, responsive_ui_scale_for_resolution, world_to_minimap_pos,
+        format_commander_level_text, format_elapsed_mm_ss, format_enemy_count,
+        format_retinue_count, frame_cap_label, health_bar_fill_width, level_up_tier_border_color,
+        main_menu_dispatch, max_affordable_promotions, modal_action_for_utility_button,
+        requested_promotion_count, rescue_progress_ratio, responsive_ui_scale_for_resolution,
+        world_to_minimap_pos,
     };
     use crate::upgrades::{
         ConditionalUpgradeStatus, ConditionalUpgradeStatusEntry, Progression, SkillBookEntry,
@@ -5762,6 +5788,7 @@ mod tests {
             cohesion: 70.0,
             banner_dropped: true,
             squad_size: 5,
+            retinue_count: 4,
             level: 2,
             allowed_max_level: 197,
             xp: 12.0,
@@ -5775,6 +5802,7 @@ mod tests {
         };
         assert!(snapshot.banner_dropped);
         assert_eq!(snapshot.squad_size, 5);
+        assert_eq!(snapshot.retinue_count, 4);
     }
 
     #[test]
@@ -5882,6 +5910,12 @@ mod tests {
     fn enemy_count_formats_as_counter_text() {
         assert_eq!(format_enemy_count(0), "Enemies: 0");
         assert_eq!(format_enemy_count(128), "Enemies: 128");
+    }
+
+    #[test]
+    fn retinue_count_formats_as_counter_text() {
+        assert_eq!(format_retinue_count(0), "Retinue: 0");
+        assert_eq!(format_retinue_count(56), "Retinue: 56");
     }
 
     #[test]
