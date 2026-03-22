@@ -444,7 +444,7 @@ const UI_REFERENCE_WIDTH: f32 = 1280.0;
 const UI_REFERENCE_HEIGHT: f32 = 720.0;
 const UI_SCALE_MIN: f32 = 0.7;
 const UI_SCALE_MAX: f32 = 3.0;
-const BASE_CRIT_DAMAGE_MULTIPLIER: f32 = 1.5;
+const BASE_CRIT_DAMAGE_MULTIPLIER: f32 = 1.2;
 
 pub struct UiPlugin;
 
@@ -6109,7 +6109,7 @@ mod tests {
         let crit_chance_row = find_stats_row(&panel.rows, "Crit Chance").expect("crit chance");
         assert!(crit_chance_row.bonus_text.contains("+8.0%"));
         let crit_damage_row = find_stats_row(&panel.rows, "Crit Damage").expect("crit damage");
-        assert!(crit_damage_row.bonus_text.contains("+25.0%"));
+        assert!(crit_damage_row.bonus_text.contains("+55.0%"));
         let move_row = find_stats_row(&panel.rows, "Move Speed").expect("move row");
         assert!(move_row.bonus_text.contains("+18"));
         assert!(move_row.bonus_text.contains("+8.0%"));

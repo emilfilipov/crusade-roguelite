@@ -251,7 +251,7 @@ impl Default for GlobalBuffs {
             attack_speed_multiplier: 1.0,
             xp_gain_multiplier: 1.0,
             crit_chance_bonus: 0.0,
-            crit_damage_multiplier: 1.5,
+            crit_damage_multiplier: 1.2,
             pickup_radius_bonus: 0.0,
             move_speed_bonus: 0.0,
             inside_formation_damage_multiplier: 1.0,

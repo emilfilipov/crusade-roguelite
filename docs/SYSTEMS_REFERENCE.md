@@ -134,7 +134,7 @@ Use this for entity/component/system lookup without scanning all source files.
 - Added one-time level-up upgrade `Encirclement Doctrine` (`formation_breach`): once acquired, enemies inside the friendly formation footprint take `+20%` damage.
 - Added critical-hit combat stats for friendlies:
   - `crit_chance_bonus` (additive chance, clamped to 95%)
-  - `crit_damage_multiplier` (base `x1.5`, increased by upgrades)
+  - `crit_damage_multiplier` (base `x1.2`, increased by upgrades)
 - Added repeatable level-up cards:
   - `Killer Instinct` (`crit_chance`)
   - `Deadly Precision` (`crit_damage`)

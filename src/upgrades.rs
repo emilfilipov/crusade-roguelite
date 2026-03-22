@@ -527,7 +527,7 @@ pub fn skill_book_entry_cumulative_description(entry: &SkillBookEntry) -> String
             entry.total_value.max(0.0) * 100.0
         ),
         "crit_damage" => format!(
-            "Total critical hit damage bonus: +{:.0}% (base crit x1.50).",
+            "Total critical hit damage bonus: +{:.0}% (base crit x1.20).",
             entry.total_value.max(0.0) * 100.0
         ),
         "armor" => format!(
