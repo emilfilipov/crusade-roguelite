@@ -435,7 +435,7 @@ const UTILITY_BAR_BORDER: Color = Color::srgba(0.78, 0.72, 0.58, 0.35);
 const FLOATING_DAMAGE_TEXT_START_Y_OFFSET: f32 = 24.0;
 const FLOATING_DAMAGE_TEXT_Z: f32 = 60.0;
 const FLOATING_DAMAGE_TEXT_FONT_SIZE: f32 = 18.0;
-const FLOATING_DAMAGE_TEXT_CRIT_FONT_SIZE: f32 = 22.0;
+const FLOATING_DAMAGE_TEXT_CRIT_FONT_SIZE: f32 = 28.0;
 const FLOATING_DAMAGE_TEXT_LIFETIME_SECS: f32 = 0.72;
 const FLOATING_DAMAGE_TEXT_RISE_SPEED: f32 = 44.0;
 const FLOATING_DAMAGE_TEXT_MAX_ACTIVE: usize = 320;
@@ -1567,7 +1567,7 @@ fn spawn_level_up_tier_legend(parent: &mut ChildBuilder) {
                         label,
                         TextStyle {
                             font_size: 13.0,
-                            color: HUD_TEXT_COLOR,
+                            color,
                             ..default()
                         },
                     ));
@@ -1617,6 +1617,14 @@ fn spawn_level_up_card(
             LevelUpOptionAction { index },
         ))
         .with_children(|card| {
+            card.spawn(TextBundle::from_section(
+                tier_label(tier),
+                TextStyle {
+                    font_size: 12.0,
+                    color: level_up_tier_border_color(tier),
+                    ..default()
+                },
+            ));
             card.spawn(TextBundle {
                 style: Style {
                     width: Val::Percent(100.0),
@@ -1665,10 +1673,10 @@ fn spawn_level_up_card(
 fn level_up_card_tier_style(tier: UpgradeValueTier) -> LevelUpCardTierStyle {
     let base = level_up_tier_border_color(tier);
     LevelUpCardTierStyle {
-        base_border: base.with_alpha(0.72),
+        base_border: base.with_alpha(0.96),
         hover_border: base.with_alpha(0.98),
-        base_glow: base.with_alpha(0.28),
-        hover_glow: base.with_alpha(0.48),
+        base_glow: base.with_alpha(0.42),
+        hover_glow: base.with_alpha(0.62),
     }
 }
 
@@ -1680,6 +1688,17 @@ fn level_up_tier_border_color(tier: UpgradeValueTier) -> Color {
         UpgradeValueTier::Epic => Color::srgb(0.67, 0.38, 0.91),
         UpgradeValueTier::Mythical => Color::srgb(1.0, 0.74, 0.24),
         UpgradeValueTier::Unique => Color::srgb(0.5, 0.31, 0.18),
+    }
+}
+
+fn tier_label(tier: UpgradeValueTier) -> &'static str {
+    match tier {
+        UpgradeValueTier::Common => "COMMON",
+        UpgradeValueTier::Uncommon => "UNCOMMON",
+        UpgradeValueTier::Rare => "RARE",
+        UpgradeValueTier::Epic => "EPIC",
+        UpgradeValueTier::Mythical => "MYTHICAL",
+        UpgradeValueTier::Unique => "UNIQUE",
     }
 }
 
@@ -2147,7 +2166,7 @@ fn run_modal_titles(screen: RunModalScreen) -> (&'static str, Option<&'static st
         RunModalScreen::Stats => (
             "STATS",
             Some(
-                "Bonus values shown below apply to commander and all friendlies unless stated otherwise.",
+                "Per level: +1 Health, +1% Damage, +1% Attack Speed to commander and all friendlies.",
             ),
         ),
         RunModalScreen::SkillBook => ("SKILL BOOK", Some("Chosen skills, formations, and auras.")),
@@ -2311,11 +2330,6 @@ fn build_stats_panel_data(
                 "Cohesion Loss Resist",
                 authority_resist_percent,
                 format_percent_bonus(authority_resist_percent),
-            ),
-            stats_bonus_row(
-                "Enemy Morale Drain/s",
-                buffs.authority_enemy_morale_drain_per_sec,
-                format_raw_bonus(buffs.authority_enemy_morale_drain_per_sec),
             ),
             stats_bonus_row(
                 "Health Regen/s",
@@ -5655,7 +5669,7 @@ fn floating_damage_text_spawn_data(
     } else if event.critical {
         (
             format!("{}!", format_damage_text_amount(event.amount)),
-            Vec3::new(0.94, 0.22, 0.86),
+            Vec3::new(1.0, 0.12, 0.94),
             FLOATING_DAMAGE_TEXT_CRIT_FONT_SIZE,
         )
     } else {
@@ -5805,9 +5819,9 @@ mod tests {
         };
         let data = floating_damage_text_spawn_data(&event, 1);
         assert_eq!(data.text, "75!");
-        assert!((data.base_rgb.x - 0.94).abs() < 0.001);
-        assert!((data.base_rgb.y - 0.22).abs() < 0.001);
-        assert!((data.base_rgb.z - 0.86).abs() < 0.001);
+        assert!((data.base_rgb.x - 1.0).abs() < 0.001);
+        assert!((data.base_rgb.y - 0.12).abs() < 0.001);
+        assert!((data.base_rgb.z - 0.94).abs() < 0.001);
         assert!((data.font_size - FLOATING_DAMAGE_TEXT_CRIT_FONT_SIZE).abs() < 0.001);
     }
 
