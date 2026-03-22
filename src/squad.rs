@@ -738,12 +738,18 @@ fn apply_promotion_events(
 fn run_priest_support_logic(
     mut commands: Commands,
     time: Res<Time>,
-    mut priests: Query<(&Transform, &mut PriestSupportCaster), With<FriendlyUnit>>,
-    friendlies: Query<(Entity, &Transform), With<FriendlyUnit>>,
-    mut blessings: Query<(Entity, &mut PriestAttackSpeedBlessing), With<FriendlyUnit>>,
+    mut priests: Query<(&Unit, &Transform, &mut PriestSupportCaster)>,
+    units: Query<(Entity, &Transform, &Unit), Without<RescuableUnit>>,
+    mut blessings: Query<(Entity, &Unit, &mut PriestAttackSpeedBlessing), Without<RescuableUnit>>,
 ) {
     let dt = time.delta_seconds();
-    for (entity, mut blessing) in &mut blessings {
+    for (entity, unit, mut blessing) in &mut blessings {
+        if unit.team == Team::Neutral {
+            commands
+                .entity(entity)
+                .remove::<PriestAttackSpeedBlessing>();
+            continue;
+        }
         blessing.remaining_secs = (blessing.remaining_secs - dt).max(0.0);
         if blessing.remaining_secs <= 0.0 {
             commands
@@ -752,22 +758,34 @@ fn run_priest_support_logic(
         }
     }
 
-    let friendly_positions: Vec<(Entity, Vec2)> = friendlies
+    let unit_positions: Vec<(Entity, Vec2, Team)> = units
         .iter()
-        .map(|(entity, transform)| (entity, transform.translation.truncate()))
+        .filter_map(|(entity, transform, unit)| {
+            if unit.team == Team::Neutral {
+                None
+            } else {
+                Some((entity, transform.translation.truncate(), unit.team))
+            }
+        })
         .collect();
-    if friendly_positions.is_empty() {
+    if unit_positions.is_empty() {
         return;
     }
 
-    for (priest_transform, mut caster) in &mut priests {
+    for (priest_unit, priest_transform, mut caster) in &mut priests {
+        if !priest_unit.kind.is_priest() || priest_unit.team == Team::Neutral {
+            continue;
+        }
         caster.cooldown = tick_priest_cooldown(caster.cooldown, dt);
         if !priest_should_cast(caster.cooldown) {
             continue;
         }
         let priest_position = priest_transform.translation.truncate();
         let range_sq = PRIEST_BLESSING_RANGE * PRIEST_BLESSING_RANGE;
-        for (entity, position) in &friendly_positions {
+        for (entity, position, team) in &unit_positions {
+            if *team != priest_unit.team {
+                continue;
+            }
             if position.distance_squared(priest_position) <= range_sq {
                 commands.entity(*entity).insert(PriestAttackSpeedBlessing {
                     remaining_secs: refresh_priest_blessing_remaining(0.0),
@@ -782,22 +800,20 @@ fn run_priest_support_logic(
 fn sync_priest_blessing_vfx(
     mut commands: Commands,
     assets: Option<Res<PriestBlessingVfxAssets>>,
-    friendlies: Query<
-        (
-            Entity,
-            Option<&PriestAttackSpeedBlessing>,
-            Option<&Children>,
-            Option<&ColliderRadius>,
-        ),
-        With<FriendlyUnit>,
-    >,
+    units: Query<(
+        Entity,
+        &Unit,
+        Option<&PriestAttackSpeedBlessing>,
+        Option<&Children>,
+        Option<&ColliderRadius>,
+    )>,
     vfx_nodes: Query<Entity, With<PriestBlessingVfx>>,
 ) {
     let Some(assets) = assets else {
         return;
     };
 
-    for (entity, blessing, children, collider_radius) in &friendlies {
+    for (entity, unit, blessing, children, collider_radius) in &units {
         let mut vfx_children: Vec<Entity> = Vec::new();
         if let Some(children) = children {
             for child in children.iter() {
@@ -807,7 +823,8 @@ fn sync_priest_blessing_vfx(
             }
         }
 
-        match priest_blessing_vfx_action(blessing.is_some(), !vfx_children.is_empty()) {
+        let has_blessing = unit.team != Team::Neutral && blessing.is_some();
+        match priest_blessing_vfx_action(has_blessing, !vfx_children.is_empty()) {
             PriestBlessingVfxAction::Spawn => {
                 let base_radius = collider_radius
                     .map(|radius| radius.0)
@@ -1096,8 +1113,8 @@ mod tests {
     use crate::data::GameData;
     use crate::formation::{ActiveFormation, FormationModifiers};
     use crate::model::{
-        AttackProfile, CommanderUnit, FriendlyUnit, GameState, RecruitEvent, RecruitUnitKind,
-        StartRunEvent, Unit, UnitKind,
+        AttackProfile, CommanderUnit, EnemyUnit, FriendlyUnit, GameState, RecruitEvent,
+        RecruitUnitKind, StartRunEvent, Team, Unit, UnitKind,
     };
     use crate::squad::{
         PriestSupportCaster, PromoteUnitsEvent, RosterEconomy, RosterEconomyFeedback, SquadPlugin,
@@ -1259,19 +1276,85 @@ mod tests {
         app.add_systems(Update, super::run_priest_support_logic);
 
         let _priest = app.world_mut().spawn((
+            Unit {
+                team: Team::Friendly,
+                kind: UnitKind::ChristianPeasantPriest,
+                level: 1,
+            },
             FriendlyUnit,
             Transform::from_xyz(0.0, 0.0, 0.0),
             PriestSupportCaster { cooldown: 0.0 },
         ));
         let ally = app
             .world_mut()
-            .spawn((FriendlyUnit, Transform::from_xyz(30.0, 0.0, 0.0)))
+            .spawn((
+                Unit {
+                    team: Team::Friendly,
+                    kind: UnitKind::ChristianPeasantInfantry,
+                    level: 1,
+                },
+                FriendlyUnit,
+                Transform::from_xyz(30.0, 0.0, 0.0),
+            ))
             .id();
 
         app.update();
 
         let blessing = app.world().get::<super::PriestAttackSpeedBlessing>(ally);
         assert!(blessing.is_some());
+    }
+
+    #[test]
+    fn enemy_priest_support_logic_applies_blessing_to_nearby_enemies_only() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.add_systems(Update, super::run_priest_support_logic);
+
+        let _enemy_priest = app.world_mut().spawn((
+            Unit {
+                team: Team::Enemy,
+                kind: UnitKind::MuslimPeasantPriest,
+                level: 1,
+            },
+            EnemyUnit,
+            Transform::from_xyz(0.0, 0.0, 0.0),
+            PriestSupportCaster { cooldown: 0.0 },
+        ));
+        let enemy_ally = app
+            .world_mut()
+            .spawn((
+                Unit {
+                    team: Team::Enemy,
+                    kind: UnitKind::MuslimPeasantInfantry,
+                    level: 1,
+                },
+                EnemyUnit,
+                Transform::from_xyz(30.0, 0.0, 0.0),
+            ))
+            .id();
+        let friendly_unit = app
+            .world_mut()
+            .spawn((
+                Unit {
+                    team: Team::Friendly,
+                    kind: UnitKind::ChristianPeasantInfantry,
+                    level: 1,
+                },
+                FriendlyUnit,
+                Transform::from_xyz(30.0, 0.0, 0.0),
+            ))
+            .id();
+
+        app.update();
+
+        let enemy_blessing = app
+            .world()
+            .get::<super::PriestAttackSpeedBlessing>(enemy_ally);
+        let friendly_blessing = app
+            .world()
+            .get::<super::PriestAttackSpeedBlessing>(friendly_unit);
+        assert!(enemy_blessing.is_some());
+        assert!(friendly_blessing.is_none());
     }
 
     #[test]

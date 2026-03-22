@@ -9,6 +9,7 @@ use crate::model::{
     GameState, Health, MatchSetupSelection, Morale, MoveSpeed, PlayerFaction, StartRunEvent, Team,
     Unit, UnitCohesion, UnitKind,
 };
+use crate::squad::PriestSupportCaster;
 use crate::visuals::ArtAssets;
 
 #[derive(Resource, Clone, Debug, Default)]
@@ -299,6 +300,9 @@ fn spawn_enemy_batch(
                 },
                 RangedAttackCooldown(Timer::from_seconds(cooldown_secs, TimerMode::Repeating)),
             ));
+        }
+        if enemy_kind.is_priest() {
+            entity.insert(PriestSupportCaster { cooldown: 20.0 });
         }
     }
 }

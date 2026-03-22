@@ -107,19 +107,20 @@ fn tick_attack_timers(
             .copied()
             .map(|value| morale_effect_multiplier(value.ratio()))
             .unwrap_or(1.0);
+        let priest_scale = priest_attack_speed_multiplier(priest_blessing);
 
         let speed_scale = if unit.team == Team::Friendly {
             let mut value = cohesion_mods.attack_speed_multiplier * morale_scale * level_multiplier;
             if let Some(buff) = &global_buffs {
                 value *= buff.attack_speed_multiplier;
             }
-            value *= priest_attack_speed_multiplier(priest_blessing);
+            value *= priest_scale;
             if let Some(conditional) = &conditional_effects {
                 value *= conditional.friendly_attack_speed_multiplier;
             }
             value.max(MIN_FRIENDLY_COMBAT_MULTIPLIER)
         } else {
-            morale_scale
+            morale_scale * priest_scale
         };
 
         cooldown.0.tick(std::time::Duration::from_secs_f32(
@@ -149,6 +150,7 @@ fn emit_ranged_projectile_attacks(
         &Unit,
         Option<&UnitTier>,
         Option<&Morale>,
+        Option<&PriestAttackSpeedBlessing>,
         &Transform,
         &AttackProfile,
         &RangedAttackProfile,
@@ -193,6 +195,7 @@ fn emit_ranged_projectile_attacks(
         commander_unit,
         attacker_tier,
         commander_morale,
+        priest_blessing,
         commander_transform,
         melee_profile,
         ranged_profile,
@@ -213,7 +216,7 @@ fn emit_ranged_projectile_attacks(
             .copied()
             .map(|value| morale_effect_multiplier(value.ratio()))
             .unwrap_or(1.0);
-        let mut attack_speed = morale_multiplier;
+        let mut attack_speed = morale_multiplier * priest_attack_speed_multiplier(priest_blessing);
         if attacker_team == Team::Friendly {
             attack_speed *= cohesion_mods.attack_speed_multiplier * level_multiplier;
             if let Some(buff) = &global_buffs {
@@ -606,7 +609,7 @@ fn emit_damage_events(
 }
 
 pub fn unit_is_non_damaging_support(unit: Unit) -> bool {
-    unit.team == Team::Friendly && unit.kind.is_priest()
+    unit.kind.is_priest()
 }
 
 pub fn enemy_target_allowed(
@@ -1109,6 +1112,11 @@ mod tests {
             kind: UnitKind::ChristianPeasantPriest,
             level: 1,
         };
+        let enemy_priest = Unit {
+            team: Team::Enemy,
+            kind: UnitKind::MuslimPeasantPriest,
+            level: 1,
+        };
         let enemy_raider = Unit {
             team: Team::Enemy,
             kind: UnitKind::MuslimPeasantInfantry,
@@ -1120,6 +1128,7 @@ mod tests {
             level: 1,
         };
         assert!(unit_is_non_damaging_support(friendly_priest));
+        assert!(unit_is_non_damaging_support(enemy_priest));
         assert!(!unit_is_non_damaging_support(enemy_raider));
         assert!(!unit_is_non_damaging_support(friendly_infantry));
     }
