@@ -1,5 +1,6 @@
 use bevy::prelude::*;
 
+use crate::combat::{RangedAttackCooldown, RangedAttackProfile};
 use crate::data::{GameData, WavesConfigFile};
 use crate::formation::{ActiveFormation, active_formation_config, formation_contains_position};
 use crate::map::{MapBounds, playable_bounds};
@@ -233,13 +234,24 @@ fn spawn_enemy_batch(
             .clamp(0.2, cfg.attack_cooldown_secs);
         let attack_cooldown_secs =
             scale_enemy_attack_cooldown(base_cooldown, faction_mods.enemy_attack_speed_multiplier);
+        let ranged_cooldown_secs = if cfg.ranged_attack_damage > 0.0 {
+            let base_ranged_cooldown = (cfg.ranged_attack_cooldown_secs
+                / (1.0 + (stat_scale - 1.0) * 0.15))
+                .clamp(0.15, cfg.ranged_attack_cooldown_secs);
+            Some(scale_enemy_attack_cooldown(
+                base_ranged_cooldown,
+                faction_mods.enemy_attack_speed_multiplier,
+            ))
+        } else {
+            None
+        };
         let move_speed =
             enemy_move_speed(cfg.move_speed * faction_mods.enemy_move_speed_multiplier);
         let morale = (cfg.morale * faction_mods.enemy_morale_multiplier).max(1.0);
         let cohesion = (cfg.cohesion * faction_mods.enemy_cohesion_multiplier).max(1.0);
         let texture = enemy_texture_for_kind(art, enemy_kind);
         let pos = random_spawn_position(bounds, commander_position, wave_number, seq);
-        commands.spawn((
+        let mut entity = commands.spawn((
             Unit {
                 team: Team::Enemy,
                 kind: enemy_kind,
@@ -277,6 +289,17 @@ fn spawn_enemy_batch(
                 ..default()
             },
         ));
+        if let Some(cooldown_secs) = ranged_cooldown_secs {
+            entity.insert((
+                RangedAttackProfile {
+                    damage: cfg.ranged_attack_damage,
+                    range: cfg.ranged_attack_range,
+                    projectile_speed: cfg.ranged_projectile_speed,
+                    projectile_max_distance: cfg.ranged_projectile_max_distance,
+                },
+                RangedAttackCooldown(Timer::from_seconds(cooldown_secs, TimerMode::Repeating)),
+            ));
+        }
     }
 }
 
@@ -407,6 +430,7 @@ fn enemy_chase_targets(
         (
             &MoveSpeed,
             &AttackProfile,
+            Option<&RangedAttackProfile>,
             &mut EnemyMovementState,
             &mut Transform,
         ),
@@ -426,13 +450,16 @@ fn enemy_chase_targets(
         return;
     }
 
-    for (move_speed, attack_profile, mut movement_state, mut enemy_transform) in &mut enemies {
+    for (move_speed, attack_profile, ranged_profile, mut movement_state, mut enemy_transform) in
+        &mut enemies
+    {
         let enemy_position = enemy_transform.translation.truncate();
         if let Some(target) = choose_nearest(enemy_position, &targets) {
             let delta = target - enemy_position;
             let distance = delta.length();
-            let stop_distance = (attack_profile.range * STOP_FACTOR).max(10.0);
-            let resume_distance = (attack_profile.range * RESUME_FACTOR).max(stop_distance + 3.0);
+            let desired_range = enemy_engagement_range(attack_profile.range, ranged_profile);
+            let stop_distance = (desired_range * STOP_FACTOR).max(10.0);
+            let resume_distance = (desired_range * RESUME_FACTOR).max(stop_distance + 3.0);
 
             movement_state.moving = should_move_towards_target(
                 movement_state.moving,
@@ -454,6 +481,16 @@ fn enemy_chase_targets(
                 enemy_transform.translation.y += step.y;
             }
         }
+    }
+}
+
+pub fn enemy_engagement_range(
+    melee_range: f32,
+    ranged_profile: Option<&RangedAttackProfile>,
+) -> f32 {
+    match ranged_profile {
+        Some(profile) if profile.range > melee_range && profile.damage > 0.0 => profile.range,
+        _ => melee_range,
     }
 }
 
@@ -763,11 +800,12 @@ pub fn choose_nearest(origin: Vec2, candidates: &[Vec2]) -> Option<Vec2> {
 mod tests {
     use bevy::prelude::Vec2;
 
+    use crate::combat::RangedAttackProfile;
     use crate::data::{WaveConfig, WavesConfigFile};
     use crate::enemies::{
         BanditVisualState, batch_interval_secs, batch_size_for_wave, chase_step_distance,
-        chase_target_positions, choose_nearest, decide_bandit_visual_state, enemy_move_speed,
-        formation_overflow_repel_target, formation_perimeter_target,
+        chase_target_positions, choose_nearest, decide_bandit_visual_state, enemy_engagement_range,
+        enemy_move_speed, formation_overflow_repel_target, formation_perimeter_target,
         max_inside_enemy_count_for_formation, overflow_indices_by_distance, random_spawn_position,
         should_move_towards_target, units_per_second_for_wave, wave_duration_secs,
         wave_stat_multiplier,
@@ -964,6 +1002,18 @@ mod tests {
         assert!((step - 4.0).abs() < 0.001);
         assert_eq!(chase_step_distance(19.5, 20.0, 10.0), 0.0);
         assert_eq!(chase_step_distance(30.0, 20.0, 0.0), 0.0);
+    }
+
+    #[test]
+    fn engagement_range_prefers_valid_ranged_profile() {
+        let ranged = RangedAttackProfile {
+            damage: 8.0,
+            range: 260.0,
+            projectile_speed: 200.0,
+            projectile_max_distance: 300.0,
+        };
+        assert!((enemy_engagement_range(30.0, Some(&ranged)) - 260.0).abs() < 0.001);
+        assert!((enemy_engagement_range(30.0, None) - 30.0).abs() < 0.001);
     }
 
     #[test]

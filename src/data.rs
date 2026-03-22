@@ -71,6 +71,16 @@ pub struct EnemyStatsConfig {
     pub damage: f32,
     pub attack_cooldown_secs: f32,
     pub attack_range: f32,
+    #[serde(default)]
+    pub ranged_attack_damage: f32,
+    #[serde(default)]
+    pub ranged_attack_cooldown_secs: f32,
+    #[serde(default)]
+    pub ranged_attack_range: f32,
+    #[serde(default)]
+    pub ranged_projectile_speed: f32,
+    #[serde(default)]
+    pub ranged_projectile_max_distance: f32,
     pub move_speed: f32,
     pub morale: f32,
     pub cohesion: f32,
@@ -521,6 +531,17 @@ fn validate_enemy_stats(enemy: &EnemyStatsConfig, label: &str) -> Result<()> {
     }
     if enemy.collision_radius <= 0.0 {
         bail!("{label} collision_radius must be > 0");
+    }
+    let ranged_fields = [
+        enemy.ranged_attack_damage,
+        enemy.ranged_attack_cooldown_secs,
+        enemy.ranged_attack_range,
+        enemy.ranged_projectile_speed,
+        enemy.ranged_projectile_max_distance,
+    ];
+    let has_any_ranged = ranged_fields.iter().any(|value| *value > 0.0);
+    if has_any_ranged && ranged_fields.iter().any(|value| *value <= 0.0) {
+        bail!("{label} ranged fields must all be > 0 when any ranged field is set");
     }
     Ok(())
 }
@@ -1035,6 +1056,28 @@ mod tests {
 
         let err = GameData::load_from_dir(tmp.path()).expect_err("expected invalid enemy cohesion");
         assert!(err.to_string().contains("cohesion"));
+    }
+
+    #[test]
+    fn rejects_enemy_with_partial_ranged_field_set() {
+        let tmp = TempDir::new().expect("tmp");
+        write_valid_set(tmp.path());
+        write_config(
+            tmp.path(),
+            "enemies.json",
+            r#"{
+              "enemy_christian_peasant_infantry":{"id":"ec_i","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0,"cohesion":70.0},
+              "enemy_christian_peasant_archer":{"id":"ec_a","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"ranged_attack_damage":2.0,"move_speed":80.0,"morale":85.0,"cohesion":70.0},
+              "enemy_christian_peasant_priest":{"id":"ec_p","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0,"cohesion":70.0},
+              "enemy_muslim_peasant_infantry":{"id":"em_i","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0,"cohesion":70.0},
+              "enemy_muslim_peasant_archer":{"id":"em_a","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0,"cohesion":70.0},
+              "enemy_muslim_peasant_priest":{"id":"em_p","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0,"cohesion":70.0}
+            }"#,
+        );
+
+        let err =
+            GameData::load_from_dir(tmp.path()).expect_err("expected invalid enemy ranged config");
+        assert!(err.to_string().contains("ranged fields"));
     }
 
     #[test]
