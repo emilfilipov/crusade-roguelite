@@ -33,6 +33,33 @@
 
 ---
 
+## Recently Completed
+### CRU-060 - Opposing-Faction Enemy Pool + Playable Muslim Scaffold
+- Status: `DONE`
+- Type: `Core`
+- Priority: `P0`
+- Depends on: `none`
+- Goal: Make faction selection fully playable for both Christian and Muslim, and spawn enemies from the opposite faction pool.
+- Context:
+  - Match setup previously exposed Muslim as a disabled placeholder.
+  - Enemy runtime previously used a single bandit enemy profile unrelated to player faction.
+  - Unit/recruit data schema needed dual-faction coverage without breaking existing systems.
+- Implementation:
+  1. Expand model/data schema with Muslim commander/recruit kinds and mirrored enemy profile sets.
+  2. Wire runtime systems (`squad`, `rescue`, `enemies`) to selected faction for friendlies and opposite faction for enemies.
+  3. Enable Muslim in match setup and update upgrade-roster/UI helpers for faction-aware unit lists.
+- Unit Tests Required:
+  - Config load/validation tests for dual-faction units/enemies.
+  - Runtime tests for faction selection availability and opposite-faction spawn plumbing.
+- Acceptance Criteria:
+  - Player can start runs as Christian or Muslim.
+  - Enemy waves use the opposite faction pool for the selected player faction.
+  - Rescue spawns pull from selected faction’s recruit pool only.
+  - Full quality loop and installer packaging pass.
+- Documentation Updates Required:
+  - `docs/SYSTEMS_REFERENCE.md`
+  - `docs/SYSTEM_SCOPE_MAP.md`
+
 ## Task Card Template
 ### CRU-XXX - <Title>
 - Status: `TODO`

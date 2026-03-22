@@ -42,6 +42,13 @@ impl PlayerFaction {
             Self::Muslim => "muslim",
         }
     }
+
+    pub const fn opposing(self) -> Self {
+        match self {
+            Self::Christian => Self::Muslim,
+            Self::Muslim => Self::Christian,
+        }
+    }
 }
 
 #[derive(Resource, Clone, Debug, Default)]
@@ -92,10 +99,15 @@ pub enum UnitKind {
     ChristianPeasantInfantry,
     ChristianPeasantArcher,
     ChristianPeasantPriest,
-    EnemyBanditRaider,
+    MuslimPeasantInfantry,
+    MuslimPeasantArcher,
+    MuslimPeasantPriest,
     RescuableChristianPeasantInfantry,
     RescuableChristianPeasantArcher,
     RescuableChristianPeasantPriest,
+    RescuableMuslimPeasantInfantry,
+    RescuableMuslimPeasantArcher,
+    RescuableMuslimPeasantPriest,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -103,14 +115,79 @@ pub enum RecruitUnitKind {
     ChristianPeasantInfantry,
     ChristianPeasantArcher,
     ChristianPeasantPriest,
+    MuslimPeasantInfantry,
+    MuslimPeasantArcher,
+    MuslimPeasantPriest,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RecruitArchetype {
+    Infantry,
+    Archer,
+    Priest,
 }
 
 impl RecruitUnitKind {
+    pub const fn all_for_faction(faction: PlayerFaction) -> [Self; 3] {
+        match faction {
+            PlayerFaction::Christian => [
+                Self::ChristianPeasantInfantry,
+                Self::ChristianPeasantArcher,
+                Self::ChristianPeasantPriest,
+            ],
+            PlayerFaction::Muslim => [
+                Self::MuslimPeasantInfantry,
+                Self::MuslimPeasantArcher,
+                Self::MuslimPeasantPriest,
+            ],
+        }
+    }
+
+    pub const fn archetype(self) -> RecruitArchetype {
+        match self {
+            Self::ChristianPeasantInfantry | Self::MuslimPeasantInfantry => {
+                RecruitArchetype::Infantry
+            }
+            Self::ChristianPeasantArcher | Self::MuslimPeasantArcher => RecruitArchetype::Archer,
+            Self::ChristianPeasantPriest | Self::MuslimPeasantPriest => RecruitArchetype::Priest,
+        }
+    }
+
+    pub const fn faction(self) -> PlayerFaction {
+        match self {
+            Self::ChristianPeasantInfantry
+            | Self::ChristianPeasantArcher
+            | Self::ChristianPeasantPriest => PlayerFaction::Christian,
+            Self::MuslimPeasantInfantry | Self::MuslimPeasantArcher | Self::MuslimPeasantPriest => {
+                PlayerFaction::Muslim
+            }
+        }
+    }
+
+    pub const fn from_faction_and_archetype(
+        faction: PlayerFaction,
+        archetype: RecruitArchetype,
+    ) -> Self {
+        match (faction, archetype) {
+            (PlayerFaction::Christian, RecruitArchetype::Infantry) => {
+                Self::ChristianPeasantInfantry
+            }
+            (PlayerFaction::Christian, RecruitArchetype::Archer) => Self::ChristianPeasantArcher,
+            (PlayerFaction::Christian, RecruitArchetype::Priest) => Self::ChristianPeasantPriest,
+            (PlayerFaction::Muslim, RecruitArchetype::Infantry) => Self::MuslimPeasantInfantry,
+            (PlayerFaction::Muslim, RecruitArchetype::Archer) => Self::MuslimPeasantArcher,
+            (PlayerFaction::Muslim, RecruitArchetype::Priest) => Self::MuslimPeasantPriest,
+        }
+    }
+
     pub const fn as_unit_kind(self) -> UnitKind {
         match self {
             Self::ChristianPeasantInfantry => UnitKind::ChristianPeasantInfantry,
             Self::ChristianPeasantArcher => UnitKind::ChristianPeasantArcher,
             Self::ChristianPeasantPriest => UnitKind::ChristianPeasantPriest,
+            Self::MuslimPeasantInfantry => UnitKind::MuslimPeasantInfantry,
+            Self::MuslimPeasantArcher => UnitKind::MuslimPeasantArcher,
+            Self::MuslimPeasantPriest => UnitKind::MuslimPeasantPriest,
         }
     }
 
@@ -119,7 +196,49 @@ impl RecruitUnitKind {
             Self::ChristianPeasantInfantry => UnitKind::RescuableChristianPeasantInfantry,
             Self::ChristianPeasantArcher => UnitKind::RescuableChristianPeasantArcher,
             Self::ChristianPeasantPriest => UnitKind::RescuableChristianPeasantPriest,
+            Self::MuslimPeasantInfantry => UnitKind::RescuableMuslimPeasantInfantry,
+            Self::MuslimPeasantArcher => UnitKind::RescuableMuslimPeasantArcher,
+            Self::MuslimPeasantPriest => UnitKind::RescuableMuslimPeasantPriest,
         }
+    }
+}
+
+impl UnitKind {
+    pub const fn faction(self) -> Option<PlayerFaction> {
+        match self {
+            Self::ChristianPeasantInfantry
+            | Self::ChristianPeasantArcher
+            | Self::ChristianPeasantPriest
+            | Self::RescuableChristianPeasantInfantry
+            | Self::RescuableChristianPeasantArcher
+            | Self::RescuableChristianPeasantPriest => Some(PlayerFaction::Christian),
+            Self::MuslimPeasantInfantry
+            | Self::MuslimPeasantArcher
+            | Self::MuslimPeasantPriest
+            | Self::RescuableMuslimPeasantInfantry
+            | Self::RescuableMuslimPeasantArcher
+            | Self::RescuableMuslimPeasantPriest => Some(PlayerFaction::Muslim),
+            Self::Commander => None,
+        }
+    }
+
+    pub const fn is_friendly_recruit(self) -> bool {
+        matches!(
+            self,
+            Self::ChristianPeasantInfantry
+                | Self::ChristianPeasantArcher
+                | Self::ChristianPeasantPriest
+                | Self::MuslimPeasantInfantry
+                | Self::MuslimPeasantArcher
+                | Self::MuslimPeasantPriest
+        )
+    }
+
+    pub const fn is_priest(self) -> bool {
+        matches!(
+            self,
+            Self::ChristianPeasantPriest | Self::MuslimPeasantPriest
+        )
     }
 }
 

@@ -121,7 +121,10 @@ pub fn equipment_unit_type_for_unit(kind: UnitKind, tier: Option<u8>) -> Option<
         UnitKind::Commander => Some(EquipmentUnitType::Commander),
         UnitKind::ChristianPeasantInfantry
         | UnitKind::ChristianPeasantArcher
-        | UnitKind::ChristianPeasantPriest => EquipmentUnitType::from_tier(tier.unwrap_or(0)),
+        | UnitKind::ChristianPeasantPriest
+        | UnitKind::MuslimPeasantInfantry
+        | UnitKind::MuslimPeasantArcher
+        | UnitKind::MuslimPeasantPriest => EquipmentUnitType::from_tier(tier.unwrap_or(0)),
         _ => None,
     }
 }

@@ -12,9 +12,9 @@ use crate::formation::{
 use crate::map::{MapBounds, playable_bounds};
 use crate::model::{
     Armor, AttackCooldown, AttackProfile, BaseMaxHealth, ColliderRadius, CommanderUnit, EnemyUnit,
-    FriendlyUnit, GameState, GlobalBuffs, Health, Morale, MoveSpeed, PlayerControlled,
-    RecruitEvent, RecruitUnitKind, RescuableUnit, StartRunEvent, Team, Unit, UnitDiedEvent,
-    UnitKind, UnitTier, level_cap_from_locked_budget,
+    FriendlyUnit, GameState, GlobalBuffs, Health, MatchSetupSelection, Morale, MoveSpeed,
+    PlayerControlled, RecruitEvent, RecruitUnitKind, RescuableUnit, StartRunEvent, Team, Unit,
+    UnitDiedEvent, UnitKind, UnitTier, level_cap_from_locked_budget,
 };
 use crate::upgrades::{ConditionalUpgradeEffects, Progression};
 use crate::visuals::ArtAssets;
@@ -173,6 +173,7 @@ fn handle_start_run(
     existing_units: Query<Entity, With<Unit>>,
     data: Res<GameData>,
     art: Res<ArtAssets>,
+    setup_selection: Option<Res<MatchSetupSelection>>,
 ) {
     if start_events.is_empty() {
         return;
@@ -183,7 +184,11 @@ fn handle_start_run(
         commands.entity(entity).despawn_recursive();
     }
 
-    let commander = spawn_commander(&mut commands, &data, &art);
+    let faction = setup_selection
+        .as_ref()
+        .map(|selection| selection.faction)
+        .unwrap_or(crate::model::PlayerFaction::Christian);
+    let commander = spawn_commander(&mut commands, &data, &art, faction);
     roster.commander = Some(commander);
     roster.friendly_count = 1;
     roster.casualties = 0;
@@ -192,8 +197,21 @@ fn handle_start_run(
     *economy_feedback = RosterEconomyFeedback::default();
 }
 
-fn spawn_commander(commands: &mut Commands, data: &GameData, art: &ArtAssets) -> Entity {
-    let cfg = &data.units.commander;
+fn spawn_commander(
+    commands: &mut Commands,
+    data: &GameData,
+    art: &ArtAssets,
+    faction: crate::model::PlayerFaction,
+) -> Entity {
+    let cfg = data.units.commander_for_faction(faction);
+    let texture = match faction {
+        crate::model::PlayerFaction::Christian => art.commander_idle.clone(),
+        crate::model::PlayerFaction::Muslim => art.commander_saladin_idle.clone(),
+    };
+    let tint = match faction {
+        crate::model::PlayerFaction::Christian => Color::srgb(1.0, 0.88, 0.88),
+        crate::model::PlayerFaction::Muslim => Color::srgb(0.88, 0.96, 1.0),
+    };
     let mut entity = commands.spawn((
         Unit {
             team: Team::Friendly,
@@ -221,9 +239,9 @@ fn spawn_commander(commands: &mut Commands, data: &GameData, art: &ArtAssets) ->
         )),
         MoveSpeed(cfg.move_speed),
         SpriteBundle {
-            texture: art.commander_idle.clone(),
+            texture,
             sprite: Sprite {
-                color: Color::srgb(1.0, 0.88, 0.88),
+                color: tint,
                 custom_size: Some(Vec2::splat(36.0)),
                 ..default()
             },
@@ -257,37 +275,43 @@ fn spawn_recruit(
     recruit_kind: RecruitUnitKind,
     position: Vec2,
 ) -> Entity {
-    let (cfg, unit_kind, texture, collider_radius, sprite_tint, tier, level_cost) =
-        match recruit_kind {
-            RecruitUnitKind::ChristianPeasantInfantry => (
-                &data.units.recruit_christian_peasant_infantry,
-                UnitKind::ChristianPeasantInfantry,
-                art.friendly_peasant_infantry_idle.clone(),
-                12.0,
-                Color::WHITE,
-                0u8,
-                0u32,
-            ),
-            RecruitUnitKind::ChristianPeasantArcher => (
-                &data.units.recruit_christian_peasant_archer,
-                UnitKind::ChristianPeasantArcher,
-                art.friendly_peasant_archer_idle.clone(),
-                11.0,
-                Color::srgb(0.94, 1.0, 0.94),
-                0u8,
-                0u32,
-            ),
-            RecruitUnitKind::ChristianPeasantPriest => (
-                &data.units.recruit_christian_peasant_priest,
-                UnitKind::ChristianPeasantPriest,
-                art.friendly_peasant_priest_idle.clone(),
-                11.0,
-                Color::srgb(0.96, 0.93, 1.0),
-                0u8,
-                0u32,
-            ),
-        };
-    let is_priest = unit_kind == UnitKind::ChristianPeasantPriest;
+    let cfg = data.units.recruit_for_kind(recruit_kind);
+    let unit_kind = recruit_kind.as_unit_kind();
+    let (texture, collider_radius, sprite_tint) = match recruit_kind {
+        RecruitUnitKind::ChristianPeasantInfantry => (
+            art.friendly_peasant_infantry_idle.clone(),
+            12.0,
+            Color::WHITE,
+        ),
+        RecruitUnitKind::ChristianPeasantArcher => (
+            art.friendly_peasant_archer_idle.clone(),
+            11.0,
+            Color::srgb(0.94, 1.0, 0.94),
+        ),
+        RecruitUnitKind::ChristianPeasantPriest => (
+            art.friendly_peasant_priest_idle.clone(),
+            11.0,
+            Color::srgb(0.96, 0.93, 1.0),
+        ),
+        RecruitUnitKind::MuslimPeasantInfantry => (
+            art.muslim_peasant_infantry_idle.clone(),
+            12.0,
+            Color::srgb(0.94, 0.96, 1.0),
+        ),
+        RecruitUnitKind::MuslimPeasantArcher => (
+            art.muslim_peasant_archer_idle.clone(),
+            11.0,
+            Color::srgb(0.88, 0.96, 0.88),
+        ),
+        RecruitUnitKind::MuslimPeasantPriest => (
+            art.muslim_peasant_priest_idle.clone(),
+            11.0,
+            Color::srgb(0.94, 0.9, 1.0),
+        ),
+    };
+    let tier = 0u8;
+    let level_cost = 0u32;
+    let is_priest = unit_kind.is_priest();
 
     let mut entity = commands.spawn((
         Unit {
@@ -862,9 +886,15 @@ fn sync_roster(
             tier0 = tier0.saturating_add(1);
         }
         match unit.kind {
-            UnitKind::ChristianPeasantInfantry => infantry = infantry.saturating_add(1),
-            UnitKind::ChristianPeasantArcher => archer = archer.saturating_add(1),
-            UnitKind::ChristianPeasantPriest => priest = priest.saturating_add(1),
+            UnitKind::ChristianPeasantInfantry | UnitKind::MuslimPeasantInfantry => {
+                infantry = infantry.saturating_add(1)
+            }
+            UnitKind::ChristianPeasantArcher | UnitKind::MuslimPeasantArcher => {
+                archer = archer.saturating_add(1)
+            }
+            UnitKind::ChristianPeasantPriest | UnitKind::MuslimPeasantPriest => {
+                priest = priest.saturating_add(1)
+            }
             _ => {}
         }
     }
@@ -893,8 +923,12 @@ fn on_unit_died(mut roster: ResMut<SquadRoster>, mut death_events: EventReader<U
 
 pub fn friendly_tier_for_kind(kind: UnitKind) -> Option<u8> {
     match kind {
-        UnitKind::ChristianPeasantInfantry => Some(0),
-        UnitKind::ChristianPeasantArcher | UnitKind::ChristianPeasantPriest => Some(0),
+        UnitKind::ChristianPeasantInfantry
+        | UnitKind::ChristianPeasantArcher
+        | UnitKind::ChristianPeasantPriest
+        | UnitKind::MuslimPeasantInfantry
+        | UnitKind::MuslimPeasantArcher
+        | UnitKind::MuslimPeasantPriest => Some(0),
         _ => None,
     }
 }
@@ -905,6 +939,9 @@ pub fn promotion_step_cost(from_kind: UnitKind, to_kind: UnitKind) -> Option<u32
         (
             UnitKind::ChristianPeasantInfantry,
             UnitKind::ChristianPeasantArcher | UnitKind::ChristianPeasantPriest
+        ) | (
+            UnitKind::MuslimPeasantInfantry,
+            UnitKind::MuslimPeasantArcher | UnitKind::MuslimPeasantPriest
         )
     ) {
         return Some(1);
@@ -936,10 +973,15 @@ pub fn unit_kind_label(kind: UnitKind) -> &'static str {
         UnitKind::ChristianPeasantInfantry => "Christian Peasant Infantry",
         UnitKind::ChristianPeasantArcher => "Christian Peasant Archer",
         UnitKind::ChristianPeasantPriest => "Christian Peasant Priest",
-        UnitKind::EnemyBanditRaider => "Bandit Raider",
+        UnitKind::MuslimPeasantInfantry => "Muslim Peasant Infantry",
+        UnitKind::MuslimPeasantArcher => "Muslim Peasant Archer",
+        UnitKind::MuslimPeasantPriest => "Muslim Peasant Priest",
         UnitKind::RescuableChristianPeasantInfantry => "Rescuable Christian Peasant Infantry",
         UnitKind::RescuableChristianPeasantArcher => "Rescuable Christian Peasant Archer",
         UnitKind::RescuableChristianPeasantPriest => "Rescuable Christian Peasant Priest",
+        UnitKind::RescuableMuslimPeasantInfantry => "Rescuable Muslim Peasant Infantry",
+        UnitKind::RescuableMuslimPeasantArcher => "Rescuable Muslim Peasant Archer",
+        UnitKind::RescuableMuslimPeasantPriest => "Rescuable Muslim Peasant Priest",
     }
 }
 
@@ -969,6 +1011,30 @@ fn friendly_profile_for_kind<'a>(
         UnitKind::ChristianPeasantPriest => Some((
             &data.units.recruit_christian_peasant_priest,
             art.friendly_peasant_priest_idle.clone(),
+            11.0,
+            false,
+            false,
+            true,
+        )),
+        UnitKind::MuslimPeasantInfantry => Some((
+            &data.units.recruit_muslim_peasant_infantry,
+            art.muslim_peasant_infantry_idle.clone(),
+            12.0,
+            true,
+            false,
+            false,
+        )),
+        UnitKind::MuslimPeasantArcher => Some((
+            &data.units.recruit_muslim_peasant_archer,
+            art.muslim_peasant_archer_idle.clone(),
+            11.0,
+            true,
+            true,
+            false,
+        )),
+        UnitKind::MuslimPeasantPriest => Some((
+            &data.units.recruit_muslim_peasant_priest,
+            art.muslim_peasant_priest_idle.clone(),
             11.0,
             false,
             false,
@@ -1311,7 +1377,7 @@ mod tests {
         assert_eq!(
             crate::squad::promotion_step_cost(
                 UnitKind::ChristianPeasantInfantry,
-                UnitKind::EnemyBanditRaider
+                UnitKind::MuslimPeasantArcher
             ),
             None
         );

@@ -606,7 +606,7 @@ fn emit_damage_events(
 }
 
 pub fn unit_is_non_damaging_support(unit: Unit) -> bool {
-    unit.team == Team::Friendly && unit.kind == UnitKind::ChristianPeasantPriest
+    unit.team == Team::Friendly && unit.kind.is_priest()
 }
 
 pub fn enemy_target_allowed(
@@ -755,7 +755,7 @@ pub fn inside_formation_damage_multiplier(
     if inside_bonus_multiplier <= 1.0 {
         return 1.0;
     }
-    if context.recruit_count == 0 || target_kind != UnitKind::EnemyBanditRaider {
+    if context.recruit_count == 0 || !target_kind.is_friendly_recruit() {
         return 1.0;
     }
     if inside_active_formation_bounds(
@@ -975,7 +975,7 @@ mod tests {
         let inside = inside_formation_damage_multiplier(
             &context,
             Vec2::new(20.0, 15.0),
-            UnitKind::EnemyBanditRaider,
+            UnitKind::MuslimPeasantInfantry,
             ActiveFormation::Square,
             30.0,
             1.2,
@@ -983,7 +983,7 @@ mod tests {
         let outside = inside_formation_damage_multiplier(
             &context,
             Vec2::new(220.0, 0.0),
-            UnitKind::EnemyBanditRaider,
+            UnitKind::MuslimPeasantInfantry,
             ActiveFormation::Square,
             30.0,
             1.2,
@@ -1001,7 +1001,7 @@ mod tests {
         let without_upgrade = inside_formation_damage_multiplier(
             &context,
             Vec2::new(20.0, 15.0),
-            UnitKind::EnemyBanditRaider,
+            UnitKind::MuslimPeasantInfantry,
             ActiveFormation::Square,
             30.0,
             1.0,
@@ -1049,7 +1049,7 @@ mod tests {
                 Entity::from_raw(3),
                 crate::model::Unit {
                     team: Team::Enemy,
-                    kind: UnitKind::EnemyBanditRaider,
+                    kind: UnitKind::MuslimPeasantInfantry,
                     level: 1,
                 },
                 Vec2::new(90.0, 20.0),
@@ -1111,7 +1111,7 @@ mod tests {
         };
         let enemy_raider = Unit {
             team: Team::Enemy,
-            kind: UnitKind::EnemyBanditRaider,
+            kind: UnitKind::MuslimPeasantInfantry,
             level: 1,
         };
         let friendly_infantry = Unit {

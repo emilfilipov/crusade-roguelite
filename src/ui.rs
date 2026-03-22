@@ -404,6 +404,7 @@ struct RunModalOverlayDeps<'w, 's> {
     art: Res<'w, crate::visuals::ArtAssets>,
     active_formation: Res<'w, ActiveFormation>,
     formation_modifiers: Res<'w, FormationModifiers>,
+    setup_selection: Res<'w, MatchSetupSelection>,
     roots: Query<'w, 's, (Entity, &'static RunModalRoot)>,
 }
 
@@ -881,15 +882,6 @@ fn spawn_match_setup_menu(
                         }
                     });
             });
-
-            root.spawn(TextBundle::from_section(
-                "Muslim faction is currently disabled (not implemented yet).",
-                TextStyle {
-                    font_size: 15.0,
-                    color: MENU_BUTTON_TEXT_DISABLED,
-                    ..default()
-                },
-            ));
 
             root.spawn(NodeBundle {
                 style: Style {
@@ -2008,6 +2000,7 @@ fn sync_run_modal_overlay(
                 deps.waves.current_wave.max(1),
                 &deps.progression_lock_feedback,
                 &deps.unit_upgrade_state,
+                deps.setup_selection.faction,
             );
             spawn_run_modal_overlay(
                 &mut commands,
@@ -3202,25 +3195,19 @@ fn build_unit_upgrade_panel_data(
     current_wave: u32,
     lock_feedback: &ProgressionLockFeedback,
     ui_state: &UnitUpgradeUiState,
+    player_faction: PlayerFaction,
 ) -> UnitUpgradePanelData {
-    let roster_entries = vec![
-        UnitUpgradeRosterEntry {
-            kind: UnitKind::ChristianPeasantInfantry,
-            tier: friendly_tier_for_kind(UnitKind::ChristianPeasantInfantry).unwrap_or(0),
-            count: roster_count_for_kind(economy, UnitKind::ChristianPeasantInfantry),
-        },
-        UnitUpgradeRosterEntry {
-            kind: UnitKind::ChristianPeasantArcher,
-            tier: friendly_tier_for_kind(UnitKind::ChristianPeasantArcher).unwrap_or(0),
-            count: roster_count_for_kind(economy, UnitKind::ChristianPeasantArcher),
-        },
-        UnitUpgradeRosterEntry {
-            kind: UnitKind::ChristianPeasantPriest,
-            tier: friendly_tier_for_kind(UnitKind::ChristianPeasantPriest).unwrap_or(0),
-            count: roster_count_for_kind(economy, UnitKind::ChristianPeasantPriest),
-        },
-    ];
-    let selected_source = resolve_selected_source(ui_state.selected_source, &roster_entries);
+    let roster_kinds = roster_upgrade_kinds_for_faction(player_faction);
+    let roster_entries = roster_kinds
+        .iter()
+        .map(|kind| UnitUpgradeRosterEntry {
+            kind: *kind,
+            tier: friendly_tier_for_kind(*kind).unwrap_or(0),
+            count: roster_count_for_kind(economy, *kind),
+        })
+        .collect::<Vec<_>>();
+    let selected_source =
+        resolve_selected_source(ui_state.selected_source, &roster_entries, roster_kinds[0]);
     let source_count = roster_count_for_kind(economy, selected_source);
     let current_level = progression.level.max(1);
     let promotion_options = promotion_targets_for(selected_source)
@@ -3609,21 +3596,41 @@ fn spawn_unit_upgrade_modal_sections(parent: &mut ChildBuilder, panel_data: &Uni
 
 fn roster_count_for_kind(economy: &RosterEconomy, kind: UnitKind) -> u32 {
     match kind {
-        UnitKind::ChristianPeasantInfantry => economy.infantry_count,
-        UnitKind::ChristianPeasantArcher => economy.archer_count,
-        UnitKind::ChristianPeasantPriest => economy.priest_count,
+        UnitKind::ChristianPeasantInfantry | UnitKind::MuslimPeasantInfantry => {
+            economy.infantry_count
+        }
+        UnitKind::ChristianPeasantArcher | UnitKind::MuslimPeasantArcher => economy.archer_count,
+        UnitKind::ChristianPeasantPriest | UnitKind::MuslimPeasantPriest => economy.priest_count,
         _ => 0,
     }
 }
 
+fn roster_upgrade_kinds_for_faction(faction: PlayerFaction) -> [UnitKind; 3] {
+    match faction {
+        PlayerFaction::Christian => [
+            UnitKind::ChristianPeasantInfantry,
+            UnitKind::ChristianPeasantArcher,
+            UnitKind::ChristianPeasantPriest,
+        ],
+        PlayerFaction::Muslim => [
+            UnitKind::MuslimPeasantInfantry,
+            UnitKind::MuslimPeasantArcher,
+            UnitKind::MuslimPeasantPriest,
+        ],
+    }
+}
+
 fn promotion_targets_for(kind: UnitKind) -> &'static [UnitKind] {
-    const INFANTRY_PROMOTIONS: [UnitKind; 2] = [
+    const CHRISTIAN_INFANTRY_PROMOTIONS: [UnitKind; 2] = [
         UnitKind::ChristianPeasantArcher,
         UnitKind::ChristianPeasantPriest,
     ];
+    const MUSLIM_INFANTRY_PROMOTIONS: [UnitKind; 2] =
+        [UnitKind::MuslimPeasantArcher, UnitKind::MuslimPeasantPriest];
     const NO_PROMOTIONS: [UnitKind; 0] = [];
     match kind {
-        UnitKind::ChristianPeasantInfantry => &INFANTRY_PROMOTIONS,
+        UnitKind::ChristianPeasantInfantry => &CHRISTIAN_INFANTRY_PROMOTIONS,
+        UnitKind::MuslimPeasantInfantry => &MUSLIM_INFANTRY_PROMOTIONS,
         _ => &NO_PROMOTIONS,
     }
 }
@@ -3631,6 +3638,7 @@ fn promotion_targets_for(kind: UnitKind) -> &'static [UnitKind] {
 fn resolve_selected_source(
     requested: UnitKind,
     roster_entries: &[UnitUpgradeRosterEntry],
+    fallback: UnitKind,
 ) -> UnitKind {
     if roster_entries.iter().any(|entry| entry.kind == requested) {
         return requested;
@@ -3638,7 +3646,7 @@ fn resolve_selected_source(
     roster_entries
         .first()
         .map(|entry| entry.kind)
-        .unwrap_or(UnitKind::ChristianPeasantInfantry)
+        .unwrap_or(fallback)
 }
 
 fn max_affordable_promotions(
@@ -4098,7 +4106,7 @@ fn handle_main_menu_buttons(
 }
 
 fn can_select_match_setup_faction(faction: PlayerFaction) -> bool {
-    matches!(faction, PlayerFaction::Christian)
+    matches!(faction, PlayerFaction::Christian | PlayerFaction::Muslim)
 }
 
 fn map_allows_faction(map: &crate::data::MapDefinitionConfig, faction: PlayerFaction) -> bool {
@@ -6065,9 +6073,9 @@ mod tests {
     }
 
     #[test]
-    fn muslim_faction_selection_is_disabled() {
+    fn muslim_faction_selection_is_enabled() {
         assert!(can_select_match_setup_faction(PlayerFaction::Christian));
-        assert!(!can_select_match_setup_faction(PlayerFaction::Muslim));
+        assert!(can_select_match_setup_faction(PlayerFaction::Muslim));
     }
 
     #[test]

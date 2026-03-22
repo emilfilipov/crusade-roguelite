@@ -7,7 +7,8 @@
       "width": 2400.0,
       "height": 2400.0,
       "allowed_factions": [
-        "christian"
+        "christian",
+        "muslim"
       ],
       "spawn_profile_id": "default"
     }

@@ -373,7 +373,7 @@ mod tests {
     fn collision_rules_match_enemy_and_inner_ring_design() {
         let commander_pos = Some(Vec2::ZERO);
         let inner_radius = 24.0;
-        let enemy = unit(Team::Enemy, UnitKind::EnemyBanditRaider);
+        let enemy = unit(Team::Enemy, UnitKind::MuslimPeasantInfantry);
         let commander = unit(Team::Friendly, UnitKind::Commander);
         let inner_retinue = unit(Team::Friendly, UnitKind::ChristianPeasantInfantry);
         let outer_retinue = unit(Team::Friendly, UnitKind::ChristianPeasantInfantry);
@@ -381,7 +381,7 @@ mod tests {
         assert!(should_resolve_collision_pair(
             enemy,
             Vec2::new(10.0, 0.0),
-            unit(Team::Enemy, UnitKind::EnemyBanditRaider),
+            unit(Team::Enemy, UnitKind::MuslimPeasantInfantry),
             Vec2::new(13.0, 0.0),
             commander_pos,
             inner_radius,
@@ -414,8 +414,8 @@ mod tests {
 
     #[test]
     fn enemy_enemy_pairs_use_larger_spacing_radius() {
-        let enemy_a = unit(Team::Enemy, UnitKind::EnemyBanditRaider);
-        let enemy_b = unit(Team::Enemy, UnitKind::EnemyBanditRaider);
+        let enemy_a = unit(Team::Enemy, UnitKind::MuslimPeasantInfantry);
+        let enemy_b = unit(Team::Enemy, UnitKind::MuslimPeasantInfantry);
         let friendly = unit(Team::Friendly, UnitKind::ChristianPeasantInfantry);
         let enemy_spacing = pair_min_distance(10.0, enemy_a, 10.0, enemy_b);
         let mixed_spacing = pair_min_distance(10.0, enemy_a, 10.0, friendly);

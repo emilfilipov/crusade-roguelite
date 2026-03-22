@@ -5,7 +5,7 @@ use anyhow::{Context, Result, bail};
 use bevy::prelude::*;
 use serde::Deserialize;
 
-use crate::model::{GameState, RecruitUnitKind};
+use crate::model::{GameState, PlayerFaction, RecruitUnitKind, UnitKind};
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct UnitStatsConfig {
@@ -33,10 +33,34 @@ pub struct UnitStatsConfig {
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct UnitsConfigFile {
-    pub commander: UnitStatsConfig,
+    pub commander_christian: UnitStatsConfig,
+    pub commander_muslim: UnitStatsConfig,
     pub recruit_christian_peasant_infantry: UnitStatsConfig,
     pub recruit_christian_peasant_archer: UnitStatsConfig,
     pub recruit_christian_peasant_priest: UnitStatsConfig,
+    pub recruit_muslim_peasant_infantry: UnitStatsConfig,
+    pub recruit_muslim_peasant_archer: UnitStatsConfig,
+    pub recruit_muslim_peasant_priest: UnitStatsConfig,
+}
+
+impl UnitsConfigFile {
+    pub fn commander_for_faction(&self, faction: PlayerFaction) -> &UnitStatsConfig {
+        match faction {
+            PlayerFaction::Christian => &self.commander_christian,
+            PlayerFaction::Muslim => &self.commander_muslim,
+        }
+    }
+
+    pub fn recruit_for_kind(&self, kind: RecruitUnitKind) -> &UnitStatsConfig {
+        match kind {
+            RecruitUnitKind::ChristianPeasantInfantry => &self.recruit_christian_peasant_infantry,
+            RecruitUnitKind::ChristianPeasantArcher => &self.recruit_christian_peasant_archer,
+            RecruitUnitKind::ChristianPeasantPriest => &self.recruit_christian_peasant_priest,
+            RecruitUnitKind::MuslimPeasantInfantry => &self.recruit_muslim_peasant_infantry,
+            RecruitUnitKind::MuslimPeasantArcher => &self.recruit_muslim_peasant_archer,
+            RecruitUnitKind::MuslimPeasantPriest => &self.recruit_muslim_peasant_priest,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -56,7 +80,41 @@ pub struct EnemyStatsConfig {
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct EnemiesConfigFile {
-    pub bandit_raider: EnemyStatsConfig,
+    pub enemy_christian_peasant_infantry: EnemyStatsConfig,
+    pub enemy_christian_peasant_archer: EnemyStatsConfig,
+    pub enemy_christian_peasant_priest: EnemyStatsConfig,
+    pub enemy_muslim_peasant_infantry: EnemyStatsConfig,
+    pub enemy_muslim_peasant_archer: EnemyStatsConfig,
+    pub enemy_muslim_peasant_priest: EnemyStatsConfig,
+}
+
+impl EnemiesConfigFile {
+    pub fn enemy_profile_for_kind(&self, kind: UnitKind) -> Option<&EnemyStatsConfig> {
+        match kind {
+            UnitKind::ChristianPeasantInfantry => Some(&self.enemy_christian_peasant_infantry),
+            UnitKind::ChristianPeasantArcher => Some(&self.enemy_christian_peasant_archer),
+            UnitKind::ChristianPeasantPriest => Some(&self.enemy_christian_peasant_priest),
+            UnitKind::MuslimPeasantInfantry => Some(&self.enemy_muslim_peasant_infantry),
+            UnitKind::MuslimPeasantArcher => Some(&self.enemy_muslim_peasant_archer),
+            UnitKind::MuslimPeasantPriest => Some(&self.enemy_muslim_peasant_priest),
+            _ => None,
+        }
+    }
+
+    pub fn opposing_enemy_pool(&self, player_faction: PlayerFaction) -> [UnitKind; 3] {
+        match player_faction.opposing() {
+            PlayerFaction::Christian => [
+                UnitKind::ChristianPeasantInfantry,
+                UnitKind::ChristianPeasantArcher,
+                UnitKind::ChristianPeasantPriest,
+            ],
+            PlayerFaction::Muslim => [
+                UnitKind::MuslimPeasantInfantry,
+                UnitKind::MuslimPeasantArcher,
+                UnitKind::MuslimPeasantPriest,
+            ],
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -166,6 +224,9 @@ pub enum RescueRecruitKindConfig {
     ChristianPeasantInfantry,
     ChristianPeasantArcher,
     ChristianPeasantPriest,
+    MuslimPeasantInfantry,
+    MuslimPeasantArcher,
+    MuslimPeasantPriest,
 }
 
 impl RescueRecruitKindConfig {
@@ -174,6 +235,9 @@ impl RescueRecruitKindConfig {
             Self::ChristianPeasantInfantry => RecruitUnitKind::ChristianPeasantInfantry,
             Self::ChristianPeasantArcher => RecruitUnitKind::ChristianPeasantArcher,
             Self::ChristianPeasantPriest => RecruitUnitKind::ChristianPeasantPriest,
+            Self::MuslimPeasantInfantry => RecruitUnitKind::MuslimPeasantInfantry,
+            Self::MuslimPeasantArcher => RecruitUnitKind::MuslimPeasantArcher,
+            Self::MuslimPeasantPriest => RecruitUnitKind::MuslimPeasantPriest,
         }
     }
 
@@ -182,6 +246,9 @@ impl RescueRecruitKindConfig {
             Self::ChristianPeasantInfantry => 0,
             Self::ChristianPeasantArcher => 0,
             Self::ChristianPeasantPriest => 0,
+            Self::MuslimPeasantInfantry => 0,
+            Self::MuslimPeasantArcher => 0,
+            Self::MuslimPeasantPriest => 0,
         }
     }
 }
@@ -256,6 +323,9 @@ fn default_rescue_recruit_pool() -> Vec<RescueRecruitKindConfig> {
         RescueRecruitKindConfig::ChristianPeasantInfantry,
         RescueRecruitKindConfig::ChristianPeasantArcher,
         RescueRecruitKindConfig::ChristianPeasantPriest,
+        RescueRecruitKindConfig::MuslimPeasantInfantry,
+        RescueRecruitKindConfig::MuslimPeasantArcher,
+        RescueRecruitKindConfig::MuslimPeasantPriest,
     ]
 }
 
@@ -300,7 +370,8 @@ fn validate_unit_stats(unit: &UnitStatsConfig, label: &str, allow_zero_damage: b
 }
 
 fn validate_units(config: &UnitsConfigFile) -> Result<()> {
-    validate_unit_stats(&config.commander, "commander", false)?;
+    validate_unit_stats(&config.commander_christian, "commander_christian", false)?;
+    validate_unit_stats(&config.commander_muslim, "commander_muslim", false)?;
     validate_unit_stats(
         &config.recruit_christian_peasant_infantry,
         "recruit_christian_peasant_infantry",
@@ -315,33 +386,76 @@ fn validate_units(config: &UnitsConfigFile) -> Result<()> {
         &config.recruit_christian_peasant_priest,
         "recruit_christian_peasant_priest",
         true,
+    )?;
+    validate_unit_stats(
+        &config.recruit_muslim_peasant_infantry,
+        "recruit_muslim_peasant_infantry",
+        false,
+    )?;
+    validate_unit_stats(
+        &config.recruit_muslim_peasant_archer,
+        "recruit_muslim_peasant_archer",
+        false,
+    )?;
+    validate_unit_stats(
+        &config.recruit_muslim_peasant_priest,
+        "recruit_muslim_peasant_priest",
+        true,
     )
 }
 
 fn validate_enemies(config: &EnemiesConfigFile) -> Result<()> {
-    if config.bandit_raider.max_hp <= 0.0 {
-        bail!("enemy bandit_raider max_hp must be > 0");
+    validate_enemy_stats(
+        &config.enemy_christian_peasant_infantry,
+        "enemy_christian_peasant_infantry",
+    )?;
+    validate_enemy_stats(
+        &config.enemy_christian_peasant_archer,
+        "enemy_christian_peasant_archer",
+    )?;
+    validate_enemy_stats(
+        &config.enemy_christian_peasant_priest,
+        "enemy_christian_peasant_priest",
+    )?;
+    validate_enemy_stats(
+        &config.enemy_muslim_peasant_infantry,
+        "enemy_muslim_peasant_infantry",
+    )?;
+    validate_enemy_stats(
+        &config.enemy_muslim_peasant_archer,
+        "enemy_muslim_peasant_archer",
+    )?;
+    validate_enemy_stats(
+        &config.enemy_muslim_peasant_priest,
+        "enemy_muslim_peasant_priest",
+    )?;
+    Ok(())
+}
+
+fn validate_enemy_stats(enemy: &EnemyStatsConfig, label: &str) -> Result<()> {
+    if enemy.max_hp <= 0.0 {
+        bail!("{label} max_hp must be > 0");
     }
-    if config.bandit_raider.attack_cooldown_secs <= 0.0 {
-        bail!("enemy bandit_raider attack_cooldown_secs must be > 0");
+    if enemy.attack_cooldown_secs <= 0.0 {
+        bail!("{label} attack_cooldown_secs must be > 0");
     }
-    if config.bandit_raider.damage <= 0.0 {
-        bail!("enemy bandit_raider damage must be > 0");
+    if enemy.damage <= 0.0 {
+        bail!("{label} damage must be > 0");
     }
-    if config.bandit_raider.attack_range <= 0.0 {
-        bail!("enemy bandit_raider attack_range must be > 0");
+    if enemy.attack_range <= 0.0 {
+        bail!("{label} attack_range must be > 0");
     }
-    if config.bandit_raider.move_speed <= 0.0 {
-        bail!("enemy bandit_raider move_speed must be > 0");
+    if enemy.move_speed <= 0.0 {
+        bail!("{label} move_speed must be > 0");
     }
-    if config.bandit_raider.morale <= 0.0 {
-        bail!("enemy bandit_raider morale must be > 0");
+    if enemy.morale <= 0.0 {
+        bail!("{label} morale must be > 0");
     }
-    if config.bandit_raider.cohesion <= 0.0 {
-        bail!("enemy bandit_raider cohesion must be > 0");
+    if enemy.cohesion <= 0.0 {
+        bail!("{label} cohesion must be > 0");
     }
-    if config.bandit_raider.collision_radius <= 0.0 {
-        bail!("enemy bandit_raider collision_radius must be > 0");
+    if enemy.collision_radius <= 0.0 {
+        bail!("{label} collision_radius must be > 0");
     }
     Ok(())
 }
@@ -590,16 +704,27 @@ mod tests {
             dir,
             "units.json",
             r#"{
-              "commander":{"id":"c","max_hp":10.0,"armor":1.0,"damage":2.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":100.0,"morale":100.0,"aura_radius":10.0},
+              "commander_christian":{"id":"baldiun","max_hp":10.0,"armor":1.0,"damage":2.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":100.0,"morale":100.0,"aura_radius":10.0},
+              "commander_muslim":{"id":"saladin","max_hp":10.0,"armor":1.0,"damage":2.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":100.0,"morale":100.0,"aura_radius":10.0},
               "recruit_christian_peasant_infantry":{"id":"r1","max_hp":9.0,"armor":1.0,"damage":2.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":90.0,"morale":90.0},
               "recruit_christian_peasant_archer":{"id":"r2","max_hp":7.0,"armor":0.5,"damage":1.5,"attack_cooldown_secs":1.1,"attack_range":80.0,"move_speed":95.0,"morale":85.0},
-              "recruit_christian_peasant_priest":{"id":"r3","max_hp":8.0,"armor":0.5,"damage":0.0,"attack_cooldown_secs":1.1,"attack_range":20.0,"move_speed":92.0,"morale":88.0}
+              "recruit_christian_peasant_priest":{"id":"r3","max_hp":8.0,"armor":0.5,"damage":0.0,"attack_cooldown_secs":1.1,"attack_range":20.0,"move_speed":92.0,"morale":88.0},
+              "recruit_muslim_peasant_infantry":{"id":"m1","max_hp":9.0,"armor":1.0,"damage":2.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":90.0,"morale":90.0},
+              "recruit_muslim_peasant_archer":{"id":"m2","max_hp":7.0,"armor":0.5,"damage":1.5,"attack_cooldown_secs":1.1,"attack_range":80.0,"move_speed":95.0,"morale":85.0},
+              "recruit_muslim_peasant_priest":{"id":"m3","max_hp":8.0,"armor":0.5,"damage":0.0,"attack_cooldown_secs":1.1,"attack_range":20.0,"move_speed":92.0,"morale":88.0}
             }"#,
         );
         write_config(
             dir,
             "enemies.json",
-            r#"{"bandit_raider":{"id":"e","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0,"cohesion":70.0}}"#,
+            r#"{
+              "enemy_christian_peasant_infantry":{"id":"ec_i","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0,"cohesion":70.0},
+              "enemy_christian_peasant_archer":{"id":"ec_a","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0,"cohesion":70.0},
+              "enemy_christian_peasant_priest":{"id":"ec_p","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0,"cohesion":70.0},
+              "enemy_muslim_peasant_infantry":{"id":"em_i","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0,"cohesion":70.0},
+              "enemy_muslim_peasant_archer":{"id":"em_a","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0,"cohesion":70.0},
+              "enemy_muslim_peasant_priest":{"id":"em_p","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0,"cohesion":70.0}
+            }"#,
         );
         write_config(
             dir,
@@ -667,10 +792,14 @@ mod tests {
             tmp.path(),
             "units.json",
             r#"{
-              "commander":{"id":"c","max_hp":10.0,"armor":1.0,"damage":2.0,"attack_cooldown_secs":-1.0,"attack_range":20.0,"move_speed":100.0,"morale":100.0,"aura_radius":10.0},
+              "commander_christian":{"id":"baldiun","max_hp":10.0,"armor":1.0,"damage":2.0,"attack_cooldown_secs":-1.0,"attack_range":20.0,"move_speed":100.0,"morale":100.0,"aura_radius":10.0},
+              "commander_muslim":{"id":"saladin","max_hp":10.0,"armor":1.0,"damage":2.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":100.0,"morale":100.0,"aura_radius":10.0},
               "recruit_christian_peasant_infantry":{"id":"r1","max_hp":9.0,"armor":1.0,"damage":2.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":90.0,"morale":90.0},
               "recruit_christian_peasant_archer":{"id":"r2","max_hp":7.0,"armor":0.5,"damage":1.5,"attack_cooldown_secs":1.1,"attack_range":80.0,"move_speed":95.0,"morale":85.0},
-              "recruit_christian_peasant_priest":{"id":"r3","max_hp":8.0,"armor":0.5,"damage":0.0,"attack_cooldown_secs":1.1,"attack_range":20.0,"move_speed":92.0,"morale":88.0}
+              "recruit_christian_peasant_priest":{"id":"r3","max_hp":8.0,"armor":0.5,"damage":0.0,"attack_cooldown_secs":1.1,"attack_range":20.0,"move_speed":92.0,"morale":88.0},
+              "recruit_muslim_peasant_infantry":{"id":"m1","max_hp":9.0,"armor":1.0,"damage":2.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":90.0,"morale":90.0},
+              "recruit_muslim_peasant_archer":{"id":"m2","max_hp":7.0,"armor":0.5,"damage":1.5,"attack_cooldown_secs":1.1,"attack_range":80.0,"move_speed":95.0,"morale":85.0},
+              "recruit_muslim_peasant_priest":{"id":"m3","max_hp":8.0,"armor":0.5,"damage":0.0,"attack_cooldown_secs":1.1,"attack_range":20.0,"move_speed":92.0,"morale":88.0}
             }"#,
         );
 
@@ -685,7 +814,14 @@ mod tests {
         write_config(
             tmp.path(),
             "enemies.json",
-            r#"{"bandit_raider":{"id":"e","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0,"cohesion":0.0}}"#,
+            r#"{
+              "enemy_christian_peasant_infantry":{"id":"ec_i","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0,"cohesion":0.0},
+              "enemy_christian_peasant_archer":{"id":"ec_a","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0,"cohesion":70.0},
+              "enemy_christian_peasant_priest":{"id":"ec_p","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0,"cohesion":70.0},
+              "enemy_muslim_peasant_infantry":{"id":"em_i","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0,"cohesion":70.0},
+              "enemy_muslim_peasant_archer":{"id":"em_a","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0,"cohesion":70.0},
+              "enemy_muslim_peasant_priest":{"id":"em_p","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0,"cohesion":70.0}
+            }"#,
         );
 
         let err = GameData::load_from_dir(tmp.path()).expect_err("expected invalid enemy cohesion");

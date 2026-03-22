@@ -5,7 +5,8 @@ use crate::formation::{ActiveFormation, active_formation_config, formation_conta
 use crate::map::{MapBounds, playable_bounds};
 use crate::model::{
     Armor, AttackCooldown, AttackProfile, ColliderRadius, CommanderUnit, EnemyUnit, FriendlyUnit,
-    GameState, Health, Morale, MoveSpeed, StartRunEvent, Team, Unit, UnitCohesion, UnitKind,
+    GameState, Health, MatchSetupSelection, Morale, MoveSpeed, StartRunEvent, Team, Unit,
+    UnitCohesion, UnitKind,
 };
 use crate::visuals::ArtAssets;
 
@@ -147,6 +148,7 @@ fn spawn_pending_enemy_batches(
     mut commands: Commands,
     data: Res<GameData>,
     art: Res<ArtAssets>,
+    setup_selection: Option<Res<MatchSetupSelection>>,
     bounds: Option<Res<MapBounds>>,
     commanders: Query<&Transform, With<CommanderUnit>>,
     mut wave_runtime: ResMut<WaveRuntime>,
@@ -155,6 +157,10 @@ fn spawn_pending_enemy_batches(
         return;
     }
 
+    let player_faction = setup_selection
+        .as_ref()
+        .map(|selection| selection.faction)
+        .unwrap_or(crate::model::PlayerFaction::Christian);
     let spawn_bounds = bounds
         .as_deref()
         .copied()
@@ -179,6 +185,7 @@ fn spawn_pending_enemy_batches(
             spawn_now,
             &data,
             &art,
+            player_faction,
             spawn_bounds,
             commander_position,
             batch.wave_number,
@@ -201,27 +208,34 @@ fn spawn_enemy_batch(
     count: u32,
     data: &GameData,
     art: &ArtAssets,
+    player_faction: crate::model::PlayerFaction,
     bounds: MapBounds,
     commander_position: Vec2,
     wave_number: u32,
     stat_scale: f32,
     spawn_sequence: &mut u32,
 ) {
-    let cfg = &data.enemies.bandit_raider;
-    let hp = cfg.max_hp * stat_scale;
-    let armor = cfg.armor + (stat_scale - 1.0) * 2.0;
-    let damage = cfg.damage * stat_scale;
-    let attack_cooldown_secs = (cfg.attack_cooldown_secs / (1.0 + (stat_scale - 1.0) * 0.15))
-        .clamp(0.2, cfg.attack_cooldown_secs);
-    let move_speed = enemy_move_speed(cfg.move_speed);
+    let enemy_pool = data.enemies.opposing_enemy_pool(player_faction);
     for _ in 0..count {
         let seq = *spawn_sequence;
         *spawn_sequence = spawn_sequence.saturating_add(1);
+        let pool_index = (hash_seed(wave_number, seq, 0xC55A_A5AA) as usize) % enemy_pool.len();
+        let enemy_kind = enemy_pool[pool_index];
+        let Some(cfg) = data.enemies.enemy_profile_for_kind(enemy_kind) else {
+            continue;
+        };
+        let hp = cfg.max_hp * stat_scale;
+        let armor = cfg.armor + (stat_scale - 1.0) * 2.0;
+        let damage = cfg.damage * stat_scale;
+        let attack_cooldown_secs = (cfg.attack_cooldown_secs / (1.0 + (stat_scale - 1.0) * 0.15))
+            .clamp(0.2, cfg.attack_cooldown_secs);
+        let move_speed = enemy_move_speed(cfg.move_speed);
+        let texture = enemy_texture_for_kind(art, enemy_kind);
         let pos = random_spawn_position(bounds, commander_position, wave_number, seq);
         commands.spawn((
             Unit {
                 team: Team::Enemy,
-                kind: UnitKind::EnemyBanditRaider,
+                kind: enemy_kind,
                 level: 1,
             },
             EnemyUnit,
@@ -246,8 +260,9 @@ fn spawn_enemy_batch(
             MoveSpeed(move_speed),
             ColliderRadius(cfg.collision_radius),
             SpriteBundle {
-                texture: art.enemy_bandit_raider_idle.clone(),
+                texture,
                 sprite: Sprite {
+                    color: Color::srgb(1.0, 0.85, 0.85),
                     custom_size: Some(Vec2::splat(32.0)),
                     ..default()
                 },
@@ -656,10 +671,6 @@ fn update_bandit_visual_states(
     >,
 ) {
     for (unit, health, attack, attack_cd, transform, mut runtime, mut texture) in &mut enemies {
-        if unit.kind != UnitKind::EnemyBanditRaider {
-            continue;
-        }
-
         let position = transform.translation.truncate();
         let moved_distance_sq = runtime.last_position.distance_squared(position);
         let next_state = decide_bandit_visual_state(
@@ -671,20 +682,36 @@ fn update_bandit_visual_states(
         );
 
         if runtime.state != next_state {
-            *texture = bandit_texture_for_state(&art, next_state);
+            *texture = enemy_texture_for_state(&art, unit.kind, next_state);
             runtime.state = next_state;
         }
         runtime.last_position = position;
     }
 }
 
-fn bandit_texture_for_state(art: &ArtAssets, state: BanditVisualState) -> Handle<Image> {
-    match state {
-        BanditVisualState::Idle => art.enemy_bandit_raider_idle.clone(),
-        BanditVisualState::Move => art.enemy_bandit_raider_move.clone(),
-        BanditVisualState::Attack => art.enemy_bandit_raider_attack.clone(),
-        BanditVisualState::Hit => art.enemy_bandit_raider_hit.clone(),
-        BanditVisualState::Dead => art.enemy_bandit_raider_dead.clone(),
+fn enemy_texture_for_state(
+    art: &ArtAssets,
+    kind: UnitKind,
+    _state: BanditVisualState,
+) -> Handle<Image> {
+    enemy_texture_for_kind(art, kind)
+}
+
+fn enemy_texture_for_kind(art: &ArtAssets, kind: UnitKind) -> Handle<Image> {
+    match kind {
+        UnitKind::ChristianPeasantInfantry => art.friendly_peasant_infantry_idle.clone(),
+        UnitKind::ChristianPeasantArcher => art.friendly_peasant_archer_idle.clone(),
+        UnitKind::ChristianPeasantPriest => art.friendly_peasant_priest_idle.clone(),
+        UnitKind::MuslimPeasantInfantry => art.muslim_peasant_infantry_idle.clone(),
+        UnitKind::MuslimPeasantArcher => art.muslim_peasant_archer_idle.clone(),
+        UnitKind::MuslimPeasantPriest => art.muslim_peasant_priest_idle.clone(),
+        UnitKind::Commander
+        | UnitKind::RescuableChristianPeasantInfantry
+        | UnitKind::RescuableChristianPeasantArcher
+        | UnitKind::RescuableChristianPeasantPriest
+        | UnitKind::RescuableMuslimPeasantInfantry
+        | UnitKind::RescuableMuslimPeasantArcher
+        | UnitKind::RescuableMuslimPeasantPriest => art.enemy_bandit_raider_idle.clone(),
     }
 }
 

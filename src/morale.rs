@@ -375,7 +375,12 @@ pub fn average_morale_ratio(morale_ratios: &[f32]) -> f32 {
 }
 
 pub fn commander_aura_radius(data: &GameData, buffs: Option<&GlobalBuffs>) -> f32 {
-    let base_radius = data.units.commander.aura_radius.max(0.0);
+    let base_radius = data
+        .units
+        .commander_christian
+        .aura_radius
+        .max(data.units.commander_muslim.aura_radius)
+        .max(0.0);
     let bonus = buffs
         .map(|value| value.commander_aura_radius_bonus)
         .unwrap_or(0.0);
@@ -539,7 +544,9 @@ mod tests {
             commander_aura_radius_bonus: 20.0,
             ..GlobalBuffs::default()
         };
-        assert!(commander_aura_radius(&data, Some(&buffs)) > data.units.commander.aura_radius);
+        assert!(
+            commander_aura_radius(&data, Some(&buffs)) > data.units.commander_christian.aura_radius
+        );
     }
 
     #[test]

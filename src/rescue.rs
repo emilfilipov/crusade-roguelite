@@ -3,8 +3,8 @@ use bevy::prelude::*;
 use crate::data::{GameData, RescueConfig};
 use crate::map::MapBounds;
 use crate::model::{
-    FriendlyUnit, GameState, RecruitEvent, RecruitUnitKind, RescuableUnit, StartRunEvent, Team,
-    Unit,
+    FriendlyUnit, GameState, MatchSetupSelection, PlayerFaction, RecruitArchetype, RecruitEvent,
+    RecruitUnitKind, RescuableUnit, StartRunEvent, Team, Unit,
 };
 use crate::upgrades::ConditionalUpgradeEffects;
 use crate::visuals::ArtAssets;
@@ -44,27 +44,28 @@ struct RescueSpawnPity {
 
 impl RescueSpawnPity {
     fn drought_for(self, kind: RecruitUnitKind) -> u32 {
-        match kind {
-            RecruitUnitKind::ChristianPeasantInfantry => self.infantry_drought,
-            RecruitUnitKind::ChristianPeasantArcher => self.archer_drought,
-            RecruitUnitKind::ChristianPeasantPriest => self.priest_drought,
+        match kind.archetype() {
+            RecruitArchetype::Infantry => self.infantry_drought,
+            RecruitArchetype::Archer => self.archer_drought,
+            RecruitArchetype::Priest => self.priest_drought,
         }
     }
 
     fn set_drought_for(&mut self, kind: RecruitUnitKind, value: u32) {
-        match kind {
-            RecruitUnitKind::ChristianPeasantInfantry => self.infantry_drought = value,
-            RecruitUnitKind::ChristianPeasantArcher => self.archer_drought = value,
-            RecruitUnitKind::ChristianPeasantPriest => self.priest_drought = value,
+        match kind.archetype() {
+            RecruitArchetype::Infantry => self.infantry_drought = value,
+            RecruitArchetype::Archer => self.archer_drought = value,
+            RecruitArchetype::Priest => self.priest_drought = value,
         }
     }
 
-    fn note_spawn(&mut self, spawned: RecruitUnitKind, config: &RescueConfig) {
-        for kind in [
-            RecruitUnitKind::ChristianPeasantInfantry,
-            RecruitUnitKind::ChristianPeasantArcher,
-            RecruitUnitKind::ChristianPeasantPriest,
-        ] {
+    fn note_spawn(
+        &mut self,
+        spawned: RecruitUnitKind,
+        config: &RescueConfig,
+        player_faction: PlayerFaction,
+    ) {
+        for kind in RecruitUnitKind::all_for_faction(player_faction) {
             if !rescue_pool_contains_kind(config, kind) {
                 continue;
             }
@@ -92,6 +93,7 @@ impl Plugin for RescuePlugin {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_rescuables_on_run_start(
     mut commands: Commands,
     mut start_events: EventReader<StartRunEvent>,
@@ -100,6 +102,7 @@ fn spawn_rescuables_on_run_start(
     art: Res<ArtAssets>,
     bounds: Option<Res<MapBounds>>,
     mut spawn_runtime: ResMut<RescueSpawnRuntime>,
+    setup_selection: Option<Res<MatchSetupSelection>>,
 ) {
     if start_events.is_empty() {
         return;
@@ -110,10 +113,17 @@ fn spawn_rescuables_on_run_start(
         commands.entity(entity).despawn_recursive();
     }
 
+    let faction = setup_selection
+        .as_ref()
+        .map(|selection| selection.faction)
+        .unwrap_or(PlayerFaction::Christian);
     let count = data.rescue.spawn_count.max(1);
     for idx in 0..count {
-        let recruit_kind = recruit_kind_for_sequence(idx, &data.rescue, spawn_runtime.pity);
-        spawn_runtime.pity.note_spawn(recruit_kind, &data.rescue);
+        let recruit_kind =
+            recruit_kind_for_sequence(idx, &data.rescue, spawn_runtime.pity, faction);
+        spawn_runtime
+            .pity
+            .note_spawn(recruit_kind, &data.rescue, faction);
         spawn_rescuable(
             &mut commands,
             rescue_spawn_position(idx, bounds.as_deref().copied()),
@@ -126,6 +136,7 @@ fn spawn_rescuables_on_run_start(
     spawn_runtime.timer = Timer::from_seconds(RESCUE_RESPAWN_INTERVAL_SECS, TimerMode::Repeating);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_rescuables_over_time(
     mut commands: Commands,
     time: Res<Time>,
@@ -134,6 +145,7 @@ fn spawn_rescuables_over_time(
     bounds: Option<Res<MapBounds>>,
     rescuables: Query<Entity, With<RescuableUnit>>,
     mut runtime: ResMut<RescueSpawnRuntime>,
+    setup_selection: Option<Res<MatchSetupSelection>>,
 ) {
     if rescuables.iter().count() >= MAX_ACTIVE_RESCUABLES {
         return;
@@ -144,9 +156,14 @@ fn spawn_rescuables_over_time(
         return;
     }
 
+    let faction = setup_selection
+        .as_ref()
+        .map(|selection| selection.faction)
+        .unwrap_or(PlayerFaction::Christian);
     let spawn_position = rescue_spawn_position(runtime.sequence, bounds.as_deref().copied());
-    let recruit_kind = recruit_kind_for_sequence(runtime.sequence, &data.rescue, runtime.pity);
-    runtime.pity.note_spawn(recruit_kind, &data.rescue);
+    let recruit_kind =
+        recruit_kind_for_sequence(runtime.sequence, &data.rescue, runtime.pity, faction);
+    runtime.pity.note_spawn(recruit_kind, &data.rescue, faction);
     spawn_rescuable(&mut commands, spawn_position, recruit_kind, &art);
     runtime.sequence = runtime.sequence.saturating_add(1);
 }
@@ -231,6 +248,21 @@ fn spawn_rescuable(
             art.friendly_peasant_priest_idle.clone(),
             Color::srgb(0.94, 0.92, 0.98),
         ),
+        RecruitUnitKind::MuslimPeasantInfantry => (
+            crate::model::UnitKind::RescuableMuslimPeasantInfantry,
+            art.muslim_peasant_infantry_rescuable_variant.clone(),
+            Color::srgb(0.86, 0.9, 1.0),
+        ),
+        RecruitUnitKind::MuslimPeasantArcher => (
+            crate::model::UnitKind::RescuableMuslimPeasantArcher,
+            art.muslim_peasant_archer_rescuable_variant.clone(),
+            Color::srgb(0.84, 0.95, 0.86),
+        ),
+        RecruitUnitKind::MuslimPeasantPriest => (
+            crate::model::UnitKind::RescuableMuslimPeasantPriest,
+            art.muslim_peasant_priest_idle.clone(),
+            Color::srgb(0.9, 0.9, 0.98),
+        ),
     };
 
     commands.spawn((
@@ -258,14 +290,17 @@ fn recruit_kind_for_sequence(
     sequence: u32,
     config: &RescueConfig,
     pity: RescueSpawnPity,
+    player_faction: PlayerFaction,
 ) -> RecruitUnitKind {
-    if config.recruit_pool.is_empty() {
-        return RecruitUnitKind::ChristianPeasantInfantry;
-    }
+    let fallback =
+        RecruitUnitKind::from_faction_and_archetype(player_faction, RecruitArchetype::Infantry);
     let mut total_weight = 0u64;
     let mut weighted_entries = Vec::with_capacity(config.recruit_pool.len());
     for entry in &config.recruit_pool {
         let kind = entry.as_recruit_unit_kind();
+        if kind.faction() != player_faction {
+            continue;
+        }
         let drought = pity.drought_for(kind) as u64;
         let weight = 1u64 + drought * RESCUE_PITY_WEIGHT_STEP as u64;
         total_weight = total_weight.saturating_add(weight);
@@ -273,7 +308,7 @@ fn recruit_kind_for_sequence(
     }
 
     if total_weight == 0 {
-        return config.recruit_pool[0].as_recruit_unit_kind();
+        return fallback;
     }
     let roll = (rescue_hash_seed(sequence, 0xA5A5_5A5A) as u64) % total_weight;
     let mut cursor = 0u64;
@@ -285,9 +320,11 @@ fn recruit_kind_for_sequence(
     }
     config
         .recruit_pool
-        .last()
+        .iter()
+        .rev()
         .map(|value| value.as_recruit_unit_kind())
-        .unwrap_or(RecruitUnitKind::ChristianPeasantInfantry)
+        .find(|kind| kind.faction() == player_faction)
+        .unwrap_or(fallback)
 }
 
 fn rescue_pool_contains_kind(config: &RescueConfig, kind: RecruitUnitKind) -> bool {
@@ -384,7 +421,7 @@ mod tests {
 
     use crate::data::{RescueConfig, RescueRecruitKindConfig};
     use crate::map::MapBounds;
-    use crate::model::RecruitUnitKind;
+    use crate::model::{PlayerFaction, RecruitUnitKind};
     use crate::rescue::{
         RescueSpawnPity, advance_rescue_progress, any_friendly_in_rescue_radius,
         effective_rescue_duration, recruit_kind_for_sequence, rescue_max_active,
@@ -446,7 +483,7 @@ mod tests {
         };
         let pity = RescueSpawnPity::default();
         for sequence in 0..64 {
-            let kind = recruit_kind_for_sequence(sequence, &config, pity);
+            let kind = recruit_kind_for_sequence(sequence, &config, pity, PlayerFaction::Christian);
             assert!(
                 matches!(
                     kind,
@@ -472,12 +509,20 @@ mod tests {
             ],
         };
         let mut pity = RescueSpawnPity::default();
-        pity.note_spawn(RecruitUnitKind::ChristianPeasantInfantry, &config);
+        pity.note_spawn(
+            RecruitUnitKind::ChristianPeasantInfantry,
+            &config,
+            PlayerFaction::Christian,
+        );
         assert_eq!(pity.infantry_drought, 0);
         assert_eq!(pity.archer_drought, 1);
         assert_eq!(pity.priest_drought, 1);
 
-        pity.note_spawn(RecruitUnitKind::ChristianPeasantArcher, &config);
+        pity.note_spawn(
+            RecruitUnitKind::ChristianPeasantArcher,
+            &config,
+            PlayerFaction::Christian,
+        );
         assert_eq!(pity.infantry_drought, 1);
         assert_eq!(pity.archer_drought, 0);
         assert_eq!(pity.priest_drought, 2);
@@ -504,13 +549,17 @@ mod tests {
         let mut baseline_archer = 0u32;
         let mut starved_archer_count = 0u32;
         for sequence in 0..240 {
-            if recruit_kind_for_sequence(sequence, &config, baseline)
+            if recruit_kind_for_sequence(sequence, &config, baseline, PlayerFaction::Christian)
                 == RecruitUnitKind::ChristianPeasantArcher
             {
                 baseline_archer = baseline_archer.saturating_add(1);
             }
-            if recruit_kind_for_sequence(sequence, &config, starved_archer)
-                == RecruitUnitKind::ChristianPeasantArcher
+            if recruit_kind_for_sequence(
+                sequence,
+                &config,
+                starved_archer,
+                PlayerFaction::Christian,
+            ) == RecruitUnitKind::ChristianPeasantArcher
             {
                 starved_archer_count = starved_archer_count.saturating_add(1);
             }

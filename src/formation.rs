@@ -316,9 +316,9 @@ fn offset_outer_first_cmp(a: &Vec2, b: &Vec2) -> std::cmp::Ordering {
 
 fn formation_slot_role_priority(kind: UnitKind) -> u8 {
     match kind {
-        UnitKind::ChristianPeasantInfantry => 0, // outer frontline
-        UnitKind::ChristianPeasantArcher => 1,   // inner ring
-        UnitKind::ChristianPeasantPriest => 2,   // innermost support
+        UnitKind::ChristianPeasantInfantry | UnitKind::MuslimPeasantInfantry => 0, // outer frontline
+        UnitKind::ChristianPeasantArcher | UnitKind::MuslimPeasantArcher => 1,     // inner ring
+        UnitKind::ChristianPeasantPriest | UnitKind::MuslimPeasantPriest => 2, // innermost support
         _ => 1,
     }
 }

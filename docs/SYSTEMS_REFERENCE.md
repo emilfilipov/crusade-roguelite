@@ -5,6 +5,15 @@ Single-file technical reference for current MVP runtime behavior.
 Use this for entity/component/system lookup without scanning all source files.
 
 ## Latest Update (2026-03-22)
+- Added dual-faction runtime scaffold:
+  - playable factions: `Christian` and `Muslim`,
+  - selected faction controls commander + rescue recruit pool,
+  - enemy waves draw from the opposite faction pool.
+- Added Muslim roster/commander assets and wiring:
+  - `Saladin` commander profile + sprite,
+  - `muslim_peasant_infantry`, `muslim_peasant_archer`, `muslim_peasant_priest`,
+  - Muslim rescuable variants and faction-aware pity-weighted rescue spawning.
+- Replaced single `bandit_raider` enemy schema with faction-mirrored enemy profiles (Christian + Muslim infantry/archer/priest entries).
 - Formation footprint occupancy cap now uses a strict retinue ratio: `floor(retinue_count / 4)` enemies allowed inside.
 - Floating critical-hit damage text now renders as magenta, slightly larger text, and appends `!` (example: `75!`).
 - Stats modal table now reports aggregated stat bonuses by stat name (for example `Health`, `Damage`, `Morale Regen/s`, `Morale Loss Resist`) instead of effect-source row names.
@@ -39,7 +48,7 @@ Use this for entity/component/system lookup without scanning all source files.
   - `Bestiary`
   - `Exit`
 - Added `MatchSetup` screen:
-  - faction selection (`Christian` enabled, `Muslim` disabled),
+  - faction selection (`Christian` and `Muslim` both enabled),
   - map selection from data-driven map list,
   - start gate that only allows valid faction/map combinations.
 - Added roster level-budget economy:
@@ -84,7 +93,7 @@ Use this for entity/component/system lookup without scanning all source files.
 - Renamed the old recruit `Infantry/Knight` to `Christian Peasant Infantry`.
 - Added `Christian Peasant Archer` as a second recruitable retinue unit.
 - Rescue spawns now use a data-driven recruit pool and are currently constrained to tier-0 entries only.
-- Active tier-0 rescue pool entries: `christian_peasant_infantry`, `christian_peasant_archer`, `christian_peasant_priest`.
+- Active tier-0 rescue pool entries are faction-filtered at runtime from the combined Christian+Muslim pool in `rescue.json`.
 - Added rescuable-priest variant mapping so priest rescues flow through the same recruit pipeline.
 - Recruit events now preserve rescued unit type so formation/combat/collision pipelines auto-handle both variants.
 - Wired equipment bonuses into combat runtime:
@@ -163,7 +172,7 @@ Use this for entity/component/system lookup without scanning all source files.
   - world-space numeric text with rise/fade animation,
   - per-frame and active-entity caps to prevent text spikes under high hit density.
 - Reduced dense enemy crowd jitter/stacking:
-  - enemy collision radius is now data-driven (`enemies.bandit_raider.collision_radius`),
+  - enemy collision radius is now data-driven per enemy profile in `enemies.json`,
   - collision correction now uses frame-time-aware damping + max push clamp,
   - collision solver now runs 3 iterative passes per frame with per-pass push cap,
   - enemy-enemy pairs use larger separation distance (`x1.20`) to reduce mass overlap,
@@ -252,15 +261,27 @@ Use this for entity/component/system lookup without scanning all source files.
 Loaded from `assets/data` by `GameData::load_from_dir`.
 
 ### `units.json`
-- Commander (`baldiun`): `hp=120`, `armor=6`, `damage=12`, `cd=0.9`, `range=34`, `move=170`, `morale=120`, `aura_radius=180`
-  - Ranged profile: `damage=9`, `cd=1.2`, `range=250`, `projectile_speed=420`, `max_distance=260`
-- Recruit `christian_peasant_infantry`: `hp=95`, `armor=4`, `damage=9`, `cd=1.1`, `range=36`, `move=150`, `morale=100`
-- Recruit `christian_peasant_archer`: `hp=72`, `armor=2`, `move=154`, `morale=92`
-  - Melee profile: `damage=4`, `cd=1.45`, `range=26`
-  - Ranged profile: `damage=9`, `cd=1.15`, `range=220`, `projectile_speed=460`, `max_distance=235`
+- Commanders:
+  - `commander_christian` (`baldiun`)
+  - `commander_muslim` (`saladin`)
+- Recruit profiles (tier 0):
+  - `recruit_christian_peasant_infantry`
+  - `recruit_christian_peasant_archer` (hybrid melee+ranged)
+  - `recruit_christian_peasant_priest` (non-damaging support)
+  - `recruit_muslim_peasant_infantry`
+  - `recruit_muslim_peasant_archer` (hybrid melee+ranged)
+  - `recruit_muslim_peasant_priest` (non-damaging support)
 
 ### `enemies.json`
-- `bandit_raider`: `hp=34`, `armor=1`, `damage=6`, `cd=1.3`, `range=30`, `move=118`, `morale=90`, `cohesion=80`, `collision_radius=18`
+- Christian enemy profiles:
+  - `enemy_christian_peasant_infantry`
+  - `enemy_christian_peasant_archer`
+  - `enemy_christian_peasant_priest`
+- Muslim enemy profiles:
+  - `enemy_muslim_peasant_infantry`
+  - `enemy_muslim_peasant_archer`
+  - `enemy_muslim_peasant_priest`
+- Each profile includes: `max_hp`, `armor`, `damage`, `attack_cooldown_secs`, `attack_range`, `move_speed`, `morale`, `cohesion`, `collision_radius`.
 
 ### `formations.json`
 - `square`: `slot_spacing=30`, `offense=1.0`, `offense_while_moving=1.0`, `defense=1.0`, `anti_cavalry=1.0`, `move_speed=1.0`
@@ -293,7 +314,7 @@ Procedural continuation:
 - `spawn_count=6`
 - `rescue_radius=60`
 - `rescue_duration_secs=2.2`
-- `recruit_pool=["christian_peasant_infantry","christian_peasant_archer","christian_peasant_priest"]` (tier-0 validation enforced)
+- `recruit_pool` includes tier-0 entries for both factions; runtime selection filters this pool to the selected player faction and applies pity weighting.
 
 ### `upgrades.json`
 - `unlock_formation_diamond` (`one_time`, `adds_to_skillbar`, `formation_id=diamond`)
@@ -332,7 +353,7 @@ Roll fields:
   - `allowed_factions`
   - optional `spawn_profile_id`
 - Current runtime entry:
-  - `desert_battlefield` (`2400x2400`, `allowed_factions=["christian"]`)
+  - `desert_battlefield` (`2400x2400`, `allowed_factions=["christian","muslim"]`)
 
 ## ECS Inventory
 
@@ -441,7 +462,7 @@ Friendly combined outgoing multiplier has lower clamp:
 
 ### Ranged Projectile Attacks (`src/combat.rs`, `src/projectiles.rs`)
 - Units with `RangedAttackProfile` fire projectiles only when targets are outside melee range and inside ranged range.
-- Current ranged units: commander + Christian Peasant Archer.
+- Current ranged units: commander + both faction archer variants (`Christian`/`Muslim` Peasant Archer).
 - Projectile is non-instant and travels via velocity each frame.
 - Projectile despawns on hit or when max travel distance is consumed.
 
