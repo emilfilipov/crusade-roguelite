@@ -18,6 +18,8 @@ const AUTHORITY_ENEMY_MORALE_DRAIN_SCALE: f32 = 10.8;
 const MAX_AUTHORITY_LOSS_RESISTANCE: f32 = 0.75;
 const HOSPITALIER_COHESION_REGEN_SCALE: f32 = 0.35;
 const HOSPITALIER_MORALE_REGEN_SCALE: f32 = 0.18;
+const XP_BASE_REQUIREMENT: f32 = 300.0;
+const XP_GROWTH_PER_LEVEL: f32 = 1.053;
 
 const MOB_FURY_DAMAGE_BONUS: f32 = 0.18;
 const MOB_FURY_ATTACK_SPEED_BONUS: f32 = 0.18;
@@ -381,20 +383,9 @@ pub fn xp_required_for_level(level: u32) -> f32 {
     if level >= MAX_COMMANDER_LEVEL {
         return f32::INFINITY;
     }
-
-    const BASE_REQUIREMENT: f32 = 300.0;
-    const BRACKET_SIZE: u32 = 5;
-    const BRACKET_GROWTH: f32 = 1.3;
-    const INTRA_BRACKET_GROWTH: f32 = 1.03;
-
     let safe_level = level.max(1);
-    let index = safe_level - 1;
-    let bracket = index / BRACKET_SIZE;
-    let within_bracket = index % BRACKET_SIZE;
-
-    BASE_REQUIREMENT
-        * BRACKET_GROWTH.powf(bracket as f32)
-        * INTRA_BRACKET_GROWTH.powf(within_bracket as f32)
+    let index = safe_level.saturating_sub(1);
+    XP_BASE_REQUIREMENT * XP_GROWTH_PER_LEVEL.powf(index as f32)
 }
 
 pub fn commander_level_hp_bonus(level: u32) -> f32 {
@@ -1325,6 +1316,14 @@ mod tests {
         assert!(xp_required_for_level(5) > xp_required_for_level(4));
         assert!(xp_required_for_level(11) > xp_required_for_level(10));
         assert!(xp_required_for_level(21) > xp_required_for_level(20));
+    }
+
+    #[test]
+    fn xp_requirements_use_uniform_per_level_growth() {
+        let early_ratio = xp_required_for_level(11) / xp_required_for_level(10);
+        let late_ratio = xp_required_for_level(121) / xp_required_for_level(120);
+        assert!((early_ratio - super::XP_GROWTH_PER_LEVEL).abs() < 0.0001);
+        assert!((late_ratio - super::XP_GROWTH_PER_LEVEL).abs() < 0.0001);
     }
 
     #[test]
