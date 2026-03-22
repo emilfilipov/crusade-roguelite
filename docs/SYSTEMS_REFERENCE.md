@@ -13,6 +13,10 @@ Use this for entity/component/system lookup without scanning all source files.
   - `enemies.json` now includes `cohesion` per enemy archetype,
   - enemy spawn now attaches `UnitCohesion { current, max }`,
   - data validation now requires enemy cohesion to be `> 0`.
+- Rescue spawn selection now uses pity-weighted randomness:
+  - each rescue type gains spawn weight the longer it has not spawned,
+  - the spawned type resets its drought counter to `0`,
+  - other types in the active rescue pool increment drought each spawn.
 - Added `RunModalState` state machine for in-run utility screens (`Inventory`, `Stats`, `Skill Book`, `Archive`, `Unit Upgrade`).
 - Added shared modal request event path (`RunModalRequestEvent`) so keyboard and UI button actions use the same reducer logic.
 - Added modal hotkeys in-run: `I`, `O`, `K`, `B`, `U`; `Escape` closes modal first, otherwise opens pause menu.
@@ -596,6 +600,7 @@ Friendly combined outgoing multiplier has lower clamp:
 - start spawn + timed respawn of rescuables (`20s` cadence, max `6` active at once)
 - typed rescuable metadata driven by `rescue.recruit_pool` (tier-0-only entries accepted by config validator)
 - any-friendly rescue channel logic
+- pity-weighted recruit-kind selection for rescue spawns (`weight = 1 + drought`) to reduce long spawn streaks of one type
 
 ### `drops.rs`
 - ambient and event XP pack spawning with wave/level XP scaling

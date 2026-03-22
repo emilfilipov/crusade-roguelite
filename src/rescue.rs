@@ -11,6 +11,7 @@ use crate::visuals::ArtAssets;
 
 const RESCUE_RESPAWN_INTERVAL_SECS: f32 = 12.0;
 const MAX_ACTIVE_RESCUABLES: usize = 6;
+const RESCUE_PITY_WEIGHT_STEP: u32 = 1;
 
 #[derive(Component, Clone, Copy, Debug)]
 pub struct RescueProgress {
@@ -21,6 +22,7 @@ pub struct RescueProgress {
 struct RescueSpawnRuntime {
     timer: Timer,
     sequence: u32,
+    pity: RescueSpawnPity,
 }
 
 impl Default for RescueSpawnRuntime {
@@ -28,6 +30,50 @@ impl Default for RescueSpawnRuntime {
         Self {
             timer: Timer::from_seconds(RESCUE_RESPAWN_INTERVAL_SECS, TimerMode::Repeating),
             sequence: 0,
+            pity: RescueSpawnPity::default(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct RescueSpawnPity {
+    infantry_drought: u32,
+    archer_drought: u32,
+    priest_drought: u32,
+}
+
+impl RescueSpawnPity {
+    fn drought_for(self, kind: RecruitUnitKind) -> u32 {
+        match kind {
+            RecruitUnitKind::ChristianPeasantInfantry => self.infantry_drought,
+            RecruitUnitKind::ChristianPeasantArcher => self.archer_drought,
+            RecruitUnitKind::ChristianPeasantPriest => self.priest_drought,
+        }
+    }
+
+    fn set_drought_for(&mut self, kind: RecruitUnitKind, value: u32) {
+        match kind {
+            RecruitUnitKind::ChristianPeasantInfantry => self.infantry_drought = value,
+            RecruitUnitKind::ChristianPeasantArcher => self.archer_drought = value,
+            RecruitUnitKind::ChristianPeasantPriest => self.priest_drought = value,
+        }
+    }
+
+    fn note_spawn(&mut self, spawned: RecruitUnitKind, config: &RescueConfig) {
+        for kind in [
+            RecruitUnitKind::ChristianPeasantInfantry,
+            RecruitUnitKind::ChristianPeasantArcher,
+            RecruitUnitKind::ChristianPeasantPriest,
+        ] {
+            if !rescue_pool_contains_kind(config, kind) {
+                continue;
+            }
+            if kind == spawned {
+                self.set_drought_for(kind, 0);
+            } else {
+                let next = self.drought_for(kind).saturating_add(1);
+                self.set_drought_for(kind, next);
+            }
         }
     }
 }
@@ -66,7 +112,8 @@ fn spawn_rescuables_on_run_start(
 
     let count = data.rescue.spawn_count.max(1);
     for idx in 0..count {
-        let recruit_kind = recruit_kind_for_sequence(idx, &data.rescue);
+        let recruit_kind = recruit_kind_for_sequence(idx, &data.rescue, spawn_runtime.pity);
+        spawn_runtime.pity.note_spawn(recruit_kind, &data.rescue);
         spawn_rescuable(
             &mut commands,
             rescue_spawn_position(idx, bounds.as_deref().copied()),
@@ -98,7 +145,8 @@ fn spawn_rescuables_over_time(
     }
 
     let spawn_position = rescue_spawn_position(runtime.sequence, bounds.as_deref().copied());
-    let recruit_kind = recruit_kind_for_sequence(runtime.sequence, &data.rescue);
+    let recruit_kind = recruit_kind_for_sequence(runtime.sequence, &data.rescue, runtime.pity);
+    runtime.pity.note_spawn(recruit_kind, &data.rescue);
     spawn_rescuable(&mut commands, spawn_position, recruit_kind, &art);
     runtime.sequence = runtime.sequence.saturating_add(1);
 }
@@ -206,13 +254,47 @@ fn spawn_rescuable(
     ));
 }
 
-fn recruit_kind_for_sequence(sequence: u32, config: &RescueConfig) -> RecruitUnitKind {
-    let len = config.recruit_pool.len();
-    if len == 0 {
+fn recruit_kind_for_sequence(
+    sequence: u32,
+    config: &RescueConfig,
+    pity: RescueSpawnPity,
+) -> RecruitUnitKind {
+    if config.recruit_pool.is_empty() {
         return RecruitUnitKind::ChristianPeasantInfantry;
     }
-    let index = (sequence as usize) % len;
-    config.recruit_pool[index].as_recruit_unit_kind()
+    let mut total_weight = 0u64;
+    let mut weighted_entries = Vec::with_capacity(config.recruit_pool.len());
+    for entry in &config.recruit_pool {
+        let kind = entry.as_recruit_unit_kind();
+        let drought = pity.drought_for(kind) as u64;
+        let weight = 1u64 + drought * RESCUE_PITY_WEIGHT_STEP as u64;
+        total_weight = total_weight.saturating_add(weight);
+        weighted_entries.push((kind, weight));
+    }
+
+    if total_weight == 0 {
+        return config.recruit_pool[0].as_recruit_unit_kind();
+    }
+    let roll = (rescue_hash_seed(sequence, 0xA5A5_5A5A) as u64) % total_weight;
+    let mut cursor = 0u64;
+    for (kind, weight) in weighted_entries {
+        cursor = cursor.saturating_add(weight);
+        if roll < cursor {
+            return kind;
+        }
+    }
+    config
+        .recruit_pool
+        .last()
+        .map(|value| value.as_recruit_unit_kind())
+        .unwrap_or(RecruitUnitKind::ChristianPeasantInfantry)
+}
+
+fn rescue_pool_contains_kind(config: &RescueConfig, kind: RecruitUnitKind) -> bool {
+    config
+        .recruit_pool
+        .iter()
+        .any(|entry| entry.as_recruit_unit_kind() == kind)
 }
 
 fn rescue_spawn_position(sequence: u32, bounds: Option<MapBounds>) -> Vec2 {
@@ -304,9 +386,9 @@ mod tests {
     use crate::map::MapBounds;
     use crate::model::RecruitUnitKind;
     use crate::rescue::{
-        advance_rescue_progress, any_friendly_in_rescue_radius, effective_rescue_duration,
-        recruit_kind_for_sequence, rescue_max_active, rescue_respawn_interval_secs,
-        rescue_spawn_position,
+        RescueSpawnPity, advance_rescue_progress, any_friendly_in_rescue_radius,
+        effective_rescue_duration, recruit_kind_for_sequence, rescue_max_active,
+        rescue_respawn_interval_secs, rescue_spawn_position,
     };
     use crate::upgrades::ConditionalUpgradeEffects;
 
@@ -351,7 +433,7 @@ mod tests {
     }
 
     #[test]
-    fn rescue_spawn_sequence_uses_tier0_pool_entries() {
+    fn rescue_spawn_selector_returns_only_pool_entries() {
         let config = RescueConfig {
             spawn_count: 3,
             rescue_radius: 10.0,
@@ -362,18 +444,78 @@ mod tests {
                 RescueRecruitKindConfig::ChristianPeasantPriest,
             ],
         };
-        assert_eq!(
-            recruit_kind_for_sequence(0, &config),
-            RecruitUnitKind::ChristianPeasantInfantry
-        );
-        assert_eq!(
-            recruit_kind_for_sequence(1, &config),
-            RecruitUnitKind::ChristianPeasantArcher
-        );
-        assert_eq!(
-            recruit_kind_for_sequence(2, &config),
-            RecruitUnitKind::ChristianPeasantPriest
-        );
+        let pity = RescueSpawnPity::default();
+        for sequence in 0..64 {
+            let kind = recruit_kind_for_sequence(sequence, &config, pity);
+            assert!(
+                matches!(
+                    kind,
+                    RecruitUnitKind::ChristianPeasantInfantry
+                        | RecruitUnitKind::ChristianPeasantArcher
+                        | RecruitUnitKind::ChristianPeasantPriest
+                ),
+                "kind {kind:?} should be in rescue pool"
+            );
+        }
+    }
+
+    #[test]
+    fn pity_counters_reset_spawned_kind_and_increase_others() {
+        let config = RescueConfig {
+            spawn_count: 3,
+            rescue_radius: 10.0,
+            rescue_duration_secs: 1.0,
+            recruit_pool: vec![
+                RescueRecruitKindConfig::ChristianPeasantInfantry,
+                RescueRecruitKindConfig::ChristianPeasantArcher,
+                RescueRecruitKindConfig::ChristianPeasantPriest,
+            ],
+        };
+        let mut pity = RescueSpawnPity::default();
+        pity.note_spawn(RecruitUnitKind::ChristianPeasantInfantry, &config);
+        assert_eq!(pity.infantry_drought, 0);
+        assert_eq!(pity.archer_drought, 1);
+        assert_eq!(pity.priest_drought, 1);
+
+        pity.note_spawn(RecruitUnitKind::ChristianPeasantArcher, &config);
+        assert_eq!(pity.infantry_drought, 1);
+        assert_eq!(pity.archer_drought, 0);
+        assert_eq!(pity.priest_drought, 2);
+    }
+
+    #[test]
+    fn pity_weighting_increases_spawn_rate_for_starved_kind() {
+        let config = RescueConfig {
+            spawn_count: 3,
+            rescue_radius: 10.0,
+            rescue_duration_secs: 1.0,
+            recruit_pool: vec![
+                RescueRecruitKindConfig::ChristianPeasantInfantry,
+                RescueRecruitKindConfig::ChristianPeasantArcher,
+                RescueRecruitKindConfig::ChristianPeasantPriest,
+            ],
+        };
+        let baseline = RescueSpawnPity::default();
+        let starved_archer = RescueSpawnPity {
+            infantry_drought: 0,
+            archer_drought: 10,
+            priest_drought: 0,
+        };
+        let mut baseline_archer = 0u32;
+        let mut starved_archer_count = 0u32;
+        for sequence in 0..240 {
+            if recruit_kind_for_sequence(sequence, &config, baseline)
+                == RecruitUnitKind::ChristianPeasantArcher
+            {
+                baseline_archer = baseline_archer.saturating_add(1);
+            }
+            if recruit_kind_for_sequence(sequence, &config, starved_archer)
+                == RecruitUnitKind::ChristianPeasantArcher
+            {
+                starved_archer_count = starved_archer_count.saturating_add(1);
+            }
+        }
+        assert!(starved_archer_count > baseline_archer);
     }
 
     #[test]
