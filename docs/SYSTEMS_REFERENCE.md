@@ -298,6 +298,7 @@ Procedural continuation:
 - `encirclement_doctrine` (`kind=formation_breach`, `one_time`, grants inside-formation damage bonus)
 - `damage`
 - `attack_speed`
+- `fast_learner` (repeatable XP gain multiplier for all XP packs)
 - `armor`
 - `pickup_radius`
 - `aura_radius`
@@ -444,12 +445,12 @@ Friendly combined outgoing multiplier has lower clamp:
 
 ### Commander XP Requirement (`src/upgrades.rs`)
 - Bracketed exponential scaling:
-  - `base = 30`
+  - `base = 300`
   - bracket size: `10 levels`
-  - bracket multiplier: `5.5^bracket_index`
-  - intra-bracket multiplier: `1.18^within_bracket_index`
+  - bracket multiplier: `1.7^bracket_index`
+  - intra-bracket multiplier: `1.03^within_bracket_index`
 - Formula:
-  - `xp_required(level) = 30 * 5.5^bracket * 1.18^within_bracket`
+  - `xp_required(level) = 300 * 1.7^bracket * 1.03^within_bracket`
 
 ### Commander Allowed Max Level from Roster Budget (`src/squad.rs`)
 - Hard commander cap: `200`.
@@ -606,6 +607,7 @@ Friendly combined outgoing multiplier has lower clamp:
 - ambient and event XP pack spawning with wave/level XP scaling
 - pickup-delay-aware pack pickup detection (any friendly can trigger)
 - transit-to-commander homing consume flow
+- final XP award applies `GlobalBuffs.xp_gain_multiplier` at consume time (affects ambient + enemy-drop packs)
 - wave magnet pickup spawn/despawn cadence (every 3 waves)
 - magnet pickup force-homes all active XP packs
 
@@ -707,6 +709,7 @@ Friendly combined outgoing multiplier has lower clamp:
 - 3-option upgrade draft cards (keyboard `1..3` and mouse click selection)
 - weighted random min/max upgrade value rolls
 - additive stacked upgrade effects
+- repeatable `fast_learner` upgrade adds to `GlobalBuffs.xp_gain_multiplier`
 - repeatable crit upgrades (`crit_chance`, `crit_damage`) wired into `GlobalBuffs`
 - passive commander level scaling
 - level-up full-heal sync for friendlies

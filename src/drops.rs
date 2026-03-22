@@ -327,6 +327,7 @@ fn pickup_exp_packs(
 fn transit_drops_to_commander(
     mut commands: Commands,
     time: Res<Time>,
+    buffs: Option<Res<GlobalBuffs>>,
     commanders: Query<(&Transform, &MoveSpeed), With<CommanderUnit>>,
     mut packs: Query<
         (Entity, &ExpPack, &mut Transform),
@@ -348,7 +349,8 @@ fn transit_drops_to_commander(
         transform.translation.y = next.y;
 
         if reached_target(next, target, DROP_CONSUME_RADIUS) {
-            xp_events.send(GainXpEvent(pack.xp_value));
+            let xp_gain = apply_xp_gain_multiplier(pack.xp_value, buffs.as_deref());
+            xp_events.send(GainXpEvent(xp_gain));
             commands.entity(entity).despawn_recursive();
         }
     }
@@ -430,6 +432,14 @@ pub fn scaled_pack_xp(base_xp: f32, wave_number: u32, commander_level: u32) -> f
     (base_xp * wave_scale * level_scale).max(1.0)
 }
 
+pub fn apply_xp_gain_multiplier(base_xp: f32, buffs: Option<&GlobalBuffs>) -> f32 {
+    let multiplier = buffs
+        .map(|value| value.xp_gain_multiplier)
+        .unwrap_or(1.0)
+        .max(0.0);
+    (base_xp * multiplier).max(0.0)
+}
+
 fn drop_spawn_position(sequence: u32, bounds: Option<MapBounds>, center: Vec2) -> Vec2 {
     let max_radius = bounds
         .map(|b| b.half_width.min(b.half_height) * 0.48)
@@ -489,11 +499,13 @@ mod tests {
     use bevy::prelude::Vec2;
 
     use crate::drops::{
-        any_friendly_in_pickup_radius, drop_spawn_position, force_home_pack_state,
-        homing_speed_from_commander_base, magnet_wave_lifecycle, reached_target, scaled_pack_xp,
-        should_spawn_magnet_for_wave, step_towards_target, tick_pickup_delay,
+        any_friendly_in_pickup_radius, apply_xp_gain_multiplier, drop_spawn_position,
+        force_home_pack_state, homing_speed_from_commander_base, magnet_wave_lifecycle,
+        reached_target, scaled_pack_xp, should_spawn_magnet_for_wave, step_towards_target,
+        tick_pickup_delay,
     };
     use crate::map::MapBounds;
+    use crate::model::GlobalBuffs;
 
     #[test]
     fn drop_spawn_points_stay_inside_expected_radius() {
@@ -534,6 +546,20 @@ mod tests {
         assert!(later_level > early);
         assert!(both > later_wave);
         assert!(both > later_level);
+    }
+
+    #[test]
+    fn xp_gain_multiplier_scales_consumed_pack_xp() {
+        let base = 12.0;
+        let default_gain = apply_xp_gain_multiplier(base, None);
+        assert!((default_gain - 12.0).abs() < 0.001);
+
+        let buffs = GlobalBuffs {
+            xp_gain_multiplier: 1.35,
+            ..GlobalBuffs::default()
+        };
+        let boosted = apply_xp_gain_multiplier(base, Some(&buffs));
+        assert!((boosted - 16.2).abs() < 0.001);
     }
 
     #[test]

@@ -142,6 +142,7 @@ pub struct SelectUpgradeEvent {
 pub enum UpgradeCardIcon {
     Damage,
     AttackSpeed,
+    FastLearner,
     CritChance,
     CritDamage,
     Armor,
@@ -380,10 +381,10 @@ pub fn xp_required_for_level(level: u32) -> f32 {
         return f32::INFINITY;
     }
 
-    const BASE_REQUIREMENT: f32 = 30.0;
+    const BASE_REQUIREMENT: f32 = 300.0;
     const BRACKET_SIZE: u32 = 10;
-    const BRACKET_GROWTH: f32 = 6.0;
-    const INTRA_BRACKET_GROWTH: f32 = 1.2;
+    const BRACKET_GROWTH: f32 = 1.7;
+    const INTRA_BRACKET_GROWTH: f32 = 1.03;
 
     let safe_level = level.max(1);
     let index = safe_level - 1;
@@ -516,6 +517,10 @@ pub fn skill_book_entry_cumulative_description(entry: &SkillBookEntry) -> String
         "attack_speed" => format!(
             "Total army attack speed bonus: +{:.0}%.",
             (entry.total_value.max(0.0) * 100.0)
+        ),
+        "fast_learner" => format!(
+            "Total experience gain bonus from XP packs: +{:.0}%.",
+            entry.total_value.max(0.0) * 100.0
         ),
         "crit_chance" => format!(
             "Total critical hit chance: +{:.1}%.",
@@ -693,6 +698,7 @@ pub fn upgrade_card_icon(upgrade: &UpgradeConfig) -> UpgradeCardIcon {
     match upgrade.kind.as_str() {
         "damage" => UpgradeCardIcon::Damage,
         "attack_speed" => UpgradeCardIcon::AttackSpeed,
+        "fast_learner" => UpgradeCardIcon::FastLearner,
         "crit_chance" => UpgradeCardIcon::CritChance,
         "crit_damage" => UpgradeCardIcon::CritDamage,
         "armor" => UpgradeCardIcon::Armor,
@@ -717,6 +723,7 @@ pub fn upgrade_display_title(upgrade: &UpgradeConfig) -> &'static str {
     match upgrade.kind.as_str() {
         "damage" => "Sharpened Steel",
         "attack_speed" => "Rapid Drill",
+        "fast_learner" => "Fast Learner",
         "crit_chance" => "Killer Instinct",
         "crit_damage" => "Deadly Precision",
         "armor" => "Hardened Armor",
@@ -743,6 +750,10 @@ pub fn upgrade_display_description(upgrade: &UpgradeConfig) -> String {
         "damage" => format!("Increase army damage by +{:.1}%.", upgrade.value),
         "attack_speed" => format!(
             "Increase army attack speed by +{:.0}%.",
+            upgrade.value * 100.0
+        ),
+        "fast_learner" => format!(
+            "Increase XP gained from all XP packs by +{:.0}%.",
             upgrade.value * 100.0
         ),
         "crit_chance" => format!(
@@ -796,6 +807,9 @@ fn apply_upgrade(
         }
         "attack_speed" => {
             buffs.attack_speed_multiplier += upgrade.value;
+        }
+        "fast_learner" => {
+            buffs.xp_gain_multiplier += upgrade.value;
         }
         "crit_chance" => {
             buffs.crit_chance_bonus = (buffs.crit_chance_bonus + upgrade.value).clamp(0.0, 0.95);
@@ -1257,8 +1271,34 @@ mod tests {
     }
 
     #[test]
+    fn fast_learner_upgrade_stacks_xp_gain_multiplier() {
+        let mut buffs = GlobalBuffs::default();
+        let mut conditional = super::ConditionalUpgradeOwnership::default();
+        let mut skillbar = FormationSkillBar::default();
+        let upgrade = UpgradeConfig {
+            id: "fast_learner_up".to_string(),
+            kind: "fast_learner".to_string(),
+            value: 0.08,
+            min_value: Some(0.04),
+            max_value: Some(0.16),
+            value_step: Some(0.02),
+            weight_exponent: Some(2.0),
+            one_time: false,
+            adds_to_skillbar: false,
+            formation_id: None,
+            requirement_type: None,
+            requirement_min_tier0_share: None,
+            requirement_active_formation: None,
+            requirement_map_tag: None,
+        };
+        super::apply_upgrade(&upgrade, &mut buffs, &mut conditional, &mut skillbar);
+        super::apply_upgrade(&upgrade, &mut buffs, &mut conditional, &mut skillbar);
+        assert!((buffs.xp_gain_multiplier - 1.16).abs() < 0.001);
+    }
+
+    #[test]
     fn xp_requirements_increase_each_level() {
-        assert!((xp_required_for_level(1) - 30.0).abs() < 0.001);
+        assert!((xp_required_for_level(1) - 300.0).abs() < 0.001);
         assert!(xp_required_for_level(2) > xp_required_for_level(1));
         assert!(xp_required_for_level(5) > xp_required_for_level(4));
         assert!(xp_required_for_level(11) > xp_required_for_level(10));
@@ -1432,6 +1472,15 @@ mod tests {
             "Deadly Precision"
         );
         assert!(upgrade_display_description(&crit_damage_upgrade).contains("critical hit damage"));
+
+        let mut fast_learner_upgrade = upgrade("fast_learner", "fast_learner_up");
+        fast_learner_upgrade.value = 0.08;
+        assert_eq!(
+            upgrade_card_icon(&fast_learner_upgrade),
+            UpgradeCardIcon::FastLearner
+        );
+        assert_eq!(upgrade_display_title(&fast_learner_upgrade), "Fast Learner");
+        assert!(upgrade_display_description(&fast_learner_upgrade).contains("XP"));
 
         let formation_upgrade = UpgradeConfig {
             id: "unlock_diamond".to_string(),

@@ -1687,6 +1687,7 @@ fn upgrade_icon_for(icon_kind: UpgradeCardIcon, art: &crate::visuals::ArtAssets)
     match icon_kind {
         UpgradeCardIcon::Damage => art.upgrade_damage_icon.clone(),
         UpgradeCardIcon::AttackSpeed => art.upgrade_attack_speed_icon.clone(),
+        UpgradeCardIcon::FastLearner => art.upgrade_pickup_radius_icon.clone(),
         UpgradeCardIcon::CritChance => art.upgrade_crit_chance_icon.clone(),
         UpgradeCardIcon::CritDamage => art.upgrade_crit_damage_icon.clone(),
         UpgradeCardIcon::Armor => art.upgrade_armor_icon.clone(),
@@ -2264,6 +2265,11 @@ fn build_stats_panel_data(
                 format_percent_bonus(passive_level_percent + attack_speed_upgrade_percent),
             ),
             stats_bonus_row(
+                "XP Gain",
+                (buffs.xp_gain_multiplier - 1.0) * 100.0,
+                format_percent_bonus((buffs.xp_gain_multiplier - 1.0) * 100.0),
+            ),
+            stats_bonus_row(
                 "Crit Chance",
                 crit_chance_percent,
                 format_percent_bonus(crit_chance_percent),
@@ -2630,7 +2636,7 @@ fn formation_skill_description(formation: ActiveFormation, data: &GameData) -> S
 fn skill_book_category(kind: &str) -> &'static str {
     match kind {
         "authority_aura" | "hospitalier_aura" => "Auras",
-        "pickup_radius" | "aura_radius" | "move_speed" | "mob_mercy" => "Utility",
+        "pickup_radius" | "aura_radius" | "move_speed" | "mob_mercy" | "fast_learner" => "Utility",
         _ => "Combat",
     }
 }
@@ -6057,6 +6063,7 @@ mod tests {
             damage_multiplier: 1.15,
             armor_bonus: 3.0,
             attack_speed_multiplier: 1.20,
+            xp_gain_multiplier: 1.10,
             crit_chance_bonus: 0.08,
             crit_damage_multiplier: 1.75,
             pickup_radius_bonus: 12.0,
