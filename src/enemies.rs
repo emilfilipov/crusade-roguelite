@@ -55,7 +55,7 @@ pub const MAX_WAVES: u32 = 100;
 const STOP_FACTOR: f32 = 0.82;
 const RESUME_FACTOR: f32 = 0.98;
 const ENEMY_INSIDE_FORMATION_PADDING_SLOTS: f32 = 0.35;
-const ENEMY_FORMATION_REPEL_MARGIN_SLOTS: f32 = 0.65;
+const ENEMY_FORMATION_REPEL_MARGIN_SLOTS: f32 = 0.12;
 const WAVE_UNITS_MULTIPLIER: f32 = 2.0;
 const MAX_ENEMIES_PER_WAVE: f32 = 1000.0;
 const POST_SCRIPTED_WAVE_COUNT_GROWTH: f32 = 1.18;
@@ -521,9 +521,10 @@ pub fn overflow_indices_by_distance(distances_sq: &[f32], cap: usize) -> Vec<usi
             .unwrap_or(std::cmp::Ordering::Equal)
             .then_with(|| a.0.cmp(&b.0))
     });
+    let overflow_count = sorted.len().saturating_sub(cap);
     sorted
         .into_iter()
-        .skip(cap)
+        .take(overflow_count)
         .map(|(index, _)| index)
         .collect()
 }
@@ -825,12 +826,12 @@ mod tests {
     }
 
     #[test]
-    fn overflow_selection_respects_cap_and_distance_order() {
+    fn overflow_selection_keeps_outermost_inside_formation_cap() {
         let overflow = overflow_indices_by_distance(&[16.0, 4.0, 9.0, 1.0, 25.0], 2);
         assert_eq!(overflow.len(), 3);
-        assert!(overflow.contains(&0));
+        assert!(overflow.contains(&1));
         assert!(overflow.contains(&2));
-        assert!(overflow.contains(&4));
+        assert!(overflow.contains(&3));
     }
 
     #[test]
