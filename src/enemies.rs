@@ -55,7 +55,7 @@ pub const MAX_WAVES: u32 = 100;
 const STOP_FACTOR: f32 = 0.82;
 const RESUME_FACTOR: f32 = 0.98;
 const ENEMY_INSIDE_FORMATION_PADDING_SLOTS: f32 = 0.35;
-const ENEMY_FORMATION_OVERFLOW_REPEL_SPEED: f32 = 280.0;
+const ENEMY_FORMATION_REPEL_MARGIN_SLOTS: f32 = 0.65;
 const WAVE_UNITS_MULTIPLIER: f32 = 2.0;
 const MAX_ENEMIES_PER_WAVE: f32 = 1000.0;
 const POST_SCRIPTED_WAVE_COUNT_GROWTH: f32 = 1.18;
@@ -79,11 +79,14 @@ impl Plugin for EnemyPlugin {
                     spawn_waves,
                     spawn_pending_enemy_batches,
                     enemy_chase_targets,
-                    repel_enemy_overflow_from_formation,
                     update_bandit_visual_states,
                 )
                     .chain()
                     .run_if(in_state(GameState::InRun)),
+            )
+            .add_systems(
+                Last,
+                repel_enemy_overflow_from_formation.run_if(in_state(GameState::InRun)),
             );
     }
 }
@@ -437,17 +440,12 @@ struct InsideEnemySample {
 
 #[allow(clippy::type_complexity)]
 fn repel_enemy_overflow_from_formation(
-    time: Res<Time>,
     data: Res<GameData>,
     active_formation: Res<ActiveFormation>,
     commanders: Query<&Transform, With<CommanderUnit>>,
     recruits: Query<Entity, (With<FriendlyUnit>, Without<CommanderUnit>)>,
     mut enemies: Query<(Entity, &mut Transform), (With<EnemyUnit>, Without<CommanderUnit>)>,
 ) {
-    let dt = time.delta_seconds();
-    if dt <= 0.0 {
-        return;
-    }
     let Ok(commander_transform) = commanders.get_single() else {
         return;
     };
@@ -490,10 +488,9 @@ fn repel_enemy_overflow_from_formation(
         .map(|sample| sample.distance_sq)
         .collect();
     let overflow_indices = overflow_indices_by_distance(&distances, inside_cap);
-    let max_step = ENEMY_FORMATION_OVERFLOW_REPEL_SPEED * dt;
     for overflow_index in overflow_indices {
         let sample = inside_samples[overflow_index];
-        let target = formation_perimeter_target(
+        let target = formation_overflow_repel_target(
             *active_formation,
             commander_position,
             sample.position,
@@ -501,15 +498,8 @@ fn repel_enemy_overflow_from_formation(
             slot_spacing,
         );
         if let Ok((_, mut transform)) = enemies.get_mut(sample.entity) {
-            let current = transform.translation.truncate();
-            let to_target = target - current;
-            let distance = to_target.length();
-            if distance <= f32::EPSILON {
-                continue;
-            }
-            let step = to_target.normalize() * distance.min(max_step);
-            transform.translation.x += step.x;
-            transform.translation.y += step.y;
+            transform.translation.x = target.x;
+            transform.translation.y = target.y;
         }
     }
 }
@@ -552,6 +542,29 @@ pub fn formation_perimeter_target(
         recruit_count,
         slot_spacing,
         ENEMY_INSIDE_FORMATION_PADDING_SLOTS,
+    );
+    let delta = enemy_position - commander_position;
+    let local = match active_formation {
+        ActiveFormation::Square => project_to_square_perimeter(delta, half_extent),
+        ActiveFormation::Diamond => project_to_diamond_perimeter(delta, half_extent),
+    };
+    commander_position + local
+}
+
+fn formation_overflow_repel_target(
+    active_formation: ActiveFormation,
+    commander_position: Vec2,
+    enemy_position: Vec2,
+    recruit_count: usize,
+    slot_spacing: f32,
+) -> Vec2 {
+    if recruit_count == 0 || slot_spacing <= 0.0 {
+        return enemy_position;
+    }
+    let half_extent = formation_half_extent(
+        recruit_count,
+        slot_spacing,
+        ENEMY_INSIDE_FORMATION_PADDING_SLOTS + ENEMY_FORMATION_REPEL_MARGIN_SLOTS,
     );
     let delta = enemy_position - commander_position;
     let local = match active_formation {
@@ -715,11 +728,12 @@ mod tests {
     use crate::enemies::{
         BanditVisualState, batch_interval_secs, batch_size_for_wave, chase_step_distance,
         chase_target_positions, choose_nearest, decide_bandit_visual_state, enemy_move_speed,
-        formation_perimeter_target, max_inside_enemy_count_for_formation,
-        overflow_indices_by_distance, random_spawn_position, should_move_towards_target,
-        units_per_second_for_wave, wave_duration_secs, wave_stat_multiplier,
+        formation_overflow_repel_target, formation_perimeter_target,
+        max_inside_enemy_count_for_formation, overflow_indices_by_distance, random_spawn_position,
+        should_move_towards_target, units_per_second_for_wave, wave_duration_secs,
+        wave_stat_multiplier,
     };
-    use crate::formation::ActiveFormation;
+    use crate::formation::{ActiveFormation, formation_contains_position};
     use crate::map::MapBounds;
 
     #[test]
@@ -844,6 +858,46 @@ mod tests {
         let diamond_radius = ((16.0f32 + 1.0).sqrt().ceil() - 1.0) * 0.5 + 0.35;
         let expected = diamond_radius * 30.0 * std::f32::consts::SQRT_2;
         assert!(((target.x.abs() + target.y.abs()) - expected).abs() < 0.2);
+    }
+
+    #[test]
+    fn overflow_repel_target_is_outside_formation_footprint() {
+        let commander = Vec2::ZERO;
+        let recruit_count = 40;
+        let spacing = 30.0;
+        let sample = Vec2::new(10.0, 10.0);
+
+        let square_target = formation_overflow_repel_target(
+            ActiveFormation::Square,
+            commander,
+            sample,
+            recruit_count,
+            spacing,
+        );
+        assert!(!formation_contains_position(
+            ActiveFormation::Square,
+            commander,
+            square_target,
+            recruit_count,
+            spacing,
+            0.35,
+        ));
+
+        let diamond_target = formation_overflow_repel_target(
+            ActiveFormation::Diamond,
+            commander,
+            sample,
+            recruit_count,
+            spacing,
+        );
+        assert!(!formation_contains_position(
+            ActiveFormation::Diamond,
+            commander,
+            diamond_target,
+            recruit_count,
+            spacing,
+            0.35,
+        ));
     }
 
     #[test]
