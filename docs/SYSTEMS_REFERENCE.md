@@ -477,13 +477,11 @@ Friendly combined outgoing multiplier has lower clamp:
 - Projectile despawns on hit or when max travel distance is consumed.
 
 ### Commander XP Requirement (`src/upgrades.rs`)
-- Bracketed exponential scaling:
+- Uniform per-level exponential scaling:
   - `base = 300`
-  - bracket size: `10 levels`
-  - bracket multiplier: `1.7^bracket_index`
-  - intra-bracket multiplier: `1.03^within_bracket_index`
+  - per-level multiplier: `1.054`
 - Formula:
-  - `xp_required(level) = 300 * 1.7^bracket * 1.03^within_bracket`
+  - `xp_required(level) = 300 * 1.054^(level - 1)`
 
 ### Commander Allowed Max Level from Roster Budget (`src/squad.rs`)
 - Hard commander cap: `200`.
