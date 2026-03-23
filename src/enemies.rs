@@ -1,7 +1,8 @@
 use bevy::prelude::*;
+use std::collections::HashMap;
 
 use crate::combat::{RangedAttackCooldown, RangedAttackProfile};
-use crate::data::{GameData, WavesConfigFile};
+use crate::data::{EnemyStatsConfig, GameData, WavesConfigFile};
 use crate::formation::{ActiveFormation, active_formation_config, formation_contains_position};
 use crate::map::{MapBounds, playable_bounds};
 use crate::model::{
@@ -21,6 +22,7 @@ pub struct WaveRuntime {
     pub finished_spawning: bool,
     pub victory_announced: bool,
     pub pending_batches: Vec<PendingEnemyBatch>,
+    role_mix: HashMap<u32, EnemyRoleCounts>,
     pub spawn_sequence: u32,
 }
 
@@ -30,6 +32,46 @@ pub struct PendingEnemyBatch {
     pub wave_number: u32,
     pub stat_scale: f32,
     pub next_spawn_time: f32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum EnemySpawnRole {
+    Melee,
+    Ranged,
+    Support,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct EnemyRoleCounts {
+    total: u32,
+    melee: u32,
+    ranged: u32,
+    support: u32,
+}
+
+impl EnemyRoleCounts {
+    fn count_for(self, role: EnemySpawnRole) -> u32 {
+        match role {
+            EnemySpawnRole::Melee => self.melee,
+            EnemySpawnRole::Ranged => self.ranged,
+            EnemySpawnRole::Support => self.support,
+        }
+    }
+
+    fn register(&mut self, role: EnemySpawnRole) {
+        self.total = self.total.saturating_add(1);
+        match role {
+            EnemySpawnRole::Melee => {
+                self.melee = self.melee.saturating_add(1);
+            }
+            EnemySpawnRole::Ranged => {
+                self.ranged = self.ranged.saturating_add(1);
+            }
+            EnemySpawnRole::Support => {
+                self.support = self.support.saturating_add(1);
+            }
+        }
+    }
 }
 
 #[derive(Component, Clone, Copy, Debug, Eq, PartialEq)]
@@ -174,8 +216,10 @@ fn spawn_pending_enemy_batches(
         .unwrap_or(Vec2::ZERO);
     let current_time = wave_runtime.elapsed;
     let mut spawn_sequence = wave_runtime.spawn_sequence;
-    let mut remaining = Vec::with_capacity(wave_runtime.pending_batches.len());
-    for mut batch in wave_runtime.pending_batches.drain(..) {
+    let mut pending_batches = std::mem::take(&mut wave_runtime.pending_batches);
+    let mut role_mix = std::mem::take(&mut wave_runtime.role_mix);
+    let mut remaining = Vec::with_capacity(pending_batches.len());
+    for mut batch in pending_batches.drain(..) {
         if current_time + f32::EPSILON < batch.next_spawn_time {
             remaining.push(batch);
             continue;
@@ -193,6 +237,7 @@ fn spawn_pending_enemy_batches(
             batch.wave_number,
             batch.stat_scale,
             &mut spawn_sequence,
+            &mut role_mix,
         );
         batch.remaining = batch.remaining.saturating_sub(spawn_now);
         if batch.remaining > 0 {
@@ -202,6 +247,7 @@ fn spawn_pending_enemy_batches(
     }
     wave_runtime.spawn_sequence = spawn_sequence;
     wave_runtime.pending_batches = remaining;
+    wave_runtime.role_mix = role_mix;
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -216,16 +262,53 @@ fn spawn_enemy_batch(
     wave_number: u32,
     stat_scale: f32,
     spawn_sequence: &mut u32,
+    role_mix: &mut HashMap<u32, EnemyRoleCounts>,
 ) {
     let enemy_pool = data.enemies.opposing_enemy_pool(player_faction);
+    let enemy_pool_roles: Vec<(UnitKind, EnemySpawnRole)> = enemy_pool
+        .iter()
+        .copied()
+        .filter_map(|kind| {
+            let cfg = data.enemies.enemy_profile_for_kind(kind)?;
+            Some((kind, enemy_spawn_role(kind, cfg)))
+        })
+        .collect();
+    if enemy_pool_roles.is_empty() {
+        return;
+    }
+    let has_melee = enemy_pool_roles
+        .iter()
+        .any(|(_, role)| *role == EnemySpawnRole::Melee);
+    let has_ranged = enemy_pool_roles
+        .iter()
+        .any(|(_, role)| *role == EnemySpawnRole::Ranged);
+    let has_support = enemy_pool_roles
+        .iter()
+        .any(|(_, role)| *role == EnemySpawnRole::Support);
+
     for _ in 0..count {
         let seq = *spawn_sequence;
         *spawn_sequence = spawn_sequence.saturating_add(1);
-        let pool_index = (hash_seed(wave_number, seq, 0xC55A_A5AA) as usize) % enemy_pool.len();
-        let enemy_kind = enemy_pool[pool_index];
+        let counters = role_mix.get(&wave_number).copied().unwrap_or_default();
+        let spawn_role = pick_next_spawn_role(
+            counters,
+            has_melee,
+            has_ranged,
+            has_support,
+            seq ^ 0x5F9D_A5C7,
+        );
+        let enemy_kind = choose_enemy_kind_for_role(
+            &enemy_pool_roles,
+            spawn_role,
+            hash_seed(wave_number, seq, 0xC55A_A5AA),
+        );
         let Some(cfg) = data.enemies.enemy_profile_for_kind(enemy_kind) else {
             continue;
         };
+        role_mix
+            .entry(wave_number)
+            .or_default()
+            .register(spawn_role);
         let enemy_faction = enemy_kind.faction().unwrap_or(player_faction.opposing());
         let faction_mods = data.factions.for_faction(enemy_faction);
         let hp = cfg.max_hp * stat_scale * faction_mods.enemy_health_multiplier;
@@ -305,6 +388,118 @@ fn spawn_enemy_batch(
             entity.insert(PriestSupportCaster { cooldown: 20.0 });
         }
     }
+}
+
+fn enemy_spawn_role(kind: UnitKind, cfg: &EnemyStatsConfig) -> EnemySpawnRole {
+    if kind.is_priest() || cfg.damage <= 0.0 {
+        EnemySpawnRole::Support
+    } else if cfg.ranged_attack_damage > 0.0 {
+        EnemySpawnRole::Ranged
+    } else {
+        EnemySpawnRole::Melee
+    }
+}
+
+fn choose_enemy_kind_for_role(
+    enemy_pool_roles: &[(UnitKind, EnemySpawnRole)],
+    preferred_role: EnemySpawnRole,
+    seed: u32,
+) -> UnitKind {
+    if enemy_pool_roles.is_empty() {
+        return UnitKind::ChristianPeasantInfantry;
+    }
+    let matching_count = enemy_pool_roles
+        .iter()
+        .filter(|(_, role)| *role == preferred_role)
+        .count();
+    if matching_count == 0 {
+        return enemy_pool_roles[(seed as usize) % enemy_pool_roles.len()].0;
+    }
+    let target_match_index = (seed as usize) % matching_count;
+    let mut seen = 0usize;
+    for (kind, role) in enemy_pool_roles {
+        if *role != preferred_role {
+            continue;
+        }
+        if seen == target_match_index {
+            return *kind;
+        }
+        seen = seen.saturating_add(1);
+    }
+    enemy_pool_roles[0].0
+}
+
+fn pick_next_spawn_role(
+    counts: EnemyRoleCounts,
+    has_melee: bool,
+    has_ranged: bool,
+    has_support: bool,
+    tie_seed: u32,
+) -> EnemySpawnRole {
+    let next_total = counts.total.saturating_add(1);
+    let support_cap = next_total / 4;
+    let support_allowed = has_support && counts.support < support_cap;
+
+    let mut candidates = [EnemySpawnRole::Melee; 3];
+    let mut candidate_count = 0usize;
+    if has_melee {
+        candidates[candidate_count] = EnemySpawnRole::Melee;
+        candidate_count += 1;
+    }
+    if has_ranged {
+        candidates[candidate_count] = EnemySpawnRole::Ranged;
+        candidate_count += 1;
+    }
+    if support_allowed {
+        candidates[candidate_count] = EnemySpawnRole::Support;
+        candidate_count += 1;
+    }
+
+    if candidate_count == 0 {
+        if has_melee {
+            candidates[candidate_count] = EnemySpawnRole::Melee;
+            candidate_count += 1;
+        }
+        if has_ranged {
+            candidates[candidate_count] = EnemySpawnRole::Ranged;
+            candidate_count += 1;
+        }
+        if has_support {
+            candidates[candidate_count] = EnemySpawnRole::Support;
+            candidate_count += 1;
+        }
+    }
+    if candidate_count == 0 {
+        return EnemySpawnRole::Melee;
+    }
+
+    let mut best_deficit = f32::MIN;
+    let mut best = [EnemySpawnRole::Melee; 3];
+    let mut best_count = 0usize;
+    for role in candidates.iter().copied().take(candidate_count) {
+        let deficit = target_role_count(role, next_total) - counts.count_for(role) as f32;
+        if deficit > best_deficit + f32::EPSILON {
+            best_deficit = deficit;
+            best[0] = role;
+            best_count = 1;
+            continue;
+        }
+        if (deficit - best_deficit).abs() <= f32::EPSILON {
+            best[best_count] = role;
+            best_count += 1;
+        }
+    }
+
+    best[(tie_seed as usize) % best_count]
+}
+
+fn target_role_count(role: EnemySpawnRole, next_total: u32) -> f32 {
+    let ratio = match role {
+        EnemySpawnRole::Melee => 0.5,
+        EnemySpawnRole::Ranged => 0.25,
+        EnemySpawnRole::Support => 0.25,
+    };
+    next_total as f32 * ratio
 }
 
 fn scale_enemy_attack_cooldown(base_cooldown: f32, speed_multiplier: f32) -> f32 {
@@ -807,12 +1002,13 @@ mod tests {
     use crate::combat::RangedAttackProfile;
     use crate::data::{WaveConfig, WavesConfigFile};
     use crate::enemies::{
-        BanditVisualState, batch_interval_secs, batch_size_for_wave, chase_step_distance,
-        chase_target_positions, choose_nearest, decide_bandit_visual_state, enemy_engagement_range,
-        enemy_move_speed, formation_overflow_repel_target, formation_perimeter_target,
-        max_inside_enemy_count_for_formation, overflow_indices_by_distance, random_spawn_position,
-        should_move_towards_target, units_per_second_for_wave, wave_duration_secs,
-        wave_stat_multiplier,
+        BanditVisualState, EnemyRoleCounts, EnemySpawnRole, batch_interval_secs,
+        batch_size_for_wave, chase_step_distance, chase_target_positions, choose_nearest,
+        decide_bandit_visual_state, enemy_engagement_range, enemy_move_speed,
+        formation_overflow_repel_target, formation_perimeter_target,
+        max_inside_enemy_count_for_formation, overflow_indices_by_distance, pick_next_spawn_role,
+        random_spawn_position, should_move_towards_target, units_per_second_for_wave,
+        wave_duration_secs, wave_stat_multiplier,
     };
     use crate::formation::{ActiveFormation, formation_contains_position};
     use crate::map::MapBounds;
@@ -894,6 +1090,34 @@ mod tests {
         };
         let rate = units_per_second_for_wave(&config, 1);
         assert!((rate - (1000.0 / 30.0)).abs() < 0.001);
+    }
+
+    #[test]
+    fn wave_role_picker_enforces_support_cap_and_target_mix() {
+        let mut counts = EnemyRoleCounts::default();
+        for seed in 0..40 {
+            let role = pick_next_spawn_role(counts, true, true, true, seed);
+            counts.register(role);
+            assert!(counts.support <= counts.total / 4);
+        }
+        assert_eq!(counts.total, 40);
+        assert_eq!(counts.melee, 20);
+        assert_eq!(counts.ranged, 10);
+        assert_eq!(counts.support, 10);
+    }
+
+    #[test]
+    fn wave_role_picker_falls_back_when_support_is_only_available_role() {
+        let mut counts = EnemyRoleCounts::default();
+        for seed in 0..7 {
+            let role = pick_next_spawn_role(counts, false, false, true, seed);
+            assert_eq!(role, EnemySpawnRole::Support);
+            counts.register(role);
+        }
+        assert_eq!(counts.total, 7);
+        assert_eq!(counts.support, 7);
+        assert_eq!(counts.melee, 0);
+        assert_eq!(counts.ranged, 0);
     }
 
     #[test]
