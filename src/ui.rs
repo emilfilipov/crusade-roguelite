@@ -27,10 +27,11 @@ use crate::squad::{
     unit_kind_label, unlock_wave_for_tier,
 };
 use crate::upgrades::{
-    ConditionalUpgradeEffects, ConditionalUpgradeStatus, Progression, ProgressionLockFeedback,
-    SelectUpgradeEvent, SkillBookLog, UpgradeCardIcon, UpgradeDraft, UpgradeValueTier,
-    commander_level_hp_bonus, skill_book_entry_cumulative_description, upgrade_card_icon,
-    upgrade_display_description, upgrade_display_title, upgrade_value_tier,
+    ConditionalUpgradeEffects, ConditionalUpgradeStatus, OneTimeUpgradeTracker, Progression,
+    ProgressionLockFeedback, SelectUpgradeEvent, SkillBookLog, UpgradeCardIcon, UpgradeDraft,
+    UpgradeValueTier, commander_level_hp_bonus, max_unique_upgrades,
+    skill_book_entry_cumulative_description, upgrade_card_icon, upgrade_display_description,
+    upgrade_display_title, upgrade_value_tier,
 };
 use crate::visuals::ArtAssets;
 
@@ -306,6 +307,9 @@ enum UnitUpgradeQuantity {
 struct StatsPanelData {
     rows: Vec<StatsPanelRow>,
     active_buffs: Vec<String>,
+    unique_upgrades: Vec<String>,
+    unique_slots_used: usize,
+    unique_slots_max: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -399,6 +403,7 @@ struct RunModalOverlayDeps<'w, 's> {
     unit_upgrade_state: Res<'w, UnitUpgradeUiState>,
     buffs: Res<'w, crate::model::GlobalBuffs>,
     skill_book: Res<'w, SkillBookLog>,
+    one_time_tracker: Res<'w, OneTimeUpgradeTracker>,
     conditional_status: Res<'w, ConditionalUpgradeStatus>,
     skillbar: Res<'w, FormationSkillBar>,
     art: Res<'w, crate::visuals::ArtAssets>,
@@ -1978,6 +1983,7 @@ fn sync_run_modal_overlay(
                 &deps.data,
                 &deps.progression,
                 &deps.buffs,
+                &deps.one_time_tracker,
                 *deps.active_formation,
                 &deps.formation_modifiers,
                 &deps.conditional_status,
@@ -2226,10 +2232,12 @@ fn format_raw_and_percent_bonus(raw: f32, percent: f32) -> String {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_stats_panel_data(
-    _data: &GameData,
+    data: &GameData,
     progression: &Progression,
     buffs: &crate::model::GlobalBuffs,
+    one_time_tracker: &OneTimeUpgradeTracker,
     active_formation: ActiveFormation,
     formation_modifiers: &FormationModifiers,
     conditional_status: &ConditionalUpgradeStatus,
@@ -2278,6 +2286,23 @@ fn build_stats_panel_data(
     if max_priest_blessing_secs > 0.0 {
         active_buffs.push(format!("Priest Blessing ({max_priest_blessing_secs:.1}s)"));
     }
+
+    let mut unique_upgrades: Vec<String> = one_time_tracker
+        .acquired_ids
+        .iter()
+        .map(|id| {
+            data.upgrades
+                .upgrades
+                .iter()
+                .find(|upgrade| upgrade.id == *id)
+                .map(upgrade_display_title)
+                .unwrap_or(id.as_str())
+                .to_string()
+        })
+        .collect();
+    unique_upgrades.sort_unstable();
+    let unique_slots_max = max_unique_upgrades();
+    let unique_slots_used = unique_upgrades.len().min(unique_slots_max);
 
     StatsPanelData {
         rows: vec![
@@ -2352,6 +2377,9 @@ fn build_stats_panel_data(
             ),
         ],
         active_buffs,
+        unique_upgrades,
+        unique_slots_used,
+        unique_slots_max,
     }
 }
 
@@ -2452,7 +2480,7 @@ fn spawn_stats_modal_sections(parent: &mut ChildBuilder, stats: &StatsPanelData)
                             ..default()
                         },
                     ));
-                    spawn_scrollable_panel(buffs_col, 280.0, |buffs_list| {
+                    spawn_scrollable_panel(buffs_col, 148.0, |buffs_list| {
                         if stats.active_buffs.is_empty() {
                             buffs_list.spawn(TextBundle::from_section(
                                 "No active buffs.",
@@ -2483,6 +2511,71 @@ fn spawn_stats_modal_sections(parent: &mut ChildBuilder, stats: &StatsPanelData)
                                 .with_children(|line| {
                                     line.spawn(TextBundle::from_section(
                                         buff,
+                                        TextStyle {
+                                            font_size: 13.0,
+                                            color: HUD_TEXT_COLOR,
+                                            ..default()
+                                        },
+                                    ));
+                                });
+                        }
+                    });
+
+                    buffs_col.spawn(NodeBundle {
+                        style: Style {
+                            width: Val::Percent(100.0),
+                            height: Val::Px(1.0),
+                            margin: UiRect::top(Val::Px(4.0)),
+                            ..default()
+                        },
+                        background_color: BackgroundColor(Color::srgba(0.78, 0.72, 0.58, 0.24)),
+                        ..default()
+                    });
+
+                    buffs_col.spawn(TextBundle::from_section(
+                        format!(
+                            "Unique Upgrades ({}/{})",
+                            stats.unique_slots_used, stats.unique_slots_max
+                        ),
+                        TextStyle {
+                            font_size: 19.0,
+                            color: MENU_BUTTON_TEXT_HOVERED,
+                            ..default()
+                        },
+                    ));
+                    spawn_scrollable_panel(buffs_col, 124.0, |unique_list| {
+                        if stats.unique_upgrades.is_empty() {
+                            unique_list.spawn(TextBundle::from_section(
+                                "No unique upgrades yet.",
+                                TextStyle {
+                                    font_size: 14.0,
+                                    color: MENU_BUTTON_TEXT_DISABLED,
+                                    ..default()
+                                },
+                            ));
+                            return;
+                        }
+
+                        for unique in &stats.unique_upgrades {
+                            unique_list
+                                .spawn(NodeBundle {
+                                    style: Style {
+                                        width: Val::Percent(100.0),
+                                        border: UiRect::all(Val::Px(1.0)),
+                                        padding: UiRect::all(Val::Px(6.0)),
+                                        ..default()
+                                    },
+                                    background_color: BackgroundColor(Color::srgba(
+                                        0.08, 0.07, 0.06, 0.62,
+                                    )),
+                                    border_color: BorderColor(level_up_tier_border_color(
+                                        UpgradeValueTier::Unique,
+                                    )),
+                                    ..default()
+                                })
+                                .with_children(|line| {
+                                    line.spawn(TextBundle::from_section(
+                                        unique,
                                         TextStyle {
                                             font_size: 13.0,
                                             color: HUD_TEXT_COLOR,
@@ -5791,8 +5884,8 @@ mod tests {
         world_to_minimap_pos,
     };
     use crate::upgrades::{
-        ConditionalUpgradeStatus, ConditionalUpgradeStatusEntry, Progression, SkillBookEntry,
-        SkillBookLog, UpgradeCardIcon,
+        ConditionalUpgradeStatus, ConditionalUpgradeStatusEntry, OneTimeUpgradeTracker,
+        Progression, SkillBookEntry, SkillBookLog, UpgradeCardIcon,
     };
 
     #[test]
@@ -6088,12 +6181,14 @@ mod tests {
         let data = GameData::load_from_dir(Path::new("assets/data")).expect("load data");
         let progression = Progression::default();
         let buffs = GlobalBuffs::default();
+        let one_time_tracker = OneTimeUpgradeTracker::default();
         let modifiers = FormationModifiers::default();
         let conditional_status = ConditionalUpgradeStatus::default();
         let panel = build_stats_panel_data(
             &data,
             &progression,
             &buffs,
+            &one_time_tracker,
             ActiveFormation::Square,
             &modifiers,
             &conditional_status,
@@ -6132,6 +6227,7 @@ mod tests {
             hospitalier_cohesion_regen_per_sec: 0.0,
             hospitalier_morale_regen_per_sec: 0.0,
         };
+        let one_time_tracker = OneTimeUpgradeTracker::default();
         let modifiers = FormationModifiers {
             offense_multiplier: 1.0,
             offense_while_moving_multiplier: 1.0,
@@ -6143,6 +6239,7 @@ mod tests {
             &data,
             &progression,
             &buffs,
+            &one_time_tracker,
             ActiveFormation::Diamond,
             &modifiers,
             &conditional_status,
@@ -6163,6 +6260,36 @@ mod tests {
         let morale_resist_row =
             find_stats_row(&panel.rows, "Morale Loss Resist").expect("morale resist");
         assert_eq!(morale_resist_row.bonus_text, "0%");
+    }
+
+    #[test]
+    fn stats_panel_lists_unique_upgrades_with_slot_counter() {
+        let data = GameData::load_from_dir(Path::new("assets/data")).expect("load data");
+        let progression = Progression::default();
+        let buffs = GlobalBuffs::default();
+        let mut one_time_tracker = OneTimeUpgradeTracker::default();
+        one_time_tracker
+            .acquired_ids
+            .insert("fast_learner_up".to_string());
+        one_time_tracker.acquired_ids.insert("mob_fury".to_string());
+        let modifiers = FormationModifiers::default();
+        let conditional_status = ConditionalUpgradeStatus::default();
+
+        let panel = build_stats_panel_data(
+            &data,
+            &progression,
+            &buffs,
+            &one_time_tracker,
+            ActiveFormation::Square,
+            &modifiers,
+            &conditional_status,
+            0.0,
+        );
+
+        assert_eq!(panel.unique_slots_max, 5);
+        assert_eq!(panel.unique_slots_used, 2);
+        assert!(panel.unique_upgrades.contains(&"Fast Learner".to_string()));
+        assert!(panel.unique_upgrades.contains(&"Mob's Fury".to_string()));
     }
 
     #[test]

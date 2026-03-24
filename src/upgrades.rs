@@ -29,6 +29,10 @@ const MOB_FURY_MOVE_SPEED_BONUS: f32 = 24.0;
 const MOB_JUSTICE_EXECUTE_THRESHOLD: f32 = 0.10;
 const MOB_MERCY_RESCUE_TIME_MULTIPLIER: f32 = 0.5;
 
+pub const fn max_unique_upgrades() -> usize {
+    MAX_UNIQUE_UPGRADES
+}
+
 #[derive(Resource, Clone, Debug)]
 pub struct Progression {
     pub xp: f32,
