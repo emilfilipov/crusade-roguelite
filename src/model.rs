@@ -439,6 +439,7 @@ pub struct SpawnExpPackEvent {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum RunModalScreen {
     Inventory,
+    Chest,
     Stats,
     SkillBook,
     Archive,

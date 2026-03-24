@@ -2,10 +2,14 @@ use bevy::prelude::*;
 
 use crate::data::GameData;
 use crate::enemies::WaveRuntime;
+use crate::inventory::{
+    EquipmentChestState, InventoryRngState, ItemRarityRollBonus, roll_chest_items,
+};
 use crate::map::MapBounds;
 use crate::model::{
     CommanderUnit, FriendlyUnit, GainXpEvent, GameState, GlobalBuffs, MatchSetupSelection,
-    MoveSpeed, PlayerFaction, SpawnExpPackEvent, StartRunEvent,
+    MoveSpeed, PlayerFaction, RunModalAction, RunModalRequestEvent, RunModalScreen,
+    SpawnExpPackEvent, StartRunEvent,
 };
 use crate::upgrades::Progression;
 use crate::visuals::ArtAssets;
@@ -18,6 +22,11 @@ const DROP_RENDER_Z: f32 = 40.0;
 const MAGNET_PICKUP_SIZE: f32 = 30.0;
 const MAGNET_PICKUP_Z: f32 = 42.0;
 const MAGNET_PICKUP_WAVE_INTERVAL: u32 = 3;
+const CHEST_PICKUP_SIZE: f32 = 34.0;
+const CHEST_PICKUP_Z: f32 = 43.0;
+const CHEST_PICKUP_DELAY_SECS: f32 = 0.9;
+const CHEST_PICKUP_CHANNEL_SECS: f32 = 2.0;
+const CHEST_PICKUP_WAVE_INTERVAL: u32 = 3;
 
 #[derive(Component, Clone, Copy, Debug)]
 pub struct ExpPack {
@@ -32,6 +41,13 @@ struct DropInTransitToCommander;
 pub struct MagnetPickup {
     pub faction: PlayerFaction,
     pub wave: u32,
+}
+
+#[derive(Component, Clone, Copy, Debug)]
+pub struct EquipmentChestDrop {
+    pub wave: u32,
+    pub pickup_delay_remaining: f32,
+    pub pickup_progress: f32,
 }
 
 #[derive(Resource, Clone, Debug)]
@@ -54,12 +70,19 @@ struct MagnetWaveRuntime {
     last_seen_wave: u32,
 }
 
+#[derive(Resource, Clone, Copy, Debug, Default)]
+struct ChestWaveRuntime {
+    last_seen_wave: u32,
+    sequence: u32,
+}
+
 pub struct DropsPlugin;
 
 impl Plugin for DropsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<DropSpawnRuntime>()
             .init_resource::<MagnetWaveRuntime>()
+            .init_resource::<ChestWaveRuntime>()
             .add_systems(Update, spawn_exp_packs_on_run_start)
             .add_systems(
                 Update,
@@ -67,7 +90,9 @@ impl Plugin for DropsPlugin {
                     spawn_exp_packs_over_time,
                     spawn_exp_packs_from_events,
                     update_wave_magnet_pickup,
+                    update_wave_chest_drop,
                     pickup_wave_magnet,
+                    pickup_equipment_chest,
                     pickup_exp_packs,
                     transit_drops_to_commander,
                 )
@@ -89,8 +114,11 @@ fn spawn_exp_packs_on_run_start(
     commanders: Query<&Transform, With<CommanderUnit>>,
     existing_packs: Query<Entity, With<ExpPack>>,
     existing_magnets: Query<Entity, With<MagnetPickup>>,
+    existing_chests: Query<Entity, With<EquipmentChestDrop>>,
     mut runtime: ResMut<DropSpawnRuntime>,
     mut magnet_runtime: ResMut<MagnetWaveRuntime>,
+    mut chest_runtime: ResMut<ChestWaveRuntime>,
+    mut chest_state: ResMut<EquipmentChestState>,
 ) {
     if start_events.is_empty() {
         return;
@@ -103,6 +131,10 @@ fn spawn_exp_packs_on_run_start(
     for entity in &existing_magnets {
         commands.entity(entity).despawn_recursive();
     }
+    for entity in &existing_chests {
+        commands.entity(entity).despawn_recursive();
+    }
+    chest_state.clear();
 
     let initial_count = data.drops.initial_spawn_count.max(1);
     let wave_number = current_wave_number(waves.as_deref());
@@ -123,6 +155,8 @@ fn spawn_exp_packs_on_run_start(
     runtime.sequence = initial_count;
     runtime.timer = Timer::from_seconds(data.drops.spawn_interval_secs, TimerMode::Repeating);
     magnet_runtime.last_seen_wave = 0;
+    chest_runtime.last_seen_wave = 0;
+    chest_runtime.sequence = 0;
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -223,6 +257,105 @@ fn update_wave_magnet_pickup(
         spawn_wave_magnet(&mut commands, &art, setup.faction, current_wave);
     }
     runtime.last_seen_wave = current_wave;
+}
+
+#[allow(clippy::type_complexity)]
+fn update_wave_chest_drop(
+    mut commands: Commands,
+    art: Res<ArtAssets>,
+    waves: Option<Res<WaveRuntime>>,
+    bounds: Option<Res<MapBounds>>,
+    commanders: Query<&Transform, With<CommanderUnit>>,
+    existing_chests: Query<Entity, With<EquipmentChestDrop>>,
+    mut runtime: ResMut<ChestWaveRuntime>,
+) {
+    let current_wave = current_wave_number(waves.as_deref());
+    let (wave_changed, should_spawn) = chest_wave_lifecycle(runtime.last_seen_wave, current_wave);
+    if !wave_changed {
+        return;
+    }
+
+    runtime.last_seen_wave = current_wave;
+    if !should_spawn {
+        return;
+    }
+    if !existing_chests.is_empty() {
+        return;
+    }
+
+    let center = commander_spawn_center(&commanders);
+    let position = chest_spawn_position(runtime.sequence, bounds.as_deref().copied(), center);
+    runtime.sequence = runtime.sequence.saturating_add(1);
+    spawn_equipment_chest(&mut commands, &art, current_wave, position);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn pickup_equipment_chest(
+    mut commands: Commands,
+    time: Res<Time>,
+    data: Res<GameData>,
+    setup_selection: Option<Res<MatchSetupSelection>>,
+    mut chest_state: ResMut<EquipmentChestState>,
+    mut rng: ResMut<InventoryRngState>,
+    rarity_bonus: Option<Res<ItemRarityRollBonus>>,
+    friendlies: Query<&Transform, With<FriendlyUnit>>,
+    mut chests: Query<(Entity, &mut EquipmentChestDrop, &Transform)>,
+    mut run_modal_requests: EventWriter<RunModalRequestEvent>,
+) {
+    let friendly_positions: Vec<Vec2> = friendlies
+        .iter()
+        .map(|transform| transform.translation.truncate())
+        .collect();
+    if friendly_positions.is_empty() {
+        return;
+    }
+
+    let pickup_radius = data.drops.pickup_radius.max(1.0);
+    let faction = setup_selection
+        .as_deref()
+        .map(|selection| selection.faction)
+        .unwrap_or(PlayerFaction::Christian);
+    let rarity_bonus_percent = rarity_bonus
+        .as_deref()
+        .map(|bonus| bonus.percent)
+        .unwrap_or(0.0);
+
+    for (entity, mut chest, transform) in &mut chests {
+        chest.pickup_delay_remaining =
+            tick_pickup_delay(chest.pickup_delay_remaining, time.delta_seconds());
+        if chest.pickup_delay_remaining > 0.0 {
+            continue;
+        }
+
+        let in_range = any_friendly_in_pickup_radius(
+            transform.translation.truncate(),
+            &friendly_positions,
+            pickup_radius,
+        );
+        if in_range {
+            chest.pickup_progress =
+                (chest.pickup_progress + time.delta_seconds()).min(CHEST_PICKUP_CHANNEL_SECS);
+        } else {
+            chest.pickup_progress = (chest.pickup_progress - time.delta_seconds() * 0.75).max(0.0);
+        }
+
+        if chest.pickup_progress + f32::EPSILON < CHEST_PICKUP_CHANNEL_SECS {
+            continue;
+        }
+
+        let item_count = (rng.next_u32_roll() % 3 + 1) as usize;
+        let items = roll_chest_items(&mut rng, faction, item_count, rarity_bonus_percent);
+        chest_state.clear();
+        for (index, item) in items.into_iter().enumerate() {
+            if let Some(slot) = chest_state.slots.get_mut(index) {
+                *slot = Some(item);
+            }
+        }
+        commands.entity(entity).despawn_recursive();
+        run_modal_requests.send(RunModalRequestEvent {
+            action: RunModalAction::Open(RunModalScreen::Chest),
+        });
+    }
 }
 
 #[allow(clippy::type_complexity)]
@@ -401,6 +534,17 @@ pub fn should_spawn_magnet_for_wave(wave_number: u32) -> bool {
     wave_number > 0 && wave_number.is_multiple_of(MAGNET_PICKUP_WAVE_INTERVAL)
 }
 
+pub fn chest_wave_lifecycle(last_seen_wave: u32, current_wave: u32) -> (bool, bool) {
+    if current_wave == 0 || current_wave == last_seen_wave {
+        return (false, false);
+    }
+    (true, should_spawn_chest_for_wave(current_wave))
+}
+
+pub fn should_spawn_chest_for_wave(wave_number: u32) -> bool {
+    wave_number > 0 && wave_number.is_multiple_of(CHEST_PICKUP_WAVE_INTERVAL)
+}
+
 pub fn force_home_pack_state(
     already_in_transit: bool,
     _pickup_delay_remaining: f32,
@@ -415,6 +559,26 @@ fn magnet_texture_for_faction(art: &ArtAssets, faction: PlayerFaction) -> Handle
         PlayerFaction::Christian => art.magnet_cross_pickup.clone(),
         PlayerFaction::Muslim => art.magnet_crescent_pickup.clone(),
     }
+}
+
+fn spawn_equipment_chest(commands: &mut Commands, art: &ArtAssets, wave: u32, position: Vec2) {
+    commands.spawn((
+        EquipmentChestDrop {
+            wave,
+            pickup_delay_remaining: CHEST_PICKUP_DELAY_SECS,
+            pickup_progress: 0.0,
+        },
+        SpriteBundle {
+            texture: art.chest_drop_closed.clone(),
+            sprite: Sprite {
+                custom_size: Some(Vec2::splat(CHEST_PICKUP_SIZE)),
+                color: Color::WHITE,
+                ..default()
+            },
+            transform: Transform::from_xyz(position.x, position.y, CHEST_PICKUP_Z),
+            ..default()
+        },
+    ));
 }
 
 fn current_wave_number(waves: Option<&WaveRuntime>) -> u32 {
@@ -474,6 +638,21 @@ fn drop_spawn_position(sequence: u32, bounds: Option<MapBounds>, center: Vec2) -
     position
 }
 
+fn chest_spawn_position(sequence: u32, bounds: Option<MapBounds>, center: Vec2) -> Vec2 {
+    let mut position =
+        drop_spawn_position(sequence.saturating_mul(7).saturating_add(3), bounds, center);
+    if let Some(map_bounds) = bounds {
+        position.x = position
+            .x
+            .clamp(-map_bounds.half_width * 0.65, map_bounds.half_width * 0.65);
+        position.y = position.y.clamp(
+            -map_bounds.half_height * 0.65,
+            map_bounds.half_height * 0.65,
+        );
+    }
+    position
+}
+
 pub fn homing_speed_from_commander_base(commander_base_speed: f32) -> f32 {
     let base = commander_base_speed.max(1.0);
     (base * DROP_HOMING_SPEED_MULTIPLIER).max(base + 8.0)
@@ -513,10 +692,10 @@ mod tests {
     use bevy::prelude::Vec2;
 
     use crate::drops::{
-        any_friendly_in_pickup_radius, apply_xp_gain_multiplier, drop_spawn_position,
-        force_home_pack_state, homing_speed_from_commander_base, magnet_wave_lifecycle,
-        reached_target, scaled_pack_xp, should_spawn_magnet_for_wave, step_towards_target,
-        tick_pickup_delay,
+        any_friendly_in_pickup_radius, apply_xp_gain_multiplier, chest_wave_lifecycle,
+        drop_spawn_position, force_home_pack_state, homing_speed_from_commander_base,
+        magnet_wave_lifecycle, reached_target, scaled_pack_xp, should_spawn_chest_for_wave,
+        should_spawn_magnet_for_wave, step_towards_target, tick_pickup_delay,
     };
     use crate::map::MapBounds;
     use crate::model::GlobalBuffs;
@@ -626,5 +805,16 @@ mod tests {
         let (insert_transit_existing, delay_existing) = force_home_pack_state(true, 1.2);
         assert!(!insert_transit_existing);
         assert_eq!(delay_existing, 0.0);
+    }
+
+    #[test]
+    fn chest_lifecycle_spawns_every_third_wave() {
+        assert!(!should_spawn_chest_for_wave(1));
+        assert!(!should_spawn_chest_for_wave(2));
+        assert!(should_spawn_chest_for_wave(3));
+
+        assert_eq!(chest_wave_lifecycle(2, 2), (false, false));
+        assert_eq!(chest_wave_lifecycle(2, 3), (true, true));
+        assert_eq!(chest_wave_lifecycle(3, 4), (true, false));
     }
 }

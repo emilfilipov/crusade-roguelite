@@ -87,14 +87,17 @@ impl Plugin for CombatPlugin {
     }
 }
 
+#[allow(clippy::type_complexity)]
 fn tick_attack_timers(
     time: Res<Time>,
     cohesion_mods: Res<CohesionCombatModifiers>,
     progression: Option<Res<Progression>>,
     global_buffs: Option<Res<GlobalBuffs>>,
     conditional_effects: Option<Res<ConditionalUpgradeEffects>>,
+    inventory: Res<InventoryState>,
     mut attackers: Query<(
         &Unit,
+        Option<&UnitTier>,
         Option<&Morale>,
         Option<&PriestAttackSpeedBlessing>,
         &mut AttackCooldown,
@@ -104,12 +107,18 @@ fn tick_attack_timers(
         .as_ref()
         .map(|value| commander_level_combat_multiplier(value.level))
         .unwrap_or(1.0);
-    for (unit, morale, priest_blessing, mut cooldown) in &mut attackers {
+    for (unit, tier, morale, priest_blessing, mut cooldown) in &mut attackers {
         let morale_scale = morale
             .copied()
             .map(|value| morale_effect_multiplier(value.ratio()))
             .unwrap_or(1.0);
         let priest_scale = priest_attack_speed_multiplier(priest_blessing);
+        let gear_speed_scale = if unit.team == Team::Friendly {
+            let gear = gear_bonuses_for_unit(&inventory, unit.kind, tier.map(|value| value.0));
+            (1.0 + gear.attack_speed_multiplier).max(0.1)
+        } else {
+            1.0
+        };
 
         let speed_scale = if unit.team == Team::Friendly {
             let mut value = cohesion_mods.attack_speed_multiplier * morale_scale * level_multiplier;
@@ -117,6 +126,7 @@ fn tick_attack_timers(
                 value *= buff.attack_speed_multiplier;
             }
             value *= priest_scale;
+            value *= gear_speed_scale;
             if let Some(conditional) = &conditional_effects {
                 value *= conditional.friendly_attack_speed_multiplier;
             }
@@ -220,10 +230,16 @@ fn emit_ranged_projectile_attacks(
             .unwrap_or(1.0);
         let mut attack_speed = morale_multiplier * priest_attack_speed_multiplier(priest_blessing);
         if attacker_team == Team::Friendly {
+            let gear = gear_bonuses_for_unit(
+                &inventory,
+                commander_unit.kind,
+                attacker_tier.copied().map(|tier| tier.0),
+            );
             attack_speed *= cohesion_mods.attack_speed_multiplier * level_multiplier;
             if let Some(buff) = &global_buffs {
                 attack_speed *= buff.attack_speed_multiplier;
             }
+            attack_speed *= (1.0 + gear.attack_speed_multiplier).max(0.1);
             attack_speed = attack_speed.max(MIN_FRIENDLY_COMBAT_MULTIPLIER);
         }
 
@@ -237,6 +253,22 @@ fn emit_ranged_projectile_attacks(
         let commander_position = commander_transform.translation.truncate();
 
         let mut best_target: Option<(Vec2, f32, UnitKind)> = None;
+        let friendly_gear = if attacker_team == Team::Friendly {
+            Some(gear_bonuses_for_unit(
+                &inventory,
+                commander_unit.kind,
+                attacker_tier.copied().map(|tier| tier.0),
+            ))
+        } else {
+            None
+        };
+        let effective_ranged_range = (ranged_profile.range
+            + friendly_gear
+                .as_ref()
+                .map(|gear| gear.ranged_range_bonus)
+                .unwrap_or(0.0))
+        .max(melee_profile.range + 1.0);
+
         for (_, target_position, target_health, _, target_unit) in &target_snapshot {
             if target_unit.team != opposite_team || *target_health <= 0.0 {
                 continue;
@@ -249,7 +281,7 @@ fn emit_ranged_projectile_attacks(
                 continue;
             }
             let distance_sq = commander_position.distance_squared(*target_position);
-            if !ranged_target_in_window(distance_sq, melee_profile.range, ranged_profile.range) {
+            if !ranged_target_in_window(distance_sq, melee_profile.range, effective_ranged_range) {
                 continue;
             }
             let candidate = (*target_position, distance_sq, target_unit.kind);
@@ -299,18 +331,17 @@ fn emit_ranged_projectile_attacks(
         } else {
             morale_multiplier
         };
-        let ranged_bonus = if attacker_team == Team::Friendly {
-            gear_bonuses_for_unit(
-                &inventory,
-                commander_unit.kind,
-                attacker_tier.copied().map(|tier| tier.0),
-            )
-            .ranged_damage_bonus
+        let ranged_bonus_mult = if attacker_team == Team::Friendly {
+            friendly_gear
+                .as_ref()
+                .map(|gear| gear.ranged_damage_multiplier)
+                .unwrap_or(0.0)
         } else {
             0.0
         };
-        let mut projectile_damage =
-            ((ranged_profile.damage + ranged_bonus).max(0.0) * outgoing_multiplier).max(1.0);
+        let mut projectile_damage = ((ranged_profile.damage * (1.0 + ranged_bonus_mult)).max(0.0)
+            * outgoing_multiplier)
+            .max(1.0);
         let mut projectile_is_critical = false;
         if attacker_team == Team::Friendly {
             let (crit_chance, crit_multiplier) =
@@ -558,18 +589,18 @@ fn emit_damage_events(
                 morale_multiplier
             };
 
-            let melee_bonus = if attacker_unit.team == Team::Friendly {
+            let melee_bonus_mult = if attacker_unit.team == Team::Friendly {
                 gear_bonuses_for_unit(
                     &inventory,
                     attacker_unit.kind,
                     attacker_tier.copied().map(|tier| tier.0),
                 )
-                .melee_damage_bonus
+                .melee_damage_multiplier
             } else {
                 0.0
             };
             let mut outgoing_damage =
-                (attack_profile.damage + melee_bonus).max(0.0) * outgoing_multiplier;
+                (attack_profile.damage * (1.0 + melee_bonus_mult)).max(0.0) * outgoing_multiplier;
             let mut is_critical = false;
             if attacker_unit.team == Team::Friendly {
                 let (crit_chance, crit_multiplier) =

@@ -27,6 +27,16 @@ pub struct ArtAssets {
     pub exp_pack_coin_stack: Handle<Image>,
     pub magnet_cross_pickup: Handle<Image>,
     pub magnet_crescent_pickup: Handle<Image>,
+    pub chest_drop_closed: Handle<Image>,
+    pub item_banner_icon: Handle<Image>,
+    pub item_instrument_icon: Handle<Image>,
+    pub item_chant_icon: Handle<Image>,
+    pub item_squire_icon: Handle<Image>,
+    pub item_symbol_cross_icon: Handle<Image>,
+    pub item_symbol_crescent_icon: Handle<Image>,
+    pub item_sword_icon: Handle<Image>,
+    pub item_bow_icon: Handle<Image>,
+    pub item_armor_icon: Handle<Image>,
     pub arrow_projectile: Handle<Image>,
     pub upgrade_damage_icon: Handle<Image>,
     pub upgrade_attack_speed_icon: Handle<Image>,
@@ -103,6 +113,26 @@ fn load_art_assets(mut assets: ResMut<ArtAssets>, asset_server: Option<Res<Asset
     assets.exp_pack_coin_stack = asset_server.load("sprites/pickups/xp_coin_stack.png");
     assets.magnet_cross_pickup = asset_server.load("sprites/pickups/magnet_cross.png");
     assets.magnet_crescent_pickup = asset_server.load("sprites/pickups/magnet_crescent.png");
+    assets.chest_drop_closed =
+        asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0088.png");
+    assets.item_banner_icon = asset_server
+        .load("third_party/oga_ishtar_top-down-pack_1.1/top-down-pack-1/tiles/Slice 25.png");
+    assets.item_instrument_icon =
+        asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0070.png");
+    assets.item_chant_icon =
+        asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0084.png");
+    assets.item_squire_icon =
+        asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0068.png");
+    assets.item_symbol_cross_icon =
+        asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0069.png");
+    assets.item_symbol_crescent_icon =
+        asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0071.png");
+    assets.item_sword_icon =
+        asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0072.png");
+    assets.item_bow_icon =
+        asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0073.png");
+    assets.item_armor_icon = asset_server
+        .load("third_party/oga_ishtar_top-down-pack_1.1/top-down-pack-1/tiles/Slice 26.png");
     assets.arrow_projectile = asset_server
         .load("third_party/kenney_desert-shooter-pack_1.0/PNG/Weapons/Tiles/tile_0018.png");
     assets.upgrade_damage_icon =
