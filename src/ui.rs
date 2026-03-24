@@ -29,7 +29,7 @@ use crate::squad::{
 use crate::upgrades::{
     ConditionalUpgradeEffects, ConditionalUpgradeStatus, OneTimeUpgradeTracker, Progression,
     ProgressionLockFeedback, SelectUpgradeEvent, SkillBookLog, UpgradeCardIcon, UpgradeDraft,
-    UpgradeValueTier, commander_level_hp_bonus, max_unique_upgrades,
+    UpgradeValueTier, commander_level_hp_bonus, effective_max_unique_upgrades,
     skill_book_entry_cumulative_description, upgrade_card_icon, upgrade_display_description,
     upgrade_display_title, upgrade_value_tier,
 };
@@ -2301,7 +2301,7 @@ fn build_stats_panel_data(
         })
         .collect();
     unique_upgrades.sort_unstable();
-    let unique_slots_max = max_unique_upgrades();
+    let unique_slots_max = effective_max_unique_upgrades(one_time_tracker);
     let unique_slots_used = unique_upgrades.len().min(unique_slots_max);
 
     StatsPanelData {

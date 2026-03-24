@@ -43,6 +43,12 @@
       "one_time": true
     },
     {
+      "id": "war_council_edict",
+      "kind": "unique_slot_tradeoff",
+      "value": 2.0,
+      "one_time": true
+    },
+    {
       "id": "crit_chance_up",
       "kind": "crit_chance",
       "min_value": 0.01,

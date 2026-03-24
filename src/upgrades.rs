@@ -28,9 +28,14 @@ const MOB_FURY_ATTACK_SPEED_BONUS: f32 = 0.18;
 const MOB_FURY_MOVE_SPEED_BONUS: f32 = 24.0;
 const MOB_JUSTICE_EXECUTE_THRESHOLD: f32 = 0.10;
 const MOB_MERCY_RESCUE_TIME_MULTIPLIER: f32 = 0.5;
+const UNIQUE_SLOT_TRADEOFF_KIND: &str = "unique_slot_tradeoff";
 
 pub const fn max_unique_upgrades() -> usize {
     MAX_UNIQUE_UPGRADES
+}
+
+pub fn effective_max_unique_upgrades(tracker: &OneTimeUpgradeTracker) -> usize {
+    MAX_UNIQUE_UPGRADES.saturating_add(tracker.extra_slots)
 }
 
 #[derive(Resource, Clone, Debug)]
@@ -64,6 +69,8 @@ pub struct UpgradeDraft {
 #[derive(Resource, Clone, Debug, Default)]
 pub struct OneTimeUpgradeTracker {
     pub acquired_ids: HashSet<String>,
+    pub extra_slots: usize,
+    pub mythical_rolls_locked: bool,
 }
 
 #[derive(Resource, Clone, Debug, Default)]
@@ -472,6 +479,7 @@ fn resolve_upgrade_selection(
         &mut conditional_ownership,
         &mut skillbar,
     );
+    apply_one_time_tracker_effects(&picked, &mut one_time_tracker);
     record_skill_book_entry(&mut skill_book, &picked);
     if picked.one_time {
         one_time_tracker.acquired_ids.insert(picked.id.clone());
@@ -504,6 +512,15 @@ fn record_skill_book_entry(skill_book: &mut SkillBookLog, picked: &UpgradeConfig
         adds_to_skillbar: picked.adds_to_skillbar,
         formation_id: picked.formation_id.clone(),
     });
+}
+
+fn apply_one_time_tracker_effects(upgrade: &UpgradeConfig, tracker: &mut OneTimeUpgradeTracker) {
+    if upgrade.kind != UNIQUE_SLOT_TRADEOFF_KIND {
+        return;
+    }
+    let slot_bonus = upgrade.value.max(0.0).round() as usize;
+    tracker.extra_slots = tracker.extra_slots.saturating_add(slot_bonus);
+    tracker.mythical_rolls_locked = true;
 }
 
 pub fn skill_book_entry_cumulative_description(entry: &SkillBookEntry) -> String {
@@ -559,6 +576,10 @@ pub fn skill_book_entry_cumulative_description(entry: &SkillBookEntry) -> String
             "Enemies inside formation take +{:.0}% damage.",
             entry.total_value.max(0.0)
         ),
+        "unique_slot_tradeoff" => {
+            "Gain +2 unique upgrade slots. Mythical value rolls are disabled for the run."
+                .to_string()
+        }
         "mob_fury" | "mob_justice" | "mob_mercy" | "unlock_formation" => entry.description.clone(),
         _ => entry.description.clone(),
     }
@@ -574,7 +595,8 @@ fn roll_upgrade_options(
     if pool.is_empty() || count == 0 {
         return Vec::new();
     }
-    let unique_cap_reached = one_time_tracker.acquired_ids.len() >= MAX_UNIQUE_UPGRADES;
+    let unique_cap_reached =
+        one_time_tracker.acquired_ids.len() >= effective_max_unique_upgrades(one_time_tracker);
     let mut candidate_indices: Vec<usize> = pool
         .iter()
         .enumerate()
@@ -603,7 +625,8 @@ fn roll_upgrade_options(
         .into_iter()
         .map(|idx| {
             let mut rolled = pool[idx].clone();
-            rolled.value = roll_upgrade_value(&rolled, rng);
+            rolled.value =
+                roll_upgrade_value(&rolled, rng, !one_time_tracker.mythical_rolls_locked);
             rolled
         })
         .collect()
@@ -637,7 +660,11 @@ fn skillbar_contains_upgrade(skillbar: &FormationSkillBar, upgrade: &UpgradeConf
     skillbar.has_formation(formation)
 }
 
-fn roll_upgrade_value(config: &UpgradeConfig, rng: &mut UpgradeRngState) -> f32 {
+fn roll_upgrade_value(
+    config: &UpgradeConfig,
+    rng: &mut UpgradeRngState,
+    mythical_rolls_enabled: bool,
+) -> f32 {
     let min_value = config.min_value.unwrap_or(config.value);
     let max_value = config.max_value.unwrap_or(min_value);
     if (max_value - min_value).abs() <= f32::EPSILON {
@@ -649,15 +676,21 @@ fn roll_upgrade_value(config: &UpgradeConfig, rng: &mut UpgradeRngState) -> f32 
         .unwrap_or(DEFAULT_UPGRADE_WEIGHT_EXPONENT)
         .max(1.01)
         * UPGRADE_HIGH_TIER_DROP_OFF_MULTIPLIER;
-    let tier_index = weighted_roll_tier_index(exponent, rng);
+    let available_tier_count = if mythical_rolls_enabled {
+        UPGRADE_VALUE_TIER_COUNT
+    } else {
+        UPGRADE_VALUE_TIER_COUNT.saturating_sub(1)
+    };
+    let tier_index = weighted_roll_tier_index(exponent, rng, available_tier_count);
     let value = tier_value(min_value, max_value, tier_index);
     quantize_to_step(value, min_value, max_value, config.value_step)
 }
 
-fn weighted_roll_tier_index(exponent: f32, rng: &mut UpgradeRngState) -> u32 {
+fn weighted_roll_tier_index(exponent: f32, rng: &mut UpgradeRngState, tier_count: u32) -> u32 {
+    let bucket_count_u32 = tier_count.max(1);
     let roll = rng.next_f32().powf(exponent);
-    let bucket_count = UPGRADE_VALUE_TIER_COUNT as f32;
-    ((roll * bucket_count).floor() as u32).min(UPGRADE_VALUE_TIER_COUNT.saturating_sub(1))
+    let bucket_count = bucket_count_u32 as f32;
+    ((roll * bucket_count).floor() as u32).min(bucket_count_u32.saturating_sub(1))
 }
 
 fn tier_value(min_value: f32, max_value: f32, tier_index: u32) -> f32 {
@@ -710,6 +743,7 @@ pub fn upgrade_card_icon(upgrade: &UpgradeConfig) -> UpgradeCardIcon {
         "authority_aura" => UpgradeCardIcon::AuthorityAura,
         "move_speed" => UpgradeCardIcon::MoveSpeed,
         "hospitalier_aura" => UpgradeCardIcon::HospitalierAura,
+        "unique_slot_tradeoff" => UpgradeCardIcon::AuthorityAura,
         "formation_breach" => UpgradeCardIcon::FormationSquare,
         "mob_fury" => UpgradeCardIcon::MobFury,
         "mob_justice" => UpgradeCardIcon::MobJustice,
@@ -735,6 +769,7 @@ pub fn upgrade_display_title(upgrade: &UpgradeConfig) -> &'static str {
         "authority_aura" => "Authority Aura",
         "move_speed" => "Forced March",
         "hospitalier_aura" => "Hospitalier Aura",
+        "unique_slot_tradeoff" => "War Council Edict",
         "formation_breach" => "Into the Wolf's Dev",
         "mob_fury" => "Mob's Fury",
         "mob_justice" => "Mob's Justice",
@@ -781,6 +816,10 @@ pub fn upgrade_display_description(upgrade: &UpgradeConfig) -> String {
             upgrade.value,
             upgrade.value * HOSPITALIER_COHESION_REGEN_SCALE,
             upgrade.value * HOSPITALIER_MORALE_REGEN_SCALE
+        ),
+        "unique_slot_tradeoff" => format!(
+            "Gain +{:.0} Unique upgrade slots, but Mythical value rolls are disabled for the run.",
+            upgrade.value.max(0.0)
         ),
         "formation_breach" => format!(
             "Enemies inside your active formation footprint take +{:.0}% damage.",
@@ -1099,7 +1138,7 @@ mod tests {
             state: 0xCAFE_BABE_0123_4567,
         };
         for _ in 0..50 {
-            let value = roll_upgrade_value(&upgrade, &mut rng);
+            let value = roll_upgrade_value(&upgrade, &mut rng, true);
             assert!((1.0..=4.0).contains(&value));
         }
     }
@@ -1116,7 +1155,7 @@ mod tests {
 
         let mut distinct_scaled = HashSet::new();
         for _ in 0..300 {
-            let value = roll_upgrade_value(&upgrade, &mut rng);
+            let value = roll_upgrade_value(&upgrade, &mut rng, true);
             distinct_scaled.insert((value * 1000.0).round() as i32);
         }
         assert!(distinct_scaled.len() <= super::UPGRADE_VALUE_TIER_COUNT as usize);
@@ -1146,7 +1185,7 @@ mod tests {
         };
 
         for _ in 0..20_000 {
-            let value = roll_upgrade_value(&upgrade, &mut rng);
+            let value = roll_upgrade_value(&upgrade, &mut rng, true);
             upgrade.value = value;
             match upgrade_value_tier(&upgrade) {
                 UpgradeValueTier::Common => counts[0] += 1,
@@ -1249,6 +1288,62 @@ mod tests {
 
         assert!(!picks.iter().any(|upgrade| upgrade.one_time));
         assert!(picks.iter().any(|upgrade| upgrade.id == "normal_damage"));
+    }
+
+    #[test]
+    fn unique_slot_tradeoff_extends_unique_cap_and_blocks_mythical_rolls() {
+        let mut tracker = OneTimeUpgradeTracker::default();
+        let tradeoff = UpgradeConfig {
+            id: "war_council_edict".to_string(),
+            kind: "unique_slot_tradeoff".to_string(),
+            value: 2.0,
+            min_value: None,
+            max_value: None,
+            value_step: None,
+            weight_exponent: None,
+            one_time: true,
+            adds_to_skillbar: false,
+            formation_id: None,
+            requirement_type: None,
+            requirement_min_tier0_share: None,
+            requirement_active_formation: None,
+            requirement_map_tag: None,
+        };
+        super::apply_one_time_tracker_effects(&tradeoff, &mut tracker);
+        assert_eq!(
+            super::effective_max_unique_upgrades(&tracker),
+            super::MAX_UNIQUE_UPGRADES + 2
+        );
+        assert!(tracker.mythical_rolls_locked);
+
+        for idx in 0..(super::MAX_UNIQUE_UPGRADES + 1) {
+            tracker.acquired_ids.insert(format!("picked_{idx}"));
+        }
+        let mut extra_unique = upgrade("mob_fury", "fresh_unique_pick");
+        extra_unique.one_time = true;
+        extra_unique.min_value = None;
+        extra_unique.max_value = None;
+        let normal = upgrade("damage", "normal_damage");
+        let pool = vec![extra_unique, normal];
+        let mut rng = UpgradeRngState {
+            state: 0xA11C_E55E_1234_5678,
+        };
+        let picks =
+            roll_upgrade_options(&pool, &mut rng, 3, &tracker, &FormationSkillBar::default());
+        assert!(picks.iter().any(|upgrade| upgrade.one_time));
+
+        let mut weighted = upgrade("damage", "weighted");
+        weighted.min_value = Some(10.0);
+        weighted.max_value = Some(30.0);
+        weighted.value_step = None;
+        let mut weighted_rng = UpgradeRngState {
+            state: 0xFEDC_BA98_7654_3210,
+        };
+        for _ in 0..1_000 {
+            let value = roll_upgrade_value(&weighted, &mut weighted_rng, false);
+            weighted.value = value;
+            assert_ne!(upgrade_value_tier(&weighted), UpgradeValueTier::Mythical);
+        }
     }
 
     #[test]
@@ -1575,6 +1670,28 @@ mod tests {
         );
         assert_eq!(upgrade_display_title(&fast_learner_upgrade), "Fast Learner");
         assert!(upgrade_display_description(&fast_learner_upgrade).contains("XP"));
+
+        let unique_slots_upgrade = UpgradeConfig {
+            id: "war_council_edict".to_string(),
+            kind: "unique_slot_tradeoff".to_string(),
+            value: 2.0,
+            min_value: None,
+            max_value: None,
+            value_step: None,
+            weight_exponent: None,
+            one_time: true,
+            adds_to_skillbar: false,
+            formation_id: None,
+            requirement_type: None,
+            requirement_min_tier0_share: None,
+            requirement_active_formation: None,
+            requirement_map_tag: None,
+        };
+        assert_eq!(
+            upgrade_display_title(&unique_slots_upgrade),
+            "War Council Edict"
+        );
+        assert!(upgrade_display_description(&unique_slots_upgrade).contains("Mythical"));
 
         let formation_upgrade = UpgradeConfig {
             id: "unlock_diamond".to_string(),
