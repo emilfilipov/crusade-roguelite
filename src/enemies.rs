@@ -1,6 +1,10 @@
 use bevy::prelude::*;
 use std::collections::HashMap;
 
+use crate::ai::{
+    chase_step_distance, chase_target_positions, choose_nearest, choose_support_follow_target,
+    should_move_towards_target,
+};
 use crate::combat::{RangedAttackCooldown, RangedAttackProfile};
 use crate::data::{EnemyStatsConfig, GameData, WavesConfigFile};
 use crate::formation::{ActiveFormation, active_formation_config, formation_contains_position};
@@ -625,16 +629,21 @@ fn lerp(min: f32, max: f32, t: f32) -> f32 {
 #[allow(clippy::type_complexity)]
 fn enemy_chase_targets(
     time: Res<Time>,
-    mut enemies: Query<
-        (
-            &MoveSpeed,
-            &AttackProfile,
-            Option<&RangedAttackProfile>,
-            &mut EnemyMovementState,
-            &mut Transform,
-        ),
-        (With<EnemyUnit>, Without<FriendlyUnit>),
-    >,
+    mut enemy_sets: ParamSet<(
+        Query<
+            (
+                Entity,
+                &Unit,
+                &MoveSpeed,
+                &AttackProfile,
+                Option<&RangedAttackProfile>,
+                &mut EnemyMovementState,
+                &mut Transform,
+            ),
+            (With<EnemyUnit>, Without<FriendlyUnit>),
+        >,
+        Query<(Entity, &Transform, &Unit), (With<EnemyUnit>, Without<FriendlyUnit>)>,
+    )>,
     friendlies: Query<
         (&Transform, Option<&CommanderUnit>),
         (With<FriendlyUnit>, Without<EnemyUnit>),
@@ -649,11 +658,49 @@ fn enemy_chase_targets(
         return;
     }
 
-    for (move_speed, attack_profile, ranged_profile, mut movement_state, mut enemy_transform) in
-        &mut enemies
+    let all_enemy_positions: Vec<(Entity, Vec2, bool)> = enemy_sets
+        .p1()
+        .iter()
+        .map(|(entity, transform, unit)| {
+            (
+                entity,
+                transform.translation.truncate(),
+                unit.kind.is_priest(),
+            )
+        })
+        .collect();
+    let non_support_follow_targets: Vec<(Entity, Vec2)> = all_enemy_positions
+        .iter()
+        .filter(|(_, _, is_priest)| !*is_priest)
+        .map(|(entity, position, _)| (*entity, *position))
+        .collect();
+    let fallback_follow_targets: Vec<(Entity, Vec2)> = all_enemy_positions
+        .iter()
+        .map(|(entity, position, _)| (*entity, *position))
+        .collect();
+
+    for (
+        enemy_entity,
+        unit,
+        move_speed,
+        attack_profile,
+        ranged_profile,
+        mut movement_state,
+        mut enemy_transform,
+    ) in &mut enemy_sets.p0()
     {
         let enemy_position = enemy_transform.translation.truncate();
-        if let Some(target) = choose_nearest(enemy_position, &targets) {
+        let target = if unit.kind.is_priest() {
+            choose_support_follow_target(
+                enemy_entity,
+                enemy_position,
+                &non_support_follow_targets,
+                &fallback_follow_targets,
+            )
+        } else {
+            choose_nearest(enemy_position, &targets)
+        };
+        if let Some(target) = target {
             let delta = target - enemy_position;
             let distance = delta.length();
             let desired_range = enemy_engagement_range(attack_profile.range, ranged_profile);
@@ -865,42 +912,6 @@ fn project_to_diamond_perimeter(delta: Vec2, half_extent: f32) -> Vec2 {
     delta * (diamond_radius / l1)
 }
 
-pub fn should_move_towards_target(
-    was_moving: bool,
-    distance_to_target: f32,
-    stop_distance: f32,
-    resume_distance: f32,
-) -> bool {
-    if was_moving {
-        return distance_to_target > stop_distance;
-    }
-    distance_to_target > resume_distance
-}
-
-pub fn chase_step_distance(distance_to_target: f32, stop_distance: f32, max_step: f32) -> f32 {
-    if max_step <= 0.0 {
-        return 0.0;
-    }
-    (distance_to_target - stop_distance).max(0.0).min(max_step)
-}
-
-pub fn chase_target_positions(all_friendlies: &[(Vec2, bool)]) -> Vec<Vec2> {
-    if all_friendlies.is_empty() {
-        return Vec::new();
-    }
-    let has_retinue = all_friendlies.iter().any(|(_, is_commander)| !is_commander);
-    all_friendlies
-        .iter()
-        .filter_map(|(position, is_commander)| {
-            if has_retinue && *is_commander {
-                None
-            } else {
-                Some(*position)
-            }
-        })
-        .collect()
-}
-
 #[allow(clippy::type_complexity)]
 fn update_bandit_visual_states(
     art: Res<ArtAssets>,
@@ -987,28 +998,21 @@ pub fn decide_bandit_visual_state(
     }
 }
 
-pub fn choose_nearest(origin: Vec2, candidates: &[Vec2]) -> Option<Vec2> {
-    candidates.iter().copied().min_by(|a, b| {
-        let da = origin.distance_squared(*a);
-        let db = origin.distance_squared(*b);
-        da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use bevy::prelude::Vec2;
 
+    use crate::ai::{
+        chase_step_distance, chase_target_positions, choose_nearest, should_move_towards_target,
+    };
     use crate::combat::RangedAttackProfile;
     use crate::data::{WaveConfig, WavesConfigFile};
     use crate::enemies::{
         BanditVisualState, EnemyRoleCounts, EnemySpawnRole, batch_interval_secs,
-        batch_size_for_wave, chase_step_distance, chase_target_positions, choose_nearest,
-        decide_bandit_visual_state, enemy_engagement_range, enemy_move_speed,
+        batch_size_for_wave, decide_bandit_visual_state, enemy_engagement_range, enemy_move_speed,
         formation_overflow_repel_target, formation_perimeter_target,
         max_inside_enemy_count_for_formation, overflow_indices_by_distance, pick_next_spawn_role,
-        random_spawn_position, should_move_towards_target, units_per_second_for_wave,
-        wave_duration_secs, wave_stat_multiplier,
+        random_spawn_position, units_per_second_for_wave, wave_duration_secs, wave_stat_multiplier,
     };
     use crate::formation::{ActiveFormation, formation_contains_position};
     use crate::map::MapBounds;
