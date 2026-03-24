@@ -1689,7 +1689,7 @@ fn level_up_tier_border_color(tier: UpgradeValueTier) -> Color {
         UpgradeValueTier::Rare => Color::srgb(0.1, 0.95, 0.28),
         UpgradeValueTier::Epic => Color::srgb(0.67, 0.38, 0.91),
         UpgradeValueTier::Mythical => Color::srgb(1.0, 0.56, 0.08),
-        UpgradeValueTier::Unique => Color::srgb(0.5, 0.31, 0.18),
+        UpgradeValueTier::Unique => Color::srgb(0.92, 0.2, 0.2),
     }
 }
 
