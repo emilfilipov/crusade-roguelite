@@ -15,6 +15,8 @@ use crate::model::{
     Unit, UnitCohesion, UnitKind,
 };
 use crate::squad::PriestSupportCaster;
+use crate::squad::RosterEconomy;
+use crate::upgrades::Progression;
 use crate::visuals::ArtAssets;
 
 #[derive(Resource, Clone, Debug, Default)]
@@ -115,6 +117,10 @@ const ENEMY_SPAWN_MIN_DISTANCE_FROM_COMMANDER: f32 = 200.0;
 const ENEMY_SPAWN_ATTEMPTS: u32 = 8;
 const DEFAULT_SPAWN_HALF_WIDTH: f32 = 900.0;
 const DEFAULT_SPAWN_HALF_HEIGHT: f32 = 700.0;
+const ENEMY_LEVEL_PRESSURE_PER_LEVEL: f32 = 0.011;
+const ENEMY_RETINUE_PRESSURE_PER_UNIT: f32 = 0.008;
+const ENEMY_RETINUE_PRESSURE_EXPONENT: f32 = 0.72;
+const ENEMY_PLAYER_PRESSURE_STAT_CAP: f32 = 3.5;
 
 pub struct EnemyPlugin;
 
@@ -192,11 +198,14 @@ fn spawn_waves(time: Res<Time>, data: Res<GameData>, mut wave_runtime: ResMut<Wa
     enqueue_wave_batch(&mut wave_runtime, spawn_count, wave_number, stat_scale);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_pending_enemy_batches(
     mut commands: Commands,
     data: Res<GameData>,
     art: Res<ArtAssets>,
     setup_selection: Option<Res<MatchSetupSelection>>,
+    progression: Option<Res<Progression>>,
+    roster_economy: Option<Res<RosterEconomy>>,
     bounds: Option<Res<MapBounds>>,
     commanders: Query<&Transform, With<CommanderUnit>>,
     mut wave_runtime: ResMut<WaveRuntime>,
@@ -218,6 +227,13 @@ fn spawn_pending_enemy_batches(
         .get_single()
         .map(|transform| transform.translation.truncate())
         .unwrap_or(Vec2::ZERO);
+    let commander_level = progression.as_ref().map(|value| value.level).unwrap_or(1);
+    let retinue_count = roster_economy
+        .as_ref()
+        .map(|value| value.total_retinue_count)
+        .unwrap_or(0);
+    let player_pressure_multiplier =
+        enemy_player_pressure_multiplier(commander_level, retinue_count);
     let current_time = wave_runtime.elapsed;
     let mut spawn_sequence = wave_runtime.spawn_sequence;
     let mut pending_batches = std::mem::take(&mut wave_runtime.pending_batches);
@@ -239,7 +255,7 @@ fn spawn_pending_enemy_batches(
             spawn_bounds,
             commander_position,
             batch.wave_number,
-            batch.stat_scale,
+            batch.stat_scale * player_pressure_multiplier,
             &mut spawn_sequence,
             &mut role_mix,
         );
@@ -577,6 +593,15 @@ pub fn units_per_second_for_wave(config: &WavesConfigFile, wave_number: u32) -> 
 
 pub fn wave_stat_multiplier(wave_number: u32) -> f32 {
     1.0 + wave_number.saturating_sub(1) as f32 * WAVE_STAT_GROWTH_PER_WAVE
+}
+
+pub fn enemy_player_pressure_multiplier(commander_level: u32, retinue_count: u32) -> f32 {
+    let level_multiplier =
+        1.0 + commander_level.saturating_sub(1) as f32 * ENEMY_LEVEL_PRESSURE_PER_LEVEL;
+    let retinue_multiplier = 1.0
+        + (retinue_count as f32).powf(ENEMY_RETINUE_PRESSURE_EXPONENT)
+            * ENEMY_RETINUE_PRESSURE_PER_UNIT;
+    (level_multiplier * retinue_multiplier).clamp(1.0, ENEMY_PLAYER_PRESSURE_STAT_CAP)
 }
 
 fn default_spawn_bounds() -> MapBounds {
@@ -1031,9 +1056,10 @@ mod tests {
     use crate::enemies::{
         BanditVisualState, EnemyRoleCounts, EnemySpawnRole, batch_interval_secs,
         batch_size_for_wave, decide_bandit_visual_state, enemy_engagement_range, enemy_move_speed,
-        formation_overflow_repel_target, formation_perimeter_target,
-        max_inside_enemy_count_for_formation, overflow_indices_by_distance, pick_next_spawn_role,
-        random_spawn_position, units_per_second_for_wave, wave_duration_secs, wave_stat_multiplier,
+        enemy_player_pressure_multiplier, formation_overflow_repel_target,
+        formation_perimeter_target, max_inside_enemy_count_for_formation,
+        overflow_indices_by_distance, pick_next_spawn_role, random_spawn_position,
+        units_per_second_for_wave, wave_duration_secs, wave_stat_multiplier,
     };
     use crate::formation::{ActiveFormation, formation_contains_position};
     use crate::map::MapBounds;
@@ -1103,6 +1129,25 @@ mod tests {
         assert!((wave_stat_multiplier(2) - 1.102).abs() < 0.001);
         assert!(wave_stat_multiplier(8) > wave_stat_multiplier(3));
         assert!(enemy_move_speed(100.0) < 100.0);
+    }
+
+    #[test]
+    fn player_pressure_multiplier_increases_with_level_and_retinue() {
+        let baseline = enemy_player_pressure_multiplier(1, 0);
+        let mid = enemy_player_pressure_multiplier(30, 20);
+        let late = enemy_player_pressure_multiplier(100, 120);
+        assert!((baseline - 1.0).abs() < 0.001);
+        assert!(mid > baseline);
+        assert!(late > mid);
+    }
+
+    #[test]
+    fn player_pressure_multiplier_outpaces_passive_level_scaling_with_retinue() {
+        let commander_level: u32 = 60;
+        let retinue_count: u32 = 40;
+        let passive_friendly = 1.0 + commander_level.saturating_sub(1) as f32 * 0.01;
+        let enemy_pressure = enemy_player_pressure_multiplier(commander_level, retinue_count);
+        assert!(enemy_pressure > passive_friendly);
     }
 
     #[test]
