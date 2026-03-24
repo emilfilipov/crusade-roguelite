@@ -28,6 +28,8 @@ const RANGED_PROJECTILE_RENDER_SIZE: f32 = 16.0;
 const RANGED_PROJECTILE_RENDER_Z: f32 = 28.0;
 const DEFAULT_CRIT_DAMAGE_MULTIPLIER: f32 = 1.2;
 const MAX_CRIT_CHANCE: f32 = 0.95;
+const ARMOR_DIMINISHING_SCALE: f32 = 90.0;
+const MAX_ARMOR_REDUCTION_RATIO: f32 = 0.90;
 
 #[derive(Clone, Copy, Debug)]
 struct CombatRngState {
@@ -576,7 +578,7 @@ fn emit_damage_events(
                 outgoing_damage =
                     apply_critical_multiplier(outgoing_damage, is_critical, crit_multiplier);
             }
-            let mut damage = (outgoing_damage - armor).max(1.0);
+            let mut damage = compute_damage(outgoing_damage, armor, 1.0);
             let execute_threshold = conditional_effects
                 .as_deref()
                 .map(|effects| effects.execute_below_health_ratio)
@@ -594,7 +596,7 @@ fn emit_damage_events(
                 execute_threshold,
             );
             if execute {
-                damage = target_health + armor + 1.0;
+                damage = target_health + 1.0;
             }
 
             damage_events.send(DamageEvent {
@@ -669,7 +671,18 @@ pub fn effective_formation_offense_multiplier(
 }
 
 pub fn compute_damage(base_damage: f32, armor: f32, outgoing_multiplier: f32) -> f32 {
-    (base_damage * outgoing_multiplier - armor).max(1.0)
+    let scaled_damage = (base_damage * outgoing_multiplier).max(0.0);
+    let reduction_ratio = armor_reduction_ratio(armor);
+    (scaled_damage * (1.0 - reduction_ratio)).max(1.0)
+}
+
+pub fn armor_reduction_ratio(armor: f32) -> f32 {
+    let clamped_armor = armor.max(0.0);
+    if clamped_armor <= 0.0 {
+        return 0.0;
+    }
+    (clamped_armor / (clamped_armor + ARMOR_DIMINISHING_SCALE))
+        .clamp(0.0, MAX_ARMOR_REDUCTION_RATIO)
 }
 
 fn critical_hit(roll: f32, crit_chance: f32) -> bool {
@@ -857,12 +870,12 @@ mod tests {
     use bevy::prelude::{Entity, Vec2};
 
     use crate::combat::{
-        FriendlyFormationContext, apply_critical_multiplier, commander_level_combat_multiplier,
-        compute_damage, critical_hit, effective_formation_offense_multiplier, enemy_target_allowed,
-        friendly_critical_parameters, friendly_formation_context, friendly_outgoing_multiplier,
-        inside_active_formation_bounds, inside_formation_damage_multiplier,
-        morale_effect_multiplier, ranged_target_in_window, should_execute_target,
-        unit_is_non_damaging_support,
+        FriendlyFormationContext, apply_critical_multiplier, armor_reduction_ratio,
+        commander_level_combat_multiplier, compute_damage, critical_hit,
+        effective_formation_offense_multiplier, enemy_target_allowed, friendly_critical_parameters,
+        friendly_formation_context, friendly_outgoing_multiplier, inside_active_formation_bounds,
+        inside_formation_damage_multiplier, morale_effect_multiplier, ranged_target_in_window,
+        should_execute_target, unit_is_non_damaging_support,
     };
     use crate::formation::{ActiveFormation, FormationModifiers};
     use crate::model::{GlobalBuffs, Team, Unit, UnitKind};
@@ -870,8 +883,29 @@ mod tests {
 
     #[test]
     fn damage_formula_respects_armor_floor() {
-        let damage = compute_damage(3.0, 10.0, 1.0);
+        let damage = compute_damage(3.0, 10_000.0, 1.0);
         assert_eq!(damage, 1.0);
+    }
+
+    #[test]
+    fn armor_reduction_uses_diminishing_returns_and_caps_at_ninety_percent() {
+        let low = armor_reduction_ratio(25.0);
+        let mid = armor_reduction_ratio(100.0);
+        let high = armor_reduction_ratio(400.0);
+        let extreme = armor_reduction_ratio(100_000.0);
+
+        assert!(low > 0.0);
+        assert!(mid > low);
+        assert!(high > mid);
+        assert!(high - mid < mid - low);
+        assert!(extreme <= 0.90 + 0.0001);
+        assert!(extreme >= 0.89);
+    }
+
+    #[test]
+    fn armor_cap_preserves_at_least_ten_percent_of_high_incoming_damage() {
+        let damage = compute_damage(100.0, 100_000.0, 1.0);
+        assert!((damage - 10.0).abs() < 0.001);
     }
 
     #[test]

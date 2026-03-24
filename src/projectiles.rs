@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use crate::combat::should_execute_target;
+use crate::combat::{compute_damage, should_execute_target};
 use crate::model::{DamageEvent, GameState, GlobalBuffs, Health, Team, Unit};
 use crate::upgrades::ConditionalUpgradeEffects;
 
@@ -84,9 +84,9 @@ fn projectile_collisions(
                     execute_threshold,
                 );
                 let damage = if execute {
-                    target_health.current + effective_armor + 1.0
+                    target_health.current + 1.0
                 } else {
-                    (projectile.damage - effective_armor).max(1.0)
+                    compute_damage(projectile.damage, effective_armor, 1.0)
                 };
                 damage_events.send(DamageEvent {
                     target: target_entity,
