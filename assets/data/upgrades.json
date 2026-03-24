@@ -31,6 +31,18 @@
       "one_time": true
     },
     {
+      "id": "fast_learner_up_10",
+      "kind": "fast_learner",
+      "value": 0.10,
+      "one_time": true
+    },
+    {
+      "id": "fast_learner_up_15",
+      "kind": "fast_learner",
+      "value": 0.15,
+      "one_time": true
+    },
+    {
       "id": "crit_chance_up",
       "kind": "crit_chance",
       "min_value": 0.01,
