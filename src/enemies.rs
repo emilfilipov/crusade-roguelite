@@ -480,8 +480,10 @@ fn pick_next_spawn_role(
     let mut best_deficit = f32::MIN;
     let mut best = [EnemySpawnRole::Melee; 3];
     let mut best_count = 0usize;
+    let non_support_role_count = has_melee as u32 + has_ranged as u32;
     for role in candidates.iter().copied().take(candidate_count) {
-        let deficit = target_role_count(role, next_total) - counts.count_for(role) as f32;
+        let deficit = target_role_count(role, next_total, has_support, non_support_role_count)
+            - counts.count_for(role) as f32;
         if deficit > best_deficit + f32::EPSILON {
             best_deficit = deficit;
             best[0] = role;
@@ -497,11 +499,30 @@ fn pick_next_spawn_role(
     best[(tie_seed as usize) % best_count]
 }
 
-fn target_role_count(role: EnemySpawnRole, next_total: u32) -> f32 {
+fn target_role_count(
+    role: EnemySpawnRole,
+    next_total: u32,
+    has_support: bool,
+    non_support_role_count: u32,
+) -> f32 {
     let ratio = match role {
-        EnemySpawnRole::Melee => 0.5,
-        EnemySpawnRole::Ranged => 0.25,
-        EnemySpawnRole::Support => 0.25,
+        EnemySpawnRole::Support => {
+            if !has_support {
+                0.0
+            } else if non_support_role_count == 0 {
+                1.0
+            } else {
+                0.25
+            }
+        }
+        EnemySpawnRole::Melee | EnemySpawnRole::Ranged => {
+            if non_support_role_count == 0 {
+                0.0
+            } else {
+                let support_ratio = if has_support { 0.25 } else { 0.0 };
+                (1.0 - support_ratio) / non_support_role_count as f32
+            }
+        }
     };
     next_total as f32 * ratio
 }
@@ -1105,9 +1126,9 @@ mod tests {
             assert!(counts.support <= counts.total / 4);
         }
         assert_eq!(counts.total, 40);
-        assert_eq!(counts.melee, 20);
-        assert_eq!(counts.ranged, 10);
         assert_eq!(counts.support, 10);
+        assert_eq!(counts.melee + counts.ranged, 30);
+        assert!((counts.melee as i32 - counts.ranged as i32).abs() <= 1);
     }
 
     #[test]
