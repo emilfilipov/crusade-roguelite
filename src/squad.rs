@@ -32,6 +32,7 @@ const PRIEST_BLESSING_VFX_ALPHA: f32 = 0.28;
 const PRIEST_BLESSING_VFX_SCALE_X: f32 = 1.75;
 const PRIEST_BLESSING_VFX_SCALE_Y: f32 = 0.92;
 const PRIEST_BLESSING_VFX_MIN_RADIUS: f32 = 8.0;
+const TIER0_CONVERSION_XP_PROGRESS_COST_RATIO: f32 = 0.10;
 
 #[derive(Resource, Clone, Debug, Default)]
 pub struct SquadRoster {
@@ -111,6 +112,13 @@ pub struct PromoteUnitsEvent {
     pub count: u32,
 }
 
+#[derive(Event, Clone, Copy, Debug)]
+pub struct ConvertTierZeroUnitsEvent {
+    pub from_kind: UnitKind,
+    pub to_kind: UnitKind,
+    pub count: u32,
+}
+
 pub struct SquadPlugin;
 
 impl Plugin for SquadPlugin {
@@ -122,6 +130,7 @@ impl Plugin for SquadPlugin {
             .add_systems(Startup, setup_priest_blessing_vfx_assets)
             .add_event::<RecruitEvent>()
             .add_event::<PromoteUnitsEvent>()
+            .add_event::<ConvertTierZeroUnitsEvent>()
             .add_event::<UnitDiedEvent>()
             .add_systems(Update, handle_start_run)
             .add_systems(
@@ -133,6 +142,7 @@ impl Plugin for SquadPlugin {
                 (
                     apply_recruit_events,
                     apply_promotion_events,
+                    apply_tier0_conversion_events,
                     run_priest_support_logic,
                     sync_priest_blessing_vfx,
                     sync_roster,
@@ -659,65 +669,19 @@ fn apply_promotion_events(
             let mut updated_unit = unit;
             updated_unit.kind = event.to_kind;
             let upgraded_level_cost = level_cost.0.saturating_add(step_cost);
-            commands.entity(entity).insert((
+            apply_friendly_kind_loadout(
+                &mut commands,
+                entity,
                 updated_unit,
-                UnitTier(target_tier),
-                UnitLevelCost(upgraded_level_cost),
-                Health::new(cfg.max_hp),
-                BaseMaxHealth(cfg.max_hp),
-                Morale::new(cfg.morale),
-                Armor(cfg.armor),
-                MoveSpeed(cfg.move_speed),
-                ColliderRadius(new_collider_radius),
+                target_tier,
+                upgraded_level_cost,
+                &cfg,
                 new_texture,
-            ));
-
-            if has_melee {
-                commands.entity(entity).insert((
-                    AttackProfile {
-                        damage: cfg.damage,
-                        range: cfg.attack_range,
-                        cooldown_secs: cfg.attack_cooldown_secs,
-                    },
-                    AttackCooldown(Timer::from_seconds(
-                        cfg.attack_cooldown_secs,
-                        TimerMode::Repeating,
-                    )),
-                ));
-            } else {
-                commands
-                    .entity(entity)
-                    .remove::<(AttackProfile, AttackCooldown)>();
-            }
-
-            if has_ranged {
-                commands.entity(entity).insert((
-                    RangedAttackProfile {
-                        damage: cfg.ranged_attack_damage,
-                        range: cfg.ranged_attack_range,
-                        projectile_speed: cfg.ranged_projectile_speed,
-                        projectile_max_distance: cfg.ranged_projectile_max_distance,
-                    },
-                    RangedAttackCooldown(Timer::from_seconds(
-                        cfg.ranged_attack_cooldown_secs,
-                        TimerMode::Repeating,
-                    )),
-                ));
-            } else {
-                commands
-                    .entity(entity)
-                    .remove::<(RangedAttackProfile, RangedAttackCooldown)>();
-            }
-
-            if priest_kind {
-                commands.entity(entity).insert(PriestSupportCaster {
-                    cooldown: PRIEST_BLESSING_COOLDOWN_SECS,
-                });
-            } else {
-                commands
-                    .entity(entity)
-                    .remove::<(PriestSupportCaster, PriestAttackSpeedBlessing)>();
-            }
+                new_collider_radius,
+                has_melee,
+                has_ranged,
+                priest_kind,
+            );
 
             predicted_locked = predicted_locked.saturating_add(step_cost);
             promoted = promoted.saturating_add(1);
@@ -731,6 +695,128 @@ fn apply_promotion_events(
         if promoted > 0 {
             feedback.blocked_upgrade_reason = None;
         }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+#[allow(clippy::type_complexity)]
+fn apply_tier0_conversion_events(
+    mut commands: Commands,
+    mut convert_events: EventReader<ConvertTierZeroUnitsEvent>,
+    data: Res<GameData>,
+    art: Res<ArtAssets>,
+    progression: Option<ResMut<Progression>>,
+    mut feedback: ResMut<RosterEconomyFeedback>,
+    friendlies: Query<
+        (Entity, &Unit, &UnitTier, Option<&UnitLevelCost>),
+        (With<FriendlyUnit>, Without<CommanderUnit>),
+    >,
+) {
+    if convert_events.is_empty() {
+        return;
+    }
+    let Some(mut progression) = progression else {
+        return;
+    };
+    feedback.blocked_upgrade_reason = None;
+
+    for event in convert_events.read() {
+        if event.count == 0 || event.from_kind == event.to_kind {
+            feedback.blocked_upgrade_reason = Some(
+                "Tier-0 conversion ignored: invalid count or identical source/target unit type."
+                    .to_string(),
+            );
+            continue;
+        }
+        let Some(from_tier) = friendly_tier_for_kind(event.from_kind) else {
+            feedback.blocked_upgrade_reason =
+                Some("Tier-0 conversion blocked: invalid source unit type.".to_string());
+            continue;
+        };
+        let Some(to_tier) = friendly_tier_for_kind(event.to_kind) else {
+            feedback.blocked_upgrade_reason =
+                Some("Tier-0 conversion blocked: invalid target unit type.".to_string());
+            continue;
+        };
+        if from_tier != 0 || to_tier != 0 {
+            feedback.blocked_upgrade_reason = Some(
+                "Tier-0 conversion blocked: both source and target must be tier-0 units."
+                    .to_string(),
+            );
+            continue;
+        }
+        let from_faction = event.from_kind.faction();
+        let to_faction = event.to_kind.faction();
+        if from_faction.is_none() || from_faction != to_faction {
+            feedback.blocked_upgrade_reason = Some(
+                "Tier-0 conversion blocked: source and target must be from the same faction."
+                    .to_string(),
+            );
+            continue;
+        }
+
+        let mut candidates: Vec<(Entity, Unit, UnitTier, UnitLevelCost)> = friendlies
+            .iter()
+            .filter_map(|(entity, unit, tier, level_cost)| {
+                (unit.kind == event.from_kind).then_some((
+                    entity,
+                    *unit,
+                    *tier,
+                    level_cost.copied().unwrap_or(UnitLevelCost(0)),
+                ))
+            })
+            .collect();
+        candidates.sort_by_key(|(entity, _, _, _)| entity.index());
+        let convertible = event.count.min(candidates.len() as u32);
+        if convertible == 0 {
+            feedback.blocked_upgrade_reason = Some(format!(
+                "Tier-0 conversion blocked: no eligible '{}' units available.",
+                unit_kind_label(event.from_kind)
+            ));
+            continue;
+        }
+
+        let xp_cost_per_unit = tier0_conversion_xp_cost(progression.next_level_xp);
+        let total_xp_cost = xp_cost_per_unit * convertible as f32;
+        if progression.xp + 0.001 < total_xp_cost {
+            feedback.blocked_upgrade_reason = Some(format!(
+                "Tier-0 conversion blocked: requires {:.1} XP progress for {} swap(s), current progress is {:.1}.",
+                total_xp_cost, convertible, progression.xp
+            ));
+            continue;
+        }
+
+        let Some(target_profile) = friendly_profile_for_kind(&data, &art, event.to_kind) else {
+            feedback.blocked_upgrade_reason =
+                Some("Tier-0 conversion blocked: missing target unit profile data.".to_string());
+            continue;
+        };
+        let friendly_faction = event.to_kind.faction().unwrap_or(PlayerFaction::Christian);
+        let adjusted_cfg = faction_adjusted_friendly_stats(
+            target_profile.0,
+            data.factions.for_faction(friendly_faction),
+        );
+
+        for (entity, unit, tier, level_cost) in candidates.into_iter().take(convertible as usize) {
+            let mut updated_unit = unit;
+            updated_unit.kind = event.to_kind;
+            apply_friendly_kind_loadout(
+                &mut commands,
+                entity,
+                updated_unit,
+                tier.0,
+                level_cost.0,
+                &adjusted_cfg,
+                target_profile.1.clone(),
+                target_profile.2,
+                target_profile.3,
+                target_profile.4,
+                target_profile.5,
+            );
+        }
+
+        progression.xp = (progression.xp - total_xp_cost).max(0.0);
+        feedback.blocked_upgrade_reason = None;
     }
 }
 
@@ -998,6 +1084,10 @@ pub fn promotion_step_cost(from_kind: UnitKind, to_kind: UnitKind) -> Option<u32
     (to_tier > from_tier).then_some((to_tier - from_tier) as u32)
 }
 
+pub fn tier0_conversion_xp_cost(next_level_xp: f32) -> f32 {
+    (next_level_xp.max(0.0) * TIER0_CONVERSION_XP_PROGRESS_COST_RATIO).max(0.0)
+}
+
 pub fn unlocked_upgrade_tier_for_wave(current_wave: u32) -> u8 {
     ((current_wave.max(1).saturating_sub(1) / 10).min(5)) as u8
 }
@@ -1091,6 +1181,81 @@ fn friendly_profile_for_kind<'a>(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn apply_friendly_kind_loadout(
+    commands: &mut Commands,
+    entity: Entity,
+    updated_unit: Unit,
+    target_tier: u8,
+    level_cost: u32,
+    cfg: &UnitStatsConfig,
+    texture: Handle<Image>,
+    collider_radius: f32,
+    has_melee: bool,
+    has_ranged: bool,
+    priest_kind: bool,
+) {
+    commands.entity(entity).insert((
+        updated_unit,
+        UnitTier(target_tier),
+        UnitLevelCost(level_cost),
+        Health::new(cfg.max_hp),
+        BaseMaxHealth(cfg.max_hp),
+        Morale::new(cfg.morale),
+        Armor(cfg.armor),
+        MoveSpeed(cfg.move_speed),
+        ColliderRadius(collider_radius),
+        texture,
+    ));
+
+    if has_melee {
+        commands.entity(entity).insert((
+            AttackProfile {
+                damage: cfg.damage,
+                range: cfg.attack_range,
+                cooldown_secs: cfg.attack_cooldown_secs,
+            },
+            AttackCooldown(Timer::from_seconds(
+                cfg.attack_cooldown_secs,
+                TimerMode::Repeating,
+            )),
+        ));
+    } else {
+        commands
+            .entity(entity)
+            .remove::<(AttackProfile, AttackCooldown)>();
+    }
+
+    if has_ranged {
+        commands.entity(entity).insert((
+            RangedAttackProfile {
+                damage: cfg.ranged_attack_damage,
+                range: cfg.ranged_attack_range,
+                projectile_speed: cfg.ranged_projectile_speed,
+                projectile_max_distance: cfg.ranged_projectile_max_distance,
+            },
+            RangedAttackCooldown(Timer::from_seconds(
+                cfg.ranged_attack_cooldown_secs,
+                TimerMode::Repeating,
+            )),
+        ));
+    } else {
+        commands
+            .entity(entity)
+            .remove::<(RangedAttackProfile, RangedAttackCooldown)>();
+    }
+
+    if priest_kind {
+        commands.entity(entity).insert(PriestSupportCaster {
+            cooldown: PRIEST_BLESSING_COOLDOWN_SECS,
+        });
+    } else {
+        commands
+            .entity(entity)
+            .remove::<(PriestSupportCaster, PriestAttackSpeedBlessing)>();
+    }
+}
+
 pub fn priest_attack_speed_multiplier(active_blessing: Option<&PriestAttackSpeedBlessing>) -> f32 {
     if active_blessing
         .map(|blessing| blessing.remaining_secs > 0.0)
@@ -1117,11 +1282,11 @@ mod tests {
         RecruitUnitKind, StartRunEvent, Team, Unit, UnitKind,
     };
     use crate::squad::{
-        PriestSupportCaster, PromoteUnitsEvent, RosterEconomy, RosterEconomyFeedback, SquadPlugin,
-        enemy_inside_active_formation, is_upgrade_tier_unlocked,
-        movement_multiplier_from_inside_enemy_count, priest_should_cast,
-        refresh_priest_blessing_remaining, tick_priest_cooldown, unlock_wave_for_tier,
-        unlocked_upgrade_tier_for_wave,
+        ConvertTierZeroUnitsEvent, PriestSupportCaster, PromoteUnitsEvent, RosterEconomy,
+        RosterEconomyFeedback, SquadPlugin, enemy_inside_active_formation,
+        is_upgrade_tier_unlocked, movement_multiplier_from_inside_enemy_count, priest_should_cast,
+        refresh_priest_blessing_remaining, tick_priest_cooldown, tier0_conversion_xp_cost,
+        unlock_wave_for_tier, unlocked_upgrade_tier_for_wave,
     };
     use crate::upgrades::Progression;
     use crate::visuals::ArtAssets;
@@ -1493,6 +1658,141 @@ mod tests {
                 UnitKind::MuslimPeasantArcher
             ),
             None
+        );
+    }
+
+    #[test]
+    fn tier0_conversion_cost_is_ten_percent_of_level_progress_requirement() {
+        assert!((tier0_conversion_xp_cost(100.0) - 10.0).abs() < 0.001);
+        assert!((tier0_conversion_xp_cost(257.0) - 25.7).abs() < 0.001);
+    }
+
+    #[test]
+    fn tier0_conversion_swaps_unit_and_consumes_xp_progress() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, bevy::state::app::StatesPlugin));
+        app.init_state::<GameState>();
+        app.add_event::<StartRunEvent>();
+        app.insert_resource(
+            GameData::load_from_dir(std::path::Path::new("assets/data")).expect("data"),
+        );
+        app.insert_resource(ArtAssets::default());
+        app.insert_resource(ActiveFormation::Square);
+        app.insert_resource(FormationModifiers::default());
+        app.insert_resource(Progression {
+            xp: 30.0,
+            level: 8,
+            next_level_xp: 100.0,
+        });
+        app.add_plugins(SquadPlugin);
+
+        app.world_mut().send_event(StartRunEvent);
+        app.update();
+        app.world_mut()
+            .resource_mut::<NextState<GameState>>()
+            .set(GameState::InRun);
+        app.update();
+
+        app.world_mut().send_event(RecruitEvent {
+            world_position: Vec2::new(10.0, 5.0),
+            recruit_kind: RecruitUnitKind::ChristianPeasantInfantry,
+        });
+        app.update();
+
+        app.world_mut().send_event(ConvertTierZeroUnitsEvent {
+            from_kind: UnitKind::ChristianPeasantInfantry,
+            to_kind: UnitKind::ChristianPeasantArcher,
+            count: 1,
+        });
+        app.update();
+
+        let mut infantry_count = 0usize;
+        let mut archer_count = 0usize;
+        {
+            let world = app.world_mut();
+            let mut query = world.query::<(&Unit, Option<&FriendlyUnit>)>();
+            for (unit, friendly) in query.iter(world) {
+                if friendly.is_none() {
+                    continue;
+                }
+                match unit.kind {
+                    UnitKind::ChristianPeasantInfantry => infantry_count += 1,
+                    UnitKind::ChristianPeasantArcher => archer_count += 1,
+                    _ => {}
+                }
+            }
+        }
+        assert_eq!(archer_count, 1);
+        assert_eq!(infantry_count, 0);
+
+        let progression = app.world().resource::<Progression>();
+        assert!((progression.xp - 20.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn tier0_conversion_is_blocked_when_xp_progress_is_insufficient() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, bevy::state::app::StatesPlugin));
+        app.init_state::<GameState>();
+        app.add_event::<StartRunEvent>();
+        app.insert_resource(
+            GameData::load_from_dir(std::path::Path::new("assets/data")).expect("data"),
+        );
+        app.insert_resource(ArtAssets::default());
+        app.insert_resource(ActiveFormation::Square);
+        app.insert_resource(FormationModifiers::default());
+        app.insert_resource(Progression {
+            xp: 5.0,
+            level: 8,
+            next_level_xp: 100.0,
+        });
+        app.add_plugins(SquadPlugin);
+
+        app.world_mut().send_event(StartRunEvent);
+        app.update();
+        app.world_mut()
+            .resource_mut::<NextState<GameState>>()
+            .set(GameState::InRun);
+        app.update();
+
+        app.world_mut().send_event(RecruitEvent {
+            world_position: Vec2::new(10.0, 5.0),
+            recruit_kind: RecruitUnitKind::ChristianPeasantInfantry,
+        });
+        app.update();
+
+        app.world_mut().send_event(ConvertTierZeroUnitsEvent {
+            from_kind: UnitKind::ChristianPeasantInfantry,
+            to_kind: UnitKind::ChristianPeasantArcher,
+            count: 1,
+        });
+        app.update();
+
+        let mut infantry_count = 0usize;
+        let mut archer_count = 0usize;
+        {
+            let world = app.world_mut();
+            let mut query = world.query::<(&Unit, Option<&FriendlyUnit>)>();
+            for (unit, friendly) in query.iter(world) {
+                if friendly.is_none() {
+                    continue;
+                }
+                match unit.kind {
+                    UnitKind::ChristianPeasantInfantry => infantry_count += 1,
+                    UnitKind::ChristianPeasantArcher => archer_count += 1,
+                    _ => {}
+                }
+            }
+        }
+        assert_eq!(archer_count, 0);
+        assert_eq!(infantry_count, 1);
+        let feedback = app.world().resource::<RosterEconomyFeedback>();
+        assert!(
+            feedback
+                .blocked_upgrade_reason
+                .as_deref()
+                .unwrap_or_default()
+                .contains("requires")
         );
     }
 
