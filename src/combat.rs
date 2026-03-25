@@ -4,7 +4,7 @@ use crate::data::GameData;
 use crate::formation::{
     ActiveFormation, FormationModifiers, active_formation_config, formation_contains_position,
 };
-use crate::inventory::{InventoryState, gear_bonuses_for_unit};
+use crate::inventory::{EquipmentArmyEffects, InventoryState, gear_bonuses_for_unit};
 use crate::model::{
     AttackCooldown, AttackProfile, DamageEvent, DamageTextEvent, EnemyUnit, GameState, GlobalBuffs,
     Health, Morale, SpawnExpPackEvent, Team, Unit, UnitDamagedEvent, UnitDiedEvent, UnitKind,
@@ -405,6 +405,7 @@ fn emit_damage_events(
     progression: Option<Res<Progression>>,
     global_buffs: Option<Res<GlobalBuffs>>,
     conditional_effects: Option<Res<ConditionalUpgradeEffects>>,
+    equipment_effects: Option<Res<EquipmentArmyEffects>>,
     commander_motion: Option<Res<CommanderMotionState>>,
     mut crit_rng: Local<CombatRngState>,
     inventory: Res<InventoryState>,
@@ -441,8 +442,13 @@ fn emit_damage_events(
                     tier.copied().map(|value| value.0),
                 )
                 .armor_bonus;
+                let temporary_armor_bonus = equipment_effects
+                    .as_deref()
+                    .map(|effects| effects.temporary_armor_bonus)
+                    .unwrap_or(0.0);
                 let armor_with_buffs = base_armor
                     + gear_armor_bonus
+                    + temporary_armor_bonus
                     + global_buffs
                         .as_ref()
                         .map(|buff| buff.armor_bonus)

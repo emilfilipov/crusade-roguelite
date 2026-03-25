@@ -34,6 +34,29 @@ pub const fn max_unique_upgrades() -> usize {
     MAX_UNIQUE_UPGRADES
 }
 
+pub fn is_supported_upgrade_kind(kind: &str) -> bool {
+    matches!(
+        kind,
+        "damage"
+            | "attack_speed"
+            | "fast_learner"
+            | "crit_chance"
+            | "crit_damage"
+            | "armor"
+            | "pickup_radius"
+            | "aura_radius"
+            | "authority_aura"
+            | "move_speed"
+            | "hospitalier_aura"
+            | "formation_breach"
+            | "unlock_formation"
+            | "mob_fury"
+            | "mob_justice"
+            | "mob_mercy"
+            | UNIQUE_SLOT_TRADEOFF_KIND
+    )
+}
+
 pub fn effective_max_unique_upgrades(tracker: &OneTimeUpgradeTracker) -> usize {
     MAX_UNIQUE_UPGRADES.saturating_add(tracker.extra_slots)
 }
@@ -1077,7 +1100,7 @@ fn roster_tier0_share(roster: &RosterEconomy) -> f32 {
 mod tests {
     use std::collections::HashSet;
 
-    use crate::data::UpgradeConfig;
+    use crate::data::{GameData, UpgradeConfig};
     use crate::formation::{
         ActiveFormation, FormationSkillBar, SKILL_BAR_CAPACITY, SkillBarSkill, SkillBarSkillKind,
     };
@@ -1731,5 +1754,18 @@ mod tests {
         assert_eq!(skill_book.entries[0].id, "damage_alpha");
         assert_eq!(skill_book.entries[0].stacks, 2);
         assert!((skill_book.entries[0].total_value - picked.value * 2.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn configured_upgrade_kinds_are_all_supported() {
+        let data =
+            GameData::load_from_dir(std::path::Path::new("assets/data")).expect("load game data");
+        for upgrade in &data.upgrades.upgrades {
+            assert!(
+                super::is_supported_upgrade_kind(&upgrade.kind),
+                "unsupported upgrade kind in data: {}",
+                upgrade.kind
+            );
+        }
     }
 }

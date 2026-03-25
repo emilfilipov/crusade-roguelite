@@ -2,7 +2,8 @@ use bevy::prelude::*;
 
 use crate::data::GameData;
 use crate::inventory::{
-    InventoryState, UnitCombatRole, commander_armywide_bonuses, gear_bonuses_for_unit,
+    EquipmentArmyEffects, InventoryState, UnitCombatRole, commander_armywide_bonuses,
+    gear_bonuses_for_unit,
 };
 use crate::model::{
     CommanderUnit, EnemyUnit, FriendlyUnit, GameState, GlobalBuffs, Health, MatchSetupSelection,
@@ -117,6 +118,7 @@ fn apply_morale_and_cohesion_events(
     buffs: Option<Res<GlobalBuffs>>,
     inventory: Option<Res<InventoryState>>,
     conditional_effects: Option<Res<ConditionalUpgradeEffects>>,
+    equipment_effects: Option<Res<EquipmentArmyEffects>>,
     mut damaged_events: EventReader<UnitDamagedEvent>,
     mut death_events: EventReader<UnitDiedEvent>,
     mut cohesion: ResMut<Cohesion>,
@@ -136,6 +138,12 @@ fn apply_morale_and_cohesion_events(
         .as_deref()
         .map(|effects| effects.friendly_loss_immunity)
         .unwrap_or(false);
+    let friendly_morale_only_immunity = equipment_effects
+        .as_deref()
+        .map(|effects| effects.morale_loss_immunity)
+        .unwrap_or(false);
+    let (friendly_total_loss_immunity, friendly_morale_immunity) =
+        friendly_immunity_flags(friendly_loss_immunity, friendly_morale_only_immunity);
     let aura_context = commanders.get_single().ok().map(|transform| {
         (
             transform.translation.truncate(),
@@ -193,19 +201,21 @@ fn apply_morale_and_cohesion_events(
                 } else {
                     1.0
                 };
-            if !(friendly_loss_immunity && event.team == Team::Friendly) {
+            if !(friendly_morale_immunity && event.team == Team::Friendly) {
                 morale.current = (morale.current - morale_loss).clamp(0.0, morale.max);
             }
         }
-        if event.team == Team::Friendly && !friendly_loss_immunity {
+        if event.team == Team::Friendly && !friendly_total_loss_immunity {
             cohesion.value -= friendly_cohesion_loss_from_damage(event.amount)
                 * authority_loss_multiplier
                 * gear_cohesion_loss_multiplier
                 * faction_mods.friendly_cohesion_loss_multiplier;
-            friendly_morale_loss += friendly_army_morale_loss_from_damage(event.amount)
-                * authority_loss_multiplier
-                * gear_morale_loss_multiplier
-                * faction_mods.friendly_morale_loss_multiplier;
+            if !friendly_morale_immunity {
+                friendly_morale_loss += friendly_army_morale_loss_from_damage(event.amount)
+                    * authority_loss_multiplier
+                    * gear_morale_loss_multiplier
+                    * faction_mods.friendly_morale_loss_multiplier;
+            }
         }
     }
 
@@ -237,16 +247,18 @@ fn apply_morale_and_cohesion_events(
                     loss_multiplier_from_gear_resistance(armywide.morale_loss_resistance);
                 let gear_cohesion_loss_multiplier =
                     loss_multiplier_from_gear_resistance(armywide.cohesion_loss_resistance);
-                if !friendly_loss_immunity {
+                if !friendly_total_loss_immunity {
                     cohesion.value -= friendly_death_cohesion_loss(event.max_health, event.kind)
                         * authority_loss_multiplier
                         * gear_cohesion_loss_multiplier
                         * faction_mods.friendly_cohesion_loss_multiplier;
-                    friendly_morale_loss +=
-                        friendly_death_morale_loss(event.max_health, event.kind)
-                            * authority_loss_multiplier
-                            * gear_morale_loss_multiplier
-                            * faction_mods.friendly_morale_loss_multiplier;
+                    if !friendly_morale_immunity {
+                        friendly_morale_loss +=
+                            friendly_death_morale_loss(event.max_health, event.kind)
+                                * authority_loss_multiplier
+                                * gear_morale_loss_multiplier
+                                * faction_mods.friendly_morale_loss_multiplier;
+                    }
                 }
                 enemy_morale_gain += ENEMY_MORALE_GAIN_ON_FRIENDLY_DEATH;
             }
@@ -268,6 +280,15 @@ fn apply_morale_and_cohesion_events(
     }
 
     cohesion.value = cohesion.value.clamp(0.0, 100.0);
+}
+
+fn friendly_immunity_flags(
+    conditional_full_immunity: bool,
+    chant_morale_only_immunity: bool,
+) -> (bool, bool) {
+    let total = conditional_full_immunity;
+    let morale = conditional_full_immunity || chant_morale_only_immunity;
+    (total, morale)
 }
 
 fn apply_authority_enemy_morale_drain(
@@ -617,7 +638,9 @@ pub fn cohesion_modifiers(value: f32) -> CohesionCombatModifiers {
 mod tests {
     use bevy::prelude::*;
 
-    use super::{EnemyKillRewardCounter, apply_morale_and_cohesion_events};
+    use super::{
+        EnemyKillRewardCounter, apply_morale_and_cohesion_events, friendly_immunity_flags,
+    };
     use crate::model::{
         FriendlyUnit, Morale, Team, Unit, UnitDamagedEvent, UnitDiedEvent, UnitKind,
     };
@@ -704,6 +727,15 @@ mod tests {
         };
         assert!((friendly_loss_multiplier_from_authority(false, Some(&buffs)) - 1.0).abs() < 0.001);
         assert!((friendly_loss_multiplier_from_authority(true, Some(&buffs)) - 0.75).abs() < 0.001);
+    }
+
+    #[test]
+    fn chant_immunity_only_blocks_morale_while_conditional_blocks_both() {
+        let chant_only = friendly_immunity_flags(false, true);
+        assert_eq!(chant_only, (false, true));
+
+        let conditional_only = friendly_immunity_flags(true, false);
+        assert_eq!(conditional_only, (true, true));
     }
 
     #[test]

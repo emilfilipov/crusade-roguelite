@@ -1179,9 +1179,10 @@ mod tests {
     use super::{
         BACKPACK_SLOT_CAPACITY, CHEST_SLOT_CAPACITY, EquipmentChestState, EquipmentUnitType,
         GearItemEntry, GearItemType, GearRarity, GearRolledStat, GearStatKind, InventoryPlaceError,
-        InventoryRngState, InventorySlotRef, InventoryState, gear_bonuses_for_unit,
-        place_item_into_slot, roll_chest_items, take_item_from_slot,
+        InventoryRngState, InventorySlotRef, InventoryState, commander_armywide_bonuses,
+        gear_bonuses_for_unit, place_item_into_slot, roll_chest_items, take_item_from_slot,
     };
+    use crate::inventory::UnitCombatRole;
     use crate::model::{PlayerFaction, UnitKind};
 
     fn make_test_item(item_type: GearItemType, stat: GearStatKind, value: f32) -> GearItemEntry {
@@ -1289,5 +1290,103 @@ mod tests {
                 assert!(second.points() >= 3);
             }
         }
+    }
+
+    #[test]
+    fn commander_items_apply_armywide_but_not_to_non_matching_item_slots() {
+        let mut inventory = InventoryState::default();
+        let mut chest = EquipmentChestState::default();
+        chest.ensure_capacity();
+
+        let banner_damage = make_test_item(GearItemType::Banner, GearStatKind::DamagePercent, 0.2);
+        place_item_into_slot(
+            &mut inventory,
+            &mut chest,
+            InventorySlotRef::Equipment {
+                unit_type: EquipmentUnitType::Commander,
+                slot_index: 0,
+            },
+            banner_damage,
+        )
+        .expect("equip commander banner");
+
+        let commander = gear_bonuses_for_unit(&inventory, UnitKind::Commander, Some(0));
+        assert!(commander.melee_damage_multiplier > 0.0);
+
+        let tier0 = gear_bonuses_for_unit(&inventory, UnitKind::ChristianPeasantInfantry, Some(0));
+        assert!(tier0.melee_damage_multiplier > 0.0);
+
+        let enemy = gear_bonuses_for_unit(
+            &inventory,
+            UnitKind::RescuableChristianPeasantInfantry,
+            None,
+        );
+        assert_eq!(enemy.melee_damage_multiplier, 0.0);
+    }
+
+    #[test]
+    fn tier_and_hero_equipment_stays_scoped_to_matching_setup() {
+        let mut inventory = InventoryState::default();
+        let mut chest = EquipmentChestState::default();
+        chest.ensure_capacity();
+
+        let tier0_sword =
+            make_test_item(GearItemType::MeleeWeapon, GearStatKind::DamagePercent, 0.15);
+        place_item_into_slot(
+            &mut inventory,
+            &mut chest,
+            InventorySlotRef::Equipment {
+                unit_type: EquipmentUnitType::Tier0,
+                slot_index: 0,
+            },
+            tier0_sword,
+        )
+        .expect("equip tier0 sword");
+
+        let hero_sword =
+            make_test_item(GearItemType::MeleeWeapon, GearStatKind::DamagePercent, 0.3);
+        place_item_into_slot(
+            &mut inventory,
+            &mut chest,
+            InventorySlotRef::Equipment {
+                unit_type: EquipmentUnitType::Hero,
+                slot_index: 0,
+            },
+            hero_sword,
+        )
+        .expect("equip hero sword");
+
+        let tier0 = gear_bonuses_for_unit(&inventory, UnitKind::ChristianPeasantInfantry, Some(0));
+        let tier1 = gear_bonuses_for_unit(&inventory, UnitKind::ChristianPeasantInfantry, Some(1));
+        let hero = gear_bonuses_for_unit(&inventory, UnitKind::ChristianPeasantInfantry, Some(6));
+        assert!(tier0.melee_damage_multiplier > 0.0);
+        assert_eq!(tier1.melee_damage_multiplier, 0.0);
+        assert!(hero.melee_damage_multiplier > tier0.melee_damage_multiplier);
+    }
+
+    #[test]
+    fn commander_cooldown_reduction_is_projected_armywide_for_support_roles() {
+        let mut inventory = InventoryState::default();
+        let mut chest = EquipmentChestState::default();
+        chest.ensure_capacity();
+
+        let chant = make_test_item(
+            GearItemType::Chant,
+            GearStatKind::CooldownReductionSecs,
+            1.5,
+        );
+        place_item_into_slot(
+            &mut inventory,
+            &mut chest,
+            InventorySlotRef::Equipment {
+                unit_type: EquipmentUnitType::Commander,
+                slot_index: 2,
+            },
+            chant,
+        )
+        .expect("equip commander chant");
+
+        let support_bonuses = commander_armywide_bonuses(&inventory, UnitCombatRole::Support);
+        assert!(support_bonuses.cooldown_reduction_secs > 0.0);
     }
 }

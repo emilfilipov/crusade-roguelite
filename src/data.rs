@@ -596,6 +596,12 @@ fn validate_upgrades(config: &UpgradesConfigFile) -> Result<()> {
         if upgrade.id.trim().is_empty() || upgrade.kind.trim().is_empty() {
             bail!("upgrade[{idx}] id and kind must be non-empty");
         }
+        if !crate::upgrades::is_supported_upgrade_kind(upgrade.kind.as_str()) {
+            bail!(
+                "upgrade[{idx}] kind '{}' is not wired in runtime systems",
+                upgrade.kind
+            );
+        }
         let is_formation_unlock = upgrade.kind == "unlock_formation";
         if is_formation_unlock {
             let Some(formation_id) = upgrade.formation_id.as_deref() else {
@@ -1207,6 +1213,27 @@ mod tests {
             err.to_string()
                 .contains("unknown requirement_active_formation")
         );
+    }
+
+    #[test]
+    fn rejects_upgrade_with_unwired_kind() {
+        let tmp = TempDir::new().expect("tmp");
+        write_valid_set(tmp.path());
+        write_config(
+            tmp.path(),
+            "upgrades.json",
+            r#"{
+              "upgrades":[
+                {
+                  "id":"mystery_up",
+                  "kind":"totally_new_kind",
+                  "value":1.0
+                }
+              ]
+            }"#,
+        );
+        let err = GameData::load_from_dir(tmp.path()).expect_err("expected unknown kind failure");
+        assert!(err.to_string().contains("is not wired in runtime systems"));
     }
 
     #[test]

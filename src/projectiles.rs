@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 
 use crate::combat::{compute_damage, should_execute_target};
+use crate::inventory::{EquipmentArmyEffects, InventoryState, gear_bonuses_for_unit};
 use crate::model::{DamageEvent, GameState, GlobalBuffs, Health, Team, Unit};
 use crate::upgrades::ConditionalUpgradeEffects;
 
@@ -42,24 +43,35 @@ fn tick_projectiles(
     }
 }
 
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn projectile_collisions(
     mut commands: Commands,
     mut damage_events: EventWriter<DamageEvent>,
     buffs: Option<Res<GlobalBuffs>>,
     conditional_effects: Option<Res<ConditionalUpgradeEffects>>,
+    inventory: Res<InventoryState>,
+    equipment_effects: Option<Res<EquipmentArmyEffects>>,
     projectiles: Query<(Entity, &Transform, &Projectile)>,
     targets: Query<(
         Entity,
         &Unit,
         &Transform,
         &Health,
+        Option<&crate::model::UnitTier>,
         Option<&crate::model::Armor>,
     )>,
 ) {
     for (projectile_entity, projectile_transform, projectile) in &projectiles {
         let projectile_pos = projectile_transform.translation.truncate();
         let mut hit = false;
-        for (target_entity, target_unit, target_transform, target_health, target_armor) in &targets
+        for (
+            target_entity,
+            target_unit,
+            target_transform,
+            target_health,
+            target_tier,
+            target_armor,
+        ) in &targets
         {
             if target_unit.team == projectile.source_team || target_health.current <= 0.0 {
                 continue;
@@ -68,7 +80,20 @@ fn projectile_collisions(
             if projectile_pos.distance(target_pos) <= projectile.radius {
                 let base_armor = target_armor.map(|value| value.0).unwrap_or(0.0);
                 let effective_armor = if target_unit.team == Team::Friendly {
-                    base_armor + buffs.as_ref().map(|value| value.armor_bonus).unwrap_or(0.0)
+                    let gear_armor_bonus = gear_bonuses_for_unit(
+                        &inventory,
+                        target_unit.kind,
+                        target_tier.copied().map(|value| value.0),
+                    )
+                    .armor_bonus;
+                    let temporary_armor_bonus = equipment_effects
+                        .as_deref()
+                        .map(|effects| effects.temporary_armor_bonus)
+                        .unwrap_or(0.0);
+                    base_armor
+                        + gear_armor_bonus
+                        + temporary_armor_bonus
+                        + buffs.as_ref().map(|value| value.armor_bonus).unwrap_or(0.0)
                 } else {
                     base_armor
                 };
