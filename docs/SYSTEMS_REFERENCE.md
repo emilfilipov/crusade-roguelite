@@ -4,7 +4,26 @@
 Single-file technical reference for current MVP runtime behavior.
 Use this for entity/component/system lookup without scanning all source files.
 
-## Latest Update (2026-03-22)
+## Latest Update (2026-03-26)
+- Reworked in-run `Unit Upgrade (U)` modal into a tier-column graph scaffold:
+  - columns `Tier 0..Tier 5` with thin borders and row-wise straight connectors from tier-0 to tier-1,
+  - tier-0 nodes are active source units,
+  - tier-1+ and `Hero` nodes are scaffolded/inactive placeholders.
+- Updated unit-upgrade node labeling:
+  - unit boxes now render unit name only (no tier/count text inside the node).
+- Added per-tier0 swap controls as row actions:
+  - each tier-0 source row has a target selector (`dropdown-like` cycle control),
+  - each row has a `Swap 1` action wired to `ConvertTierZeroUnitsEvent`,
+  - row status includes source/target counts, target-option count, affordability, and XP cost.
+- Added `Unit Upgrade` hover tooltip overlay:
+  - hovering unit nodes now shows `Name`, `Type`, `Description`, `Stats`, and `Abilities`,
+  - scaffold nodes provide explicit placeholder metadata and tier-rule guidance.
+- Simplified UI-side promotion runtime in `U`:
+  - promotion actions remain scaffolded in the graph presentation,
+  - inactive tier nodes explicitly communicate future upgrade-rule contract (`matching lower tier + locked-level cost`).
+- Added unit tests for new unit-upgrade logic:
+  - swap-target fallback and cycling behavior,
+  - unit-tooltip contract coverage for required sections.
 - Added data-driven faction gameplay edge config in `assets/data/factions.json`:
   - per-faction friendly modifiers (HP, damage, attack speed, move speed, armor bonus, morale baseline),
   - per-faction morale/cohesion flow modifiers (gain/loss scaling),
