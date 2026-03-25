@@ -107,9 +107,9 @@
     {
       "id": "hospitalier_aura_up",
       "kind": "hospitalier_aura",
-      "min_value": 0.6,
-      "max_value": 2.4,
-      "value_step": 0.2,
+      "min_value": 0.2,
+      "max_value": 0.8,
+      "value_step": 0.1,
       "weight_exponent": 2.1
     },
     {

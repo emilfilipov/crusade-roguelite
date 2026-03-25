@@ -2047,11 +2047,11 @@ fn sync_run_modal_overlay(
         }
         RunModalState::Open(screen) => {
             let should_refresh_unit_upgrade = screen == RunModalScreen::UnitUpgrade
-                && (deps.roster_economy.is_changed()
-                    || deps.progression.is_changed()
-                    || deps.roster_feedback.is_changed()
-                    || deps.progression_lock_feedback.is_changed()
-                    || deps.unit_upgrade_state.is_changed());
+                && unit_upgrade_modal_should_refresh(
+                    deps.roster_economy.is_changed(),
+                    deps.roster_feedback.is_changed(),
+                    deps.unit_upgrade_state.is_changed(),
+                );
             let should_refresh_inventory = false;
             let has_single_current_root =
                 existing_roots.len() == 1 && existing_roots[0].1 == screen;
@@ -2110,6 +2110,14 @@ fn sync_run_modal_overlay(
             );
         }
     }
+}
+
+fn unit_upgrade_modal_should_refresh(
+    roster_economy_changed: bool,
+    roster_feedback_changed: bool,
+    unit_upgrade_state_changed: bool,
+) -> bool {
+    roster_economy_changed || roster_feedback_changed || unit_upgrade_state_changed
 }
 
 fn despawn_run_modal_overlay(mut commands: Commands, roots: Query<Entity, With<RunModalRoot>>) {
@@ -6993,7 +7001,8 @@ mod tests {
         inventory_tooltip_screen_position, level_up_tier_border_color, main_menu_dispatch,
         max_affordable_promotions, max_affordable_tier0_conversions,
         modal_action_for_utility_button, requested_promotion_count, rescue_progress_ratio,
-        responsive_ui_scale_for_resolution, scroll_viewport_is_hovered, world_to_minimap_pos,
+        responsive_ui_scale_for_resolution, scroll_viewport_is_hovered,
+        unit_upgrade_modal_should_refresh, world_to_minimap_pos,
     };
     use crate::upgrades::{
         ConditionalUpgradeStatus, ConditionalUpgradeStatusEntry, OneTimeUpgradeTracker,
@@ -7213,6 +7222,14 @@ mod tests {
         assert_eq!(requested_promotion_count(UnitUpgradeQuantity::Five, 3), 3);
         assert_eq!(requested_promotion_count(UnitUpgradeQuantity::Max, 3), 3);
         assert_eq!(requested_promotion_count(UnitUpgradeQuantity::One, 0), 0);
+    }
+
+    #[test]
+    fn unit_upgrade_modal_refresh_only_tracks_structural_inputs() {
+        assert!(!unit_upgrade_modal_should_refresh(false, false, false));
+        assert!(unit_upgrade_modal_should_refresh(true, false, false));
+        assert!(unit_upgrade_modal_should_refresh(false, true, false));
+        assert!(unit_upgrade_modal_should_refresh(false, false, true));
     }
 
     #[test]
