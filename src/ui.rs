@@ -270,6 +270,9 @@ struct InventorySlotSelection {
 }
 
 #[derive(Component, Clone, Copy, Debug)]
+struct InventoryTooltipRoot;
+
+#[derive(Component, Clone, Copy, Debug)]
 struct InventoryTooltipText;
 
 #[derive(Component, Clone, Copy, Debug)]
@@ -2092,10 +2095,12 @@ fn spawn_run_modal_overlay(
     archive: &ArchiveDataset,
     art: &crate::visuals::ArtAssets,
 ) {
+    const INVENTORY_TOOLTIP_WIDTH: f32 = 360.0;
+    const INVENTORY_TOOLTIP_MIN_HEIGHT: f32 = 128.0;
     let (title, subtitle) = run_modal_titles(screen);
     let (panel_width, panel_height) = match screen {
         RunModalScreen::Inventory => (Val::Px(920.0), Val::Px(520.0)),
-        RunModalScreen::Chest => (Val::Px(760.0), Val::Px(470.0)),
+        RunModalScreen::Chest => (Val::Px(860.0), Val::Px(560.0)),
         RunModalScreen::Stats => (Val::Px(980.0), Val::Px(560.0)),
         RunModalScreen::SkillBook => (Val::Px(900.0), Val::Px(640.0)),
         RunModalScreen::Archive => (Val::Px(980.0), Val::Px(620.0)),
@@ -2131,6 +2136,7 @@ fn spawn_run_modal_overlay(
                     align_items: AlignItems::Center,
                     row_gap: Val::Px(10.0),
                     padding: UiRect::all(Val::Px(14.0)),
+                    overflow: Overflow::clip_y(),
                     ..default()
                 },
                 background_color: BackgroundColor(Color::srgba(0.08, 0.07, 0.06, 0.95)),
@@ -2246,6 +2252,33 @@ fn spawn_run_modal_overlay(
                             });
                     });
             });
+            if matches!(screen, RunModalScreen::Inventory | RunModalScreen::Chest) {
+                root.spawn((
+                    InventoryTooltipRoot,
+                    NodeBundle {
+                        style: Style {
+                            position_type: PositionType::Absolute,
+                            left: Val::Px(0.0),
+                            top: Val::Px(0.0),
+                            width: Val::Px(INVENTORY_TOOLTIP_WIDTH),
+                            min_height: Val::Px(INVENTORY_TOOLTIP_MIN_HEIGHT),
+                            max_height: Val::Px(260.0),
+                            border: UiRect::all(Val::Px(1.0)),
+                            padding: UiRect::all(Val::Px(8.0)),
+                            display: Display::None,
+                            ..default()
+                        },
+                        background_color: BackgroundColor(Color::srgba(0.06, 0.05, 0.05, 0.96)),
+                        border_color: BorderColor(Color::srgba(0.78, 0.72, 0.58, 0.36)),
+                        z_index: ZIndex::Global(118),
+                        ..default()
+                    },
+                    FocusPolicy::Pass,
+                ))
+                .with_children(|tooltip| {
+                    tooltip.spawn((InventoryTooltipText, build_inventory_tooltip_text_bundle()));
+                });
+            }
         });
 }
 
@@ -3215,16 +3248,7 @@ fn spawn_inventory_modal_sections(
                     });
                 });
         });
-    parent.spawn(TextBundle::from_section(
-        "Hover any item to inspect stats and effects.",
-        TextStyle {
-            font_size: 12.0,
-            color: HUD_TEXT_COLOR,
-            ..default()
-        },
-    ));
     spawn_gear_rarity_legend(parent);
-    parent.spawn((InventoryTooltipText, build_inventory_tooltip_text_bundle()));
 }
 
 fn spawn_chest_modal_sections(
@@ -3235,15 +3259,15 @@ fn spawn_chest_modal_sections(
     art: &ArtAssets,
 ) {
     spawn_gear_rarity_legend(parent);
-    parent.spawn((InventoryTooltipText, build_inventory_tooltip_text_bundle()));
     parent
         .spawn(NodeBundle {
             style: Style {
                 width: Val::Percent(100.0),
-                min_height: Val::Px(290.0),
+                flex_grow: 1.0,
                 flex_direction: FlexDirection::Row,
                 column_gap: Val::Px(10.0),
                 justify_content: JustifyContent::Center,
+                align_items: AlignItems::Stretch,
                 ..default()
             },
             background_color: BackgroundColor(Color::NONE),
@@ -3253,8 +3277,7 @@ fn spawn_chest_modal_sections(
             layout
                 .spawn(NodeBundle {
                     style: Style {
-                        width: Val::Px(250.0),
-                        min_height: Val::Px(282.0),
+                        width: Val::Percent(34.0),
                         border: UiRect::all(Val::Px(1.0)),
                         padding: UiRect::all(Val::Px(8.0)),
                         flex_direction: FlexDirection::Column,
@@ -3292,7 +3315,7 @@ fn spawn_chest_modal_sections(
                                     chest_slots,
                                     InventorySlotRef::Chest(index),
                                     maybe_item.as_ref(),
-                                    64.0,
+                                    74.0,
                                     selected_slot,
                                     art,
                                 );
@@ -3303,8 +3326,7 @@ fn spawn_chest_modal_sections(
             layout
                 .spawn(NodeBundle {
                     style: Style {
-                        width: Val::Px(430.0),
-                        min_height: Val::Px(282.0),
+                        width: Val::Percent(64.0),
                         border: UiRect::all(Val::Px(1.0)),
                         padding: UiRect::all(Val::Px(8.0)),
                         flex_direction: FlexDirection::Column,
@@ -3324,7 +3346,15 @@ fn spawn_chest_modal_sections(
                             ..default()
                         },
                     ));
-                    spawn_inventory_backpack_grid(bag_col, inventory, selected_slot, 52.0, art);
+                    spawn_scrollable_panel(bag_col, 332.0, |backpack_scroll| {
+                        spawn_inventory_backpack_grid(
+                            backpack_scroll,
+                            inventory,
+                            selected_slot,
+                            46.0,
+                            art,
+                        );
+                    });
                 });
         });
 }
@@ -3433,11 +3463,11 @@ fn build_inventory_tooltip_text_bundle() -> TextBundle {
     TextBundle {
         style: Style {
             width: Val::Percent(100.0),
-            max_height: Val::Px(120.0),
+            max_height: Val::Px(244.0),
             ..default()
         },
         text: Text::from_section(
-            "Hover an item to show details.",
+            "",
             TextStyle {
                 font_size: 12.0,
                 color: MENU_BUTTON_TEXT_DISABLED,
@@ -5584,48 +5614,41 @@ fn handle_inventory_slot_buttons(
     if chest.slots.len() != CHEST_SLOT_CAPACITY {
         chest.ensure_capacity();
     }
-    let hovered_slot = buttons.iter().find_map(|(interaction, button, _, _)| {
-        matches!(interaction, Interaction::Hovered | Interaction::Pressed).then_some(button.slot)
-    });
-    let left_released = mouse_buttons
+    let active_slot = active_inventory_slot_from_interactions(
+        &buttons
+            .iter()
+            .map(|(interaction, button, _, _)| (*interaction, button.slot))
+            .collect::<Vec<_>>(),
+    );
+    let left_pressed = mouse_buttons
         .as_deref()
-        .map(|buttons| buttons.just_released(MouseButton::Left))
+        .map(|buttons| buttons.just_pressed(MouseButton::Left))
         .unwrap_or(false);
-    if left_released
-        && let Some(source_slot) = selected_slot.selected
-        && let Some(target_slot) = hovered_slot
-        && source_slot != target_slot
-    {
-        attempt_inventory_transfer(&mut inventory, &mut chest, source_slot, target_slot);
-        selected_slot.selected = None;
-    }
-
-    for (interaction, button, mut border_color, mut background_color) in &mut buttons {
-        if *interaction == Interaction::Pressed {
-            let pressed_slot_has_item =
-                get_item_from_slot(&inventory, &chest, button.slot).is_some();
-            match selected_slot.selected {
-                None => {
-                    if pressed_slot_has_item {
-                        selected_slot.selected = Some(button.slot);
-                    }
+    if left_pressed && let Some(clicked_slot) = active_slot {
+        let clicked_slot_has_item = get_item_from_slot(&inventory, &chest, clicked_slot).is_some();
+        match selected_slot.selected {
+            None => {
+                if clicked_slot_has_item {
+                    selected_slot.selected = Some(clicked_slot);
                 }
-                Some(source_slot) => {
-                    if source_slot == button.slot {
-                        selected_slot.selected = None;
-                    } else {
-                        attempt_inventory_transfer(
-                            &mut inventory,
-                            &mut chest,
-                            source_slot,
-                            button.slot,
-                        );
-                        selected_slot.selected = None;
-                    }
+            }
+            Some(source_slot) => {
+                if source_slot == clicked_slot {
+                    selected_slot.selected = None;
+                } else {
+                    attempt_inventory_transfer(
+                        &mut inventory,
+                        &mut chest,
+                        source_slot,
+                        clicked_slot,
+                    );
+                    selected_slot.selected = None;
                 }
             }
         }
+    }
 
+    for (interaction, button, mut border_color, mut background_color) in &mut buttons {
         let maybe_item = get_item_from_slot(&inventory, &chest, button.slot);
         let is_selected = selected_slot.selected == Some(button.slot);
         let hovered = matches!(*interaction, Interaction::Hovered | Interaction::Pressed);
@@ -5647,31 +5670,80 @@ fn update_inventory_hover_tooltip(
     slot_buttons: Query<(&Interaction, &InventorySlotButton)>,
     inventory: Res<InventoryState>,
     chest: Res<EquipmentChestState>,
-    selected_slot: Res<InventorySlotSelection>,
+    primary_window: Query<&Window, With<PrimaryWindow>>,
+    mut tooltip_root: Query<&mut Style, With<InventoryTooltipRoot>>,
     mut tooltip_text: Query<&mut Text, With<InventoryTooltipText>>,
 ) {
     if !matches!(
         *modal_state,
         RunModalState::Open(RunModalScreen::Inventory | RunModalScreen::Chest)
     ) {
+        for mut style in &mut tooltip_root {
+            style.display = Display::None;
+        }
         return;
     }
-    let hovered_slot = slot_buttons.iter().find_map(|(interaction, button)| {
-        matches!(interaction, Interaction::Hovered | Interaction::Pressed).then_some(button.slot)
-    });
-    let inspected_slot = hovered_slot.or(selected_slot.selected);
-    let tooltip = inspected_slot
+    let hovered_slot = active_inventory_slot_from_interactions(
+        &slot_buttons
+            .iter()
+            .map(|(interaction, button)| (*interaction, button.slot))
+            .collect::<Vec<_>>(),
+    );
+    let tooltip = hovered_slot
         .and_then(|slot| get_item_from_slot(&inventory, &chest, slot))
-        .map(gear_item_tooltip)
-        .unwrap_or_else(|| "Hover an item to show details.".to_string());
+        .map(gear_item_tooltip);
+    let Ok(window) = primary_window.get_single() else {
+        return;
+    };
+    let cursor = window
+        .cursor_position()
+        .unwrap_or(Vec2::new(window.width() * 0.5, window.height() * 0.5));
+    let tooltip_position = inventory_tooltip_screen_position(
+        cursor,
+        Vec2::new(window.width(), window.height()),
+        Vec2::new(360.0, 170.0),
+    );
+    for mut style in &mut tooltip_root {
+        let show = tooltip.is_some();
+        style.display = if show { Display::Flex } else { Display::None };
+        style.left = Val::Px(tooltip_position.x);
+        style.top = Val::Px(tooltip_position.y);
+    }
     for mut text in &mut tooltip_text {
-        text.sections[0].value = tooltip.clone();
-        text.sections[0].style.color = if inspected_slot.is_some() {
+        text.sections[0].value = tooltip
+            .clone()
+            .unwrap_or_else(|| "Hover an item to show details.".to_string());
+        text.sections[0].style.color = if tooltip.is_some() {
             HUD_TEXT_COLOR
         } else {
             MENU_BUTTON_TEXT_DISABLED
         };
     }
+}
+
+fn active_inventory_slot_from_interactions(
+    interactions: &[(Interaction, InventorySlotRef)],
+) -> Option<InventorySlotRef> {
+    interactions
+        .iter()
+        .find_map(|(interaction, slot)| (*interaction == Interaction::Pressed).then_some(*slot))
+        .or_else(|| {
+            interactions.iter().find_map(|(interaction, slot)| {
+                matches!(*interaction, Interaction::Hovered).then_some(*slot)
+            })
+        })
+}
+
+fn inventory_tooltip_screen_position(cursor: Vec2, window_size: Vec2, tooltip_size: Vec2) -> Vec2 {
+    let horizontal_margin = 16.0;
+    let vertical_margin = 16.0;
+    let offset = Vec2::new(18.0, 18.0);
+    let mut position = cursor + offset;
+    let max_x = (window_size.x - tooltip_size.x - horizontal_margin).max(horizontal_margin);
+    let max_y = (window_size.y - tooltip_size.y - vertical_margin).max(vertical_margin);
+    position.x = position.x.clamp(horizontal_margin, max_x);
+    position.y = position.y.clamp(vertical_margin, max_y);
+    position
 }
 
 fn clear_chest_state_when_modal_exits(
@@ -6636,13 +6708,14 @@ mod tests {
     use crate::ui::{
         FLOATING_DAMAGE_TEXT_CRIT_FONT_SIZE, FLOATING_DAMAGE_TEXT_FONT_SIZE, HudSnapshot,
         LEVEL_UP_TIER_LEGEND, MainMenuAction, MainMenuDispatch, UnitUpgradeQuantity,
-        archive_entries_for_category, build_skill_book_panel_data, build_stats_panel_data,
-        can_select_match_setup_faction, conditional_upgrade_hud_status_text, displayed_wave_number,
-        find_skill_section, find_stats_row, floating_damage_text_alpha,
-        floating_damage_text_is_expired, floating_damage_text_spawn_data,
-        format_commander_level_text, format_elapsed_mm_ss, format_enemy_count,
-        format_retinue_count, frame_cap_label, health_bar_fill_width, level_up_tier_border_color,
-        main_menu_dispatch, max_affordable_promotions, max_affordable_tier0_conversions,
+        active_inventory_slot_from_interactions, archive_entries_for_category,
+        build_skill_book_panel_data, build_stats_panel_data, can_select_match_setup_faction,
+        conditional_upgrade_hud_status_text, displayed_wave_number, find_skill_section,
+        find_stats_row, floating_damage_text_alpha, floating_damage_text_is_expired,
+        floating_damage_text_spawn_data, format_commander_level_text, format_elapsed_mm_ss,
+        format_enemy_count, format_retinue_count, frame_cap_label, health_bar_fill_width,
+        inventory_tooltip_screen_position, level_up_tier_border_color, main_menu_dispatch,
+        max_affordable_promotions, max_affordable_tier0_conversions,
         modal_action_for_utility_button, requested_promotion_count, rescue_progress_ratio,
         responsive_ui_scale_for_resolution, scroll_viewport_is_hovered, world_to_minimap_pos,
     };
@@ -6761,6 +6834,52 @@ mod tests {
         assert!(!scroll_viewport_is_hovered(
             bevy::prelude::Interaction::None
         ));
+    }
+
+    #[test]
+    fn active_inventory_slot_prefers_pressed_then_hovered() {
+        let pressed = vec![
+            (
+                bevy::prelude::Interaction::Hovered,
+                InventorySlotRef::Backpack(4),
+            ),
+            (
+                bevy::prelude::Interaction::Pressed,
+                InventorySlotRef::Chest(1),
+            ),
+        ];
+        assert_eq!(
+            active_inventory_slot_from_interactions(&pressed),
+            Some(InventorySlotRef::Chest(1))
+        );
+
+        let hovered_only = vec![(
+            bevy::prelude::Interaction::Hovered,
+            InventorySlotRef::Backpack(2),
+        )];
+        assert_eq!(
+            active_inventory_slot_from_interactions(&hovered_only),
+            Some(InventorySlotRef::Backpack(2))
+        );
+    }
+
+    #[test]
+    fn inventory_tooltip_position_is_clamped_to_window_bounds() {
+        let high = inventory_tooltip_screen_position(
+            bevy::prelude::Vec2::new(1260.0, 710.0),
+            bevy::prelude::Vec2::new(1280.0, 720.0),
+            bevy::prelude::Vec2::new(360.0, 170.0),
+        );
+        assert!(high.x <= 904.0 + 0.001);
+        assert!(high.y <= 534.0 + 0.001);
+
+        let low = inventory_tooltip_screen_position(
+            bevy::prelude::Vec2::new(2.0, 2.0),
+            bevy::prelude::Vec2::new(1280.0, 720.0),
+            bevy::prelude::Vec2::new(360.0, 170.0),
+        );
+        assert!(low.x >= 16.0);
+        assert!(low.y >= 16.0);
     }
 
     #[test]
