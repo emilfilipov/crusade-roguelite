@@ -2092,7 +2092,7 @@ fn spawn_run_modal_overlay(
     let (title, subtitle) = run_modal_titles(screen);
     let (panel_width, panel_height) = match screen {
         RunModalScreen::Inventory => (Val::Px(920.0), Val::Px(520.0)),
-        RunModalScreen::Chest => (Val::Px(960.0), Val::Px(560.0)),
+        RunModalScreen::Chest => (Val::Px(760.0), Val::Px(470.0)),
         RunModalScreen::Stats => (Val::Px(980.0), Val::Px(560.0)),
         RunModalScreen::SkillBook => (Val::Px(900.0), Val::Px(640.0)),
         RunModalScreen::Archive => (Val::Px(980.0), Val::Px(620.0)),
@@ -2195,35 +2195,52 @@ fn spawn_run_modal_overlay(
                     spawn_unit_upgrade_modal_sections(panel, unit_upgrade_panel);
                 }
                 panel
-                    .spawn((
-                        ButtonBundle {
-                            style: Style {
-                                width: Val::Px(154.0),
-                                height: Val::Px(40.0),
-                                border: UiRect::all(Val::Px(1.0)),
-                                justify_content: JustifyContent::Center,
-                                align_items: AlignItems::Center,
-                                margin: UiRect {
-                                    top: Val::Px(6.0),
-                                    ..default()
-                                },
+                    .spawn(NodeBundle {
+                        style: Style {
+                            width: Val::Percent(100.0),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            margin: UiRect {
+                                top: Val::Auto,
                                 ..default()
                             },
-                            background_color: BackgroundColor(Color::NONE),
-                            border_color: BorderColor(Color::NONE),
                             ..default()
                         },
-                        RunModalButtonAction::Close,
-                    ))
-                    .with_children(|button| {
-                        button.spawn(TextBundle::from_section(
-                            "CLOSE",
-                            TextStyle {
-                                font_size: 18.0,
-                                color: MENU_BUTTON_TEXT_NORMAL,
-                                ..default()
-                            },
-                        ));
+                        background_color: BackgroundColor(Color::NONE),
+                        ..default()
+                    })
+                    .with_children(|footer| {
+                        footer
+                            .spawn((
+                                ButtonBundle {
+                                    style: Style {
+                                        width: Val::Px(154.0),
+                                        height: Val::Px(40.0),
+                                        border: UiRect::all(Val::Px(1.0)),
+                                        justify_content: JustifyContent::Center,
+                                        align_items: AlignItems::Center,
+                                        margin: UiRect {
+                                            top: Val::Px(6.0),
+                                            ..default()
+                                        },
+                                        ..default()
+                                    },
+                                    background_color: BackgroundColor(Color::NONE),
+                                    border_color: BorderColor(Color::NONE),
+                                    ..default()
+                                },
+                                RunModalButtonAction::Close,
+                            ))
+                            .with_children(|button| {
+                                button.spawn(TextBundle::from_section(
+                                    "CLOSE",
+                                    TextStyle {
+                                        font_size: 18.0,
+                                        color: MENU_BUTTON_TEXT_NORMAL,
+                                        ..default()
+                                    },
+                                ));
+                            });
                     });
             });
         });
@@ -2232,10 +2249,7 @@ fn spawn_run_modal_overlay(
 fn run_modal_titles(screen: RunModalScreen) -> (&'static str, Option<&'static str>) {
     match screen {
         RunModalScreen::Inventory => ("INVENTORY", None),
-        RunModalScreen::Chest => (
-            "EQUIPMENT CHEST",
-            Some("Move items between chest, backpack, and equipment slots."),
-        ),
+        RunModalScreen::Chest => ("EQUIPMENT CHEST", None),
         RunModalScreen::Stats => (
             "STATS",
             Some(
@@ -3185,7 +3199,6 @@ fn spawn_inventory_modal_sections(
                                                         slot_index,
                                                     },
                                                     slot.item.as_ref(),
-                                                    &slot.display_name,
                                                     62.0,
                                                     selected_slot,
                                                     art,
@@ -3206,26 +3219,7 @@ fn spawn_inventory_modal_sections(
         },
     ));
     spawn_gear_rarity_legend(parent);
-    parent.spawn((
-        InventoryTooltipText,
-        TextBundle {
-            style: Style {
-                width: Val::Percent(100.0),
-                max_height: Val::Px(110.0),
-                ..default()
-            },
-            text: Text::from_section(
-                "Item tooltip",
-                TextStyle {
-                    font_size: 12.0,
-                    color: MENU_BUTTON_TEXT_DISABLED,
-                    ..default()
-                },
-            )
-            .with_justify(JustifyText::Left),
-            ..default()
-        },
-    ));
+    parent.spawn((InventoryTooltipText, build_inventory_tooltip_text_bundle()));
 }
 
 fn spawn_chest_modal_sections(
@@ -3235,21 +3229,16 @@ fn spawn_chest_modal_sections(
     selected_slot: Option<InventorySlotRef>,
     art: &ArtAssets,
 ) {
-    parent.spawn(TextBundle::from_section(
-        "Select source slot, then destination slot to move/swap gear.",
-        TextStyle {
-            font_size: 13.0,
-            color: HUD_TEXT_COLOR,
-            ..default()
-        },
-    ));
+    spawn_gear_rarity_legend(parent);
+    parent.spawn((InventoryTooltipText, build_inventory_tooltip_text_bundle()));
     parent
         .spawn(NodeBundle {
             style: Style {
                 width: Val::Percent(100.0),
-                min_height: Val::Px(360.0),
+                min_height: Val::Px(290.0),
                 flex_direction: FlexDirection::Row,
                 column_gap: Val::Px(10.0),
+                justify_content: JustifyContent::Center,
                 ..default()
             },
             background_color: BackgroundColor(Color::NONE),
@@ -3259,8 +3248,8 @@ fn spawn_chest_modal_sections(
             layout
                 .spawn(NodeBundle {
                     style: Style {
-                        width: Val::Percent(36.0),
-                        min_height: Val::Px(350.0),
+                        width: Val::Px(250.0),
+                        min_height: Val::Px(282.0),
                         border: UiRect::all(Val::Px(1.0)),
                         padding: UiRect::all(Val::Px(8.0)),
                         flex_direction: FlexDirection::Column,
@@ -3298,8 +3287,7 @@ fn spawn_chest_modal_sections(
                                     chest_slots,
                                     InventorySlotRef::Chest(index),
                                     maybe_item.as_ref(),
-                                    "Chest",
-                                    70.0,
+                                    64.0,
                                     selected_slot,
                                     art,
                                 );
@@ -3310,8 +3298,8 @@ fn spawn_chest_modal_sections(
             layout
                 .spawn(NodeBundle {
                     style: Style {
-                        width: Val::Percent(64.0),
-                        min_height: Val::Px(350.0),
+                        width: Val::Px(430.0),
+                        min_height: Val::Px(282.0),
                         border: UiRect::all(Val::Px(1.0)),
                         padding: UiRect::all(Val::Px(8.0)),
                         flex_direction: FlexDirection::Column,
@@ -3334,27 +3322,6 @@ fn spawn_chest_modal_sections(
                     spawn_inventory_backpack_grid(bag_col, inventory, selected_slot, 52.0, art);
                 });
         });
-    spawn_gear_rarity_legend(parent);
-    parent.spawn((
-        InventoryTooltipText,
-        TextBundle {
-            style: Style {
-                width: Val::Percent(100.0),
-                max_height: Val::Px(120.0),
-                ..default()
-            },
-            text: Text::from_section(
-                "Item tooltip",
-                TextStyle {
-                    font_size: 12.0,
-                    color: MENU_BUTTON_TEXT_DISABLED,
-                    ..default()
-                },
-            )
-            .with_justify(JustifyText::Left),
-            ..default()
-        },
-    ));
 }
 
 fn spawn_inventory_backpack_grid(
@@ -3403,7 +3370,6 @@ fn spawn_inventory_backpack_grid(
                                 row_builder,
                                 InventorySlotRef::Backpack(index),
                                 maybe_item,
-                                "--",
                                 slot_size,
                                 selected_slot,
                                 art,
@@ -3418,20 +3384,11 @@ fn spawn_inventory_slot_button(
     parent: &mut ChildBuilder,
     slot_ref: InventorySlotRef,
     maybe_item: Option<&GearItemEntry>,
-    fallback_label: &str,
     size: f32,
     selected_slot: Option<InventorySlotRef>,
     art: &ArtAssets,
 ) {
     let border = inventory_slot_border_color(maybe_item, selected_slot == Some(slot_ref));
-    let label = maybe_item
-        .map(|item| truncate_inventory_label(&item.name, 10))
-        .unwrap_or_else(|| truncate_inventory_label(fallback_label, 10));
-    let text_color = if maybe_item.is_some() {
-        MENU_BUTTON_TEXT_HOVERED
-    } else {
-        MENU_BUTTON_TEXT_DISABLED
-    };
 
     parent
         .spawn((
@@ -3467,24 +3424,26 @@ fn spawn_inventory_slot_button(
                     ..default()
                 });
             }
-            slot.spawn(TextBundle::from_section(
-                label,
-                TextStyle {
-                    font_size: 10.0,
-                    color: text_color,
-                    ..default()
-                },
-            ));
         });
 }
 
-fn truncate_inventory_label(label: &str, max_chars: usize) -> String {
-    let mut chars = label.chars();
-    let clipped: String = chars.by_ref().take(max_chars).collect();
-    if chars.next().is_some() {
-        format!("{clipped}...")
-    } else {
-        clipped
+fn build_inventory_tooltip_text_bundle() -> TextBundle {
+    TextBundle {
+        style: Style {
+            width: Val::Percent(100.0),
+            max_height: Val::Px(120.0),
+            ..default()
+        },
+        text: Text::from_section(
+            "Hover an item to show details.",
+            TextStyle {
+                font_size: 12.0,
+                color: MENU_BUTTON_TEXT_DISABLED,
+                ..default()
+            },
+        )
+        .with_justify(JustifyText::Left),
+        ..default()
     }
 }
 
@@ -5600,14 +5559,12 @@ fn handle_inventory_slot_buttons(
         (
             &Interaction,
             &InventorySlotButton,
-            &Children,
             &mut BorderColor,
             &mut BackgroundColor,
         ),
         With<Button>,
     >,
     mouse_buttons: Option<Res<ButtonInput<MouseButton>>>,
-    mut text_query: Query<&mut Text>,
     modal_state: Res<RunModalState>,
     mut inventory: ResMut<InventoryState>,
     mut chest: ResMut<EquipmentChestState>,
@@ -5621,56 +5578,50 @@ fn handle_inventory_slot_buttons(
     }
     inventory.ensure_bag_capacity();
     chest.ensure_capacity();
-
-    let hovered_slot = buttons.iter().find_map(|(interaction, button, _, _, _)| {
+    let hovered_slot = buttons.iter().find_map(|(interaction, button, _, _)| {
         matches!(interaction, Interaction::Hovered | Interaction::Pressed).then_some(button.slot)
     });
-
-    let left_pressed = mouse_buttons
-        .as_deref()
-        .map(|buttons| buttons.just_pressed(MouseButton::Left))
-        .unwrap_or(false);
     let left_released = mouse_buttons
         .as_deref()
         .map(|buttons| buttons.just_released(MouseButton::Left))
         .unwrap_or(false);
-    let right_pressed = mouse_buttons
-        .as_deref()
-        .map(|buttons| buttons.just_pressed(MouseButton::Right))
-        .unwrap_or(false);
-
-    if left_pressed
-        && selected_slot.selected.is_none()
-        && let Some(slot) = hovered_slot
-        && get_item_from_slot(&inventory, &chest, slot).is_some()
+    if left_released
+        && let Some(source_slot) = selected_slot.selected
+        && let Some(target_slot) = hovered_slot
+        && source_slot != target_slot
     {
-        selected_slot.selected = Some(slot);
+        attempt_inventory_transfer(&mut inventory, &mut chest, source_slot, target_slot);
+        selected_slot.selected = None;
     }
 
-    if left_released && let Some(source_slot) = selected_slot.selected {
-        if let Some(target_slot) = hovered_slot {
-            if source_slot != target_slot {
-                attempt_inventory_transfer(&mut inventory, &mut chest, source_slot, target_slot);
-                selected_slot.selected = None;
+    for (interaction, button, mut border_color, mut background_color) in &mut buttons {
+        if *interaction == Interaction::Pressed {
+            let pressed_slot_has_item =
+                get_item_from_slot(&inventory, &chest, button.slot).is_some();
+            match selected_slot.selected {
+                None => {
+                    if pressed_slot_has_item {
+                        selected_slot.selected = Some(button.slot);
+                    }
+                }
+                Some(source_slot) => {
+                    if source_slot == button.slot {
+                        selected_slot.selected = None;
+                    } else {
+                        attempt_inventory_transfer(
+                            &mut inventory,
+                            &mut chest,
+                            source_slot,
+                            button.slot,
+                        );
+                        selected_slot.selected = None;
+                    }
+                }
             }
-        } else {
-            selected_slot.selected = None;
         }
-    }
 
-    for (interaction, button, children, mut border_color, mut background_color) in &mut buttons {
         let maybe_item = get_item_from_slot(&inventory, &chest, button.slot);
         let is_selected = selected_slot.selected == Some(button.slot);
-        if let Some(&text_entity) = children.first()
-            && let Ok(mut text) = text_query.get_mut(text_entity)
-        {
-            text.sections[0].style.color = if maybe_item.is_some() {
-                MENU_BUTTON_TEXT_HOVERED
-            } else {
-                MENU_BUTTON_TEXT_DISABLED
-            };
-        }
-
         let hovered = matches!(*interaction, Interaction::Hovered | Interaction::Pressed);
         *border_color = BorderColor(if is_selected || hovered {
             MENU_BUTTON_BORDER_HOVERED
@@ -5682,10 +5633,6 @@ fn handle_inventory_slot_buttons(
         } else {
             Color::srgba(0.1, 0.085, 0.075, 0.74)
         });
-
-        if is_selected && right_pressed {
-            selected_slot.selected = None;
-        }
     }
 }
 
