@@ -263,6 +263,12 @@ struct InventorySlotButton {
     slot: InventorySlotRef,
 }
 
+#[derive(Component, Clone, Copy, Debug)]
+struct InventorySlotIcon;
+
+#[derive(Component, Clone, Copy, Debug)]
+struct InventorySlotHint;
+
 #[derive(Resource, Clone, Copy, Debug, Default)]
 struct InventorySlotSelection {
     selected: Option<InventorySlotRef>,
@@ -2022,12 +2028,8 @@ fn sync_run_modal_overlay(
         }
         RunModalState::Open(screen) => {
             let should_refresh_unit_upgrade = screen == RunModalScreen::UnitUpgrade
-                && (deps.roster_economy.is_changed()
-                    || deps.roster_feedback.is_changed()
-                    || deps.unit_upgrade_state.is_changed());
-            let should_refresh_inventory =
-                matches!(screen, RunModalScreen::Inventory | RunModalScreen::Chest)
-                    && (deps.inventory.is_changed() || deps.chest.is_changed());
+                && (deps.roster_economy.is_changed() || deps.progression.is_changed());
+            let should_refresh_inventory = false;
             let has_single_current_root =
                 existing_roots.len() == 1 && existing_roots[0].1 == screen;
             let should_rebuild =
@@ -2223,10 +2225,7 @@ fn spawn_run_modal_overlay(
                             width: Val::Percent(100.0),
                             justify_content: JustifyContent::Center,
                             align_items: AlignItems::Center,
-                            margin: UiRect {
-                                top: Val::Auto,
-                                ..default()
-                            },
+                            margin: UiRect::top(Val::Px(8.0)),
                             ..default()
                         },
                         background_color: BackgroundColor(Color::NONE),
@@ -3122,6 +3121,7 @@ fn spawn_inventory_modal_sections(
     selected_slot: Option<InventorySlotRef>,
     art: &ArtAssets,
 ) {
+    spawn_gear_rarity_legend(parent);
     parent
         .spawn(NodeBundle {
             style: Style {
@@ -3160,7 +3160,7 @@ fn spawn_inventory_modal_sections(
                             ..default()
                         },
                     ));
-                    spawn_inventory_backpack_grid(bag, inventory, selected_slot, 60.0, art);
+                    spawn_inventory_backpack_grid(bag, inventory, selected_slot, 60.0, None, art);
                 });
 
             layout
@@ -3251,6 +3251,7 @@ fn spawn_inventory_modal_sections(
                                                     slot.item.as_ref(),
                                                     62.0,
                                                     selected_slot,
+                                                    Some(slot.display_name.as_str()),
                                                     art,
                                                 );
                                             }
@@ -3260,7 +3261,6 @@ fn spawn_inventory_modal_sections(
                     });
                 });
         });
-    spawn_gear_rarity_legend(parent);
 }
 
 fn spawn_chest_modal_sections(
@@ -3329,6 +3329,7 @@ fn spawn_chest_modal_sections(
                                     maybe_item.as_ref(),
                                     74.0,
                                     selected_slot,
+                                    None,
                                     art,
                                 );
                             }
@@ -3364,6 +3365,7 @@ fn spawn_chest_modal_sections(
                             inventory,
                             selected_slot,
                             46.0,
+                            None,
                             art,
                         );
                     });
@@ -3376,6 +3378,7 @@ fn spawn_inventory_backpack_grid(
     inventory: &InventoryState,
     selected_slot: Option<InventorySlotRef>,
     slot_size: f32,
+    slot_hint: Option<&str>,
     art: &ArtAssets,
 ) {
     const BACKPACK_ROWS: usize = 5;
@@ -3419,6 +3422,7 @@ fn spawn_inventory_backpack_grid(
                                 maybe_item,
                                 slot_size,
                                 selected_slot,
+                                slot_hint,
                                 art,
                             );
                         }
@@ -3433,6 +3437,7 @@ fn spawn_inventory_slot_button(
     maybe_item: Option<&GearItemEntry>,
     size: f32,
     selected_slot: Option<InventorySlotRef>,
+    slot_hint: Option<&str>,
     art: &ArtAssets,
 ) {
     let border = inventory_slot_border_color(maybe_item, selected_slot == Some(slot_ref));
@@ -3456,17 +3461,57 @@ fn spawn_inventory_slot_button(
             InventorySlotButton { slot: slot_ref },
         ))
         .with_children(|slot| {
-            if let Some(item) = maybe_item {
-                slot.spawn(ImageBundle {
+            slot.spawn((
+                InventorySlotIcon,
+                ImageBundle {
                     style: Style {
                         width: Val::Percent(100.0),
                         height: Val::Percent(100.0),
+                        display: if maybe_item.is_some() {
+                            Display::Flex
+                        } else {
+                            Display::None
+                        },
                         ..default()
                     },
-                    image: UiImage::new(gear_item_icon_handle(item, art)),
+                    image: UiImage::new(
+                        maybe_item
+                            .map(|item| gear_item_icon_handle(item, art))
+                            .unwrap_or_default(),
+                    ),
                     background_color: BackgroundColor(Color::NONE),
                     ..default()
-                });
+                },
+            ));
+            if let Some(hint_text) = slot_hint {
+                slot.spawn((
+                    InventorySlotHint,
+                    TextBundle {
+                        style: Style {
+                            position_type: PositionType::Absolute,
+                            bottom: Val::Px(2.0),
+                            left: Val::Px(2.0),
+                            right: Val::Px(2.0),
+                            display: if maybe_item.is_some() {
+                                Display::None
+                            } else {
+                                Display::Flex
+                            },
+                            justify_content: JustifyContent::Center,
+                            ..default()
+                        },
+                        text: Text::from_section(
+                            hint_text,
+                            TextStyle {
+                                font_size: 9.0,
+                                color: HUD_TEXT_COLOR.with_alpha(0.9),
+                                ..default()
+                            },
+                        )
+                        .with_justify(JustifyText::Center),
+                        ..default()
+                    },
+                ));
             }
         });
 }
@@ -5598,17 +5643,25 @@ fn handle_run_modal_buttons(
 }
 
 #[allow(clippy::type_complexity)]
+#[allow(clippy::too_many_arguments)]
 fn handle_inventory_slot_buttons(
     mut buttons: Query<
         (
             &Interaction,
             &InventorySlotButton,
+            &Children,
             &mut BorderColor,
             &mut BackgroundColor,
         ),
         With<Button>,
     >,
+    mut slot_icons: Query<
+        (&mut UiImage, &mut Style),
+        (With<InventorySlotIcon>, Without<InventorySlotHint>),
+    >,
+    mut slot_hints: Query<&mut Style, (With<InventorySlotHint>, Without<InventorySlotIcon>)>,
     mouse_buttons: Option<Res<ButtonInput<MouseButton>>>,
+    art: Res<ArtAssets>,
     modal_state: Res<RunModalState>,
     mut inventory: ResMut<InventoryState>,
     mut chest: ResMut<EquipmentChestState>,
@@ -5629,7 +5682,7 @@ fn handle_inventory_slot_buttons(
     let active_slot = active_inventory_slot_from_interactions(
         &buttons
             .iter()
-            .map(|(interaction, button, _, _)| (*interaction, button.slot))
+            .map(|(interaction, button, _, _, _)| (*interaction, button.slot))
             .collect::<Vec<_>>(),
     );
     let left_pressed = mouse_buttons
@@ -5660,7 +5713,7 @@ fn handle_inventory_slot_buttons(
         }
     }
 
-    for (interaction, button, mut border_color, mut background_color) in &mut buttons {
+    for (interaction, button, children, mut border_color, mut background_color) in &mut buttons {
         let maybe_item = get_item_from_slot(&inventory, &chest, button.slot);
         let is_selected = selected_slot.selected == Some(button.slot);
         let hovered = matches!(*interaction, Interaction::Hovered | Interaction::Pressed);
@@ -5674,6 +5727,25 @@ fn handle_inventory_slot_buttons(
         } else {
             Color::srgba(0.1, 0.085, 0.075, 0.74)
         });
+        for child in children.iter() {
+            if let Ok((mut icon, mut style)) = slot_icons.get_mut(*child) {
+                if let Some(item) = maybe_item {
+                    icon.texture = gear_item_icon_handle(item, &art);
+                    icon.color = Color::WHITE;
+                    style.display = Display::Flex;
+                } else {
+                    icon.color = Color::srgba(1.0, 1.0, 1.0, 0.0);
+                    style.display = Display::None;
+                }
+            }
+            if let Ok(mut style) = slot_hints.get_mut(*child) {
+                style.display = if maybe_item.is_some() {
+                    Display::None
+                } else {
+                    Display::Flex
+                };
+            }
+        }
     }
 }
 

@@ -1,5 +1,6 @@
 use bevy::prelude::*;
 use std::collections::HashMap;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::ai::{
     chase_step_distance, chase_target_positions, choose_nearest, choose_support_follow_target,
@@ -30,6 +31,7 @@ pub struct WaveRuntime {
     pub pending_batches: Vec<PendingEnemyBatch>,
     role_mix: HashMap<u32, EnemyRoleCounts>,
     pub spawn_sequence: u32,
+    pub spawn_seed: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -166,6 +168,7 @@ fn reset_waves_on_run_start(
     for _ in start_events.read() {}
     *wave_runtime = WaveRuntime {
         current_wave: 1,
+        spawn_seed: runtime_seed_from_time(),
         ..WaveRuntime::default()
     };
 }
@@ -266,6 +269,7 @@ fn spawn_pending_enemy_batches(
             commander_position,
             batch.wave_number,
             batch.stat_scale * player_pressure_multiplier,
+            wave_runtime.spawn_seed,
             &mut spawn_sequence,
             &mut role_mix,
         );
@@ -291,6 +295,7 @@ fn spawn_enemy_batch(
     commander_position: Vec2,
     wave_number: u32,
     stat_scale: f32,
+    spawn_seed: u32,
     spawn_sequence: &mut u32,
     role_mix: &mut HashMap<u32, EnemyRoleCounts>,
 ) {
@@ -325,12 +330,12 @@ fn spawn_enemy_batch(
             has_melee,
             has_ranged,
             has_support,
-            seq ^ 0x5F9D_A5C7,
+            seq ^ spawn_seed ^ 0x5F9D_A5C7,
         );
         let enemy_kind = choose_enemy_kind_for_role(
             &enemy_pool_roles,
             spawn_role,
-            hash_seed(wave_number, seq, 0xC55A_A5AA),
+            hash_seed(wave_number ^ spawn_seed, seq ^ spawn_seed, 0xC55A_A5AA),
         );
         let Some(cfg) = data.enemies.enemy_profile_for_kind(enemy_kind) else {
             continue;
@@ -364,7 +369,12 @@ fn spawn_enemy_batch(
         let morale = (cfg.morale * faction_mods.enemy_morale_multiplier).max(1.0);
         let cohesion = (cfg.cohesion * faction_mods.enemy_cohesion_multiplier).max(1.0);
         let texture = enemy_texture_for_kind(art, enemy_kind);
-        let pos = random_spawn_position(bounds, commander_position, wave_number, seq);
+        let pos = random_spawn_position(
+            bounds,
+            commander_position,
+            wave_number ^ spawn_seed,
+            seq ^ spawn_seed.rotate_left(13),
+        );
         let mut entity = commands.spawn((
             Unit {
                 team: Team::Enemy,
@@ -685,6 +695,15 @@ fn normalized_seed(seed: u32) -> f32 {
 
 fn lerp(min: f32, max: f32, t: f32) -> f32 {
     min + (max - min) * t
+}
+
+fn runtime_seed_from_time() -> u32 {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos() as u64)
+        .unwrap_or(0xBADC_0FFE_1234_5678);
+    let mixed = nanos ^ nanos.rotate_left(11) ^ 0x517C_C1B7_2722_0A95;
+    (mixed as u32) ^ ((mixed >> 32) as u32)
 }
 
 #[allow(clippy::type_complexity)]

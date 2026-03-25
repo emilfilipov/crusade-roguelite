@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::data::{GameData, RescueConfig};
 use crate::map::MapBounds;
@@ -22,6 +23,7 @@ pub struct RescueProgress {
 struct RescueSpawnRuntime {
     timer: Timer,
     sequence: u32,
+    seed: u32,
     pity: RescueSpawnPity,
 }
 
@@ -30,6 +32,7 @@ impl Default for RescueSpawnRuntime {
         Self {
             timer: Timer::from_seconds(RESCUE_RESPAWN_INTERVAL_SECS, TimerMode::Repeating),
             sequence: 0,
+            seed: 0xA1B2_C3D4,
             pity: RescueSpawnPity::default(),
         }
     }
@@ -117,16 +120,18 @@ fn spawn_rescuables_on_run_start(
         .as_ref()
         .map(|selection| selection.faction)
         .unwrap_or(PlayerFaction::Christian);
+    spawn_runtime.seed = runtime_seed_from_time();
     let count = data.rescue.spawn_count.max(1);
     for idx in 0..count {
+        let seeded_sequence = idx.wrapping_add(spawn_runtime.seed);
         let recruit_kind =
-            recruit_kind_for_sequence(idx, &data.rescue, spawn_runtime.pity, faction);
+            recruit_kind_for_sequence(seeded_sequence, &data.rescue, spawn_runtime.pity, faction);
         spawn_runtime
             .pity
             .note_spawn(recruit_kind, &data.rescue, faction);
         spawn_rescuable(
             &mut commands,
-            rescue_spawn_position(idx, bounds.as_deref().copied()),
+            rescue_spawn_position(seeded_sequence, bounds.as_deref().copied()),
             recruit_kind,
             &art,
         );
@@ -160,12 +165,22 @@ fn spawn_rescuables_over_time(
         .as_ref()
         .map(|selection| selection.faction)
         .unwrap_or(PlayerFaction::Christian);
-    let spawn_position = rescue_spawn_position(runtime.sequence, bounds.as_deref().copied());
+    let seeded_sequence = runtime.sequence.wrapping_add(runtime.seed);
+    let spawn_position = rescue_spawn_position(seeded_sequence, bounds.as_deref().copied());
     let recruit_kind =
-        recruit_kind_for_sequence(runtime.sequence, &data.rescue, runtime.pity, faction);
+        recruit_kind_for_sequence(seeded_sequence, &data.rescue, runtime.pity, faction);
     runtime.pity.note_spawn(recruit_kind, &data.rescue, faction);
     spawn_rescuable(&mut commands, spawn_position, recruit_kind, &art);
     runtime.sequence = runtime.sequence.saturating_add(1);
+}
+
+fn runtime_seed_from_time() -> u32 {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos() as u64)
+        .unwrap_or(0x7AA5_51EED);
+    let mixed = nanos ^ nanos.rotate_left(17) ^ 0x9E37_79B9_7F4A_7C15;
+    (mixed as u32) ^ ((mixed >> 32) as u32)
 }
 
 #[allow(clippy::too_many_arguments)]

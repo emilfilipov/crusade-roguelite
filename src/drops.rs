@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::data::GameData;
 use crate::enemies::WaveRuntime;
@@ -54,6 +55,7 @@ pub struct EquipmentChestDrop {
 struct DropSpawnRuntime {
     timer: Timer,
     sequence: u32,
+    seed: u32,
 }
 
 impl Default for DropSpawnRuntime {
@@ -61,6 +63,7 @@ impl Default for DropSpawnRuntime {
         Self {
             timer: Timer::from_seconds(2.5, TimerMode::Repeating),
             sequence: 0,
+            seed: 0xD0C5_AA11,
         }
     }
 }
@@ -74,6 +77,7 @@ struct MagnetWaveRuntime {
 struct ChestWaveRuntime {
     last_seen_wave: u32,
     sequence: u32,
+    seed: u32,
 }
 
 pub struct DropsPlugin;
@@ -135,6 +139,8 @@ fn spawn_exp_packs_on_run_start(
         commands.entity(entity).despawn_recursive();
     }
     chest_state.clear();
+    runtime.seed = runtime_seed_from_time();
+    chest_runtime.seed = runtime.seed ^ 0xA5A5_3C3C;
 
     let initial_count = data.drops.initial_spawn_count.max(1);
     let wave_number = current_wave_number(waves.as_deref());
@@ -142,7 +148,8 @@ fn spawn_exp_packs_on_run_start(
     let xp_value = scaled_pack_xp(data.drops.xp_per_pack, wave_number, commander_level);
     let center = commander_spawn_center(&commanders);
     for sequence in 0..initial_count {
-        let position = drop_spawn_position(sequence, bounds.as_deref().copied(), center);
+        let seeded_sequence = sequence.wrapping_add(runtime.seed);
+        let position = drop_spawn_position(seeded_sequence, bounds.as_deref().copied(), center);
         spawn_exp_pack(
             &mut commands,
             position,
@@ -183,7 +190,8 @@ fn spawn_exp_packs_over_time(
     }
 
     let center = commander_spawn_center(&commanders);
-    let position = drop_spawn_position(runtime.sequence, bounds.as_deref().copied(), center);
+    let seeded_sequence = runtime.sequence.wrapping_add(runtime.seed);
+    let position = drop_spawn_position(seeded_sequence, bounds.as_deref().copied(), center);
     let wave_number = current_wave_number(waves.as_deref());
     let commander_level = current_commander_level(progression.as_deref());
     let xp_value = scaled_pack_xp(data.drops.xp_per_pack, wave_number, commander_level);
@@ -284,7 +292,8 @@ fn update_wave_chest_drop(
     }
 
     let center = commander_spawn_center(&commanders);
-    let position = chest_spawn_position(runtime.sequence, bounds.as_deref().copied(), center);
+    let seeded_sequence = runtime.sequence.wrapping_add(runtime.seed);
+    let position = chest_spawn_position(seeded_sequence, bounds.as_deref().copied(), center);
     runtime.sequence = runtime.sequence.saturating_add(1);
     spawn_equipment_chest(&mut commands, &art, current_wave, position);
 }
@@ -590,6 +599,15 @@ fn current_wave_number(waves: Option<&WaveRuntime>) -> u32 {
 
 fn current_commander_level(progression: Option<&Progression>) -> u32 {
     progression.map(|value| value.level.max(1)).unwrap_or(1)
+}
+
+fn runtime_seed_from_time() -> u32 {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos() as u64)
+        .unwrap_or(0xDEAD_BEEF_CAFE_BABE);
+    let mixed = nanos ^ nanos.rotate_left(19) ^ 0xA076_1D64_78BD_642F;
+    (mixed as u32) ^ ((mixed >> 32) as u32)
 }
 
 fn commander_spawn_center(commanders: &Query<&Transform, With<CommanderUnit>>) -> Vec2 {

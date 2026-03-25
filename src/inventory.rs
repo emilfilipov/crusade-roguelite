@@ -104,8 +104,8 @@ impl GearRarity {
 
     pub const fn scalar(self) -> f32 {
         match self {
-            Self::Common => -0.50,
-            Self::Uncommon => -0.22,
+            Self::Common => 0.05,
+            Self::Uncommon => 0.10,
             Self::Rare => 0.18,
             Self::Epic => 0.34,
             Self::Mythical => 0.52,
@@ -738,6 +738,19 @@ pub fn format_stat_value_for_tooltip(stat: &GearRolledStat) -> String {
     }
 }
 
+pub fn gear_item_type_label(item_type: GearItemType) -> &'static str {
+    match item_type {
+        GearItemType::Banner => "Banner",
+        GearItemType::Instrument => "Instrument",
+        GearItemType::Chant => "Chant",
+        GearItemType::Squire => "Squire",
+        GearItemType::Symbol => "Symbol",
+        GearItemType::MeleeWeapon => "Melee Weapon",
+        GearItemType::RangedWeapon => "Ranged Weapon",
+        GearItemType::Armor => "Armor",
+    }
+}
+
 pub fn gear_item_tooltip(item: &GearItemEntry) -> String {
     let mut lines = vec![
         format!(
@@ -745,6 +758,7 @@ pub fn gear_item_tooltip(item: &GearItemEntry) -> String {
             item.name,
             item_rarity_tier_for_display(item).label()
         ),
+        format!("Type: {}", gear_item_type_label(item.item_type)),
         item.description.clone(),
     ];
     for stat in &item.stats {
