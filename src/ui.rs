@@ -3313,9 +3313,10 @@ fn spawn_chest_modal_sections(
                         .spawn(NodeBundle {
                             style: Style {
                                 width: Val::Percent(100.0),
-                                flex_direction: FlexDirection::Row,
-                                column_gap: Val::Px(6.0),
+                                flex_direction: FlexDirection::Column,
+                                row_gap: Val::Px(6.0),
                                 justify_content: JustifyContent::FlexStart,
+                                align_items: AlignItems::Center,
                                 ..default()
                             },
                             background_color: BackgroundColor(Color::NONE),
