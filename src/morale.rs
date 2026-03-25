@@ -1,10 +1,13 @@
 use bevy::prelude::*;
 
 use crate::data::GameData;
+use crate::inventory::{
+    InventoryState, UnitCombatRole, commander_armywide_bonuses, gear_bonuses_for_unit,
+};
 use crate::model::{
     CommanderUnit, EnemyUnit, FriendlyUnit, GameState, GlobalBuffs, Health, MatchSetupSelection,
     Morale, PlayerFaction, StartRunEvent, Team, UnitCohesion, UnitDamagedEvent, UnitDiedEvent,
-    UnitKind,
+    UnitKind, UnitTier,
 };
 use crate::upgrades::ConditionalUpgradeEffects;
 
@@ -28,6 +31,7 @@ const ENEMY_KILL_MORALE_GAIN: f32 = 2.0;
 const ENEMY_DEATH_MORALE_LOSS: f32 = 0.8;
 const ENEMY_MORALE_GAIN_ON_FRIENDLY_DEATH: f32 = 1.2;
 const MAX_AUTHORITY_LOSS_RESISTANCE: f32 = 0.75;
+const MAX_GEAR_LOSS_RESISTANCE: f32 = 0.75;
 
 #[derive(Resource, Clone, Copy, Debug, Default)]
 struct EnemyKillRewardCounter {
@@ -80,6 +84,7 @@ impl Plugin for MoralePlugin {
                     apply_morale_and_cohesion_events,
                     apply_authority_enemy_morale_drain,
                     apply_hospitalier_aura_regen,
+                    apply_friendly_gear_regen,
                     apply_low_morale_cohesion_pressure,
                     refresh_cohesion_modifiers,
                 )
@@ -110,6 +115,7 @@ fn apply_morale_and_cohesion_events(
     data: Res<GameData>,
     setup_selection: Option<Res<MatchSetupSelection>>,
     buffs: Option<Res<GlobalBuffs>>,
+    inventory: Option<Res<InventoryState>>,
     conditional_effects: Option<Res<ConditionalUpgradeEffects>>,
     mut damaged_events: EventReader<UnitDamagedEvent>,
     mut death_events: EventReader<UnitDiedEvent>,
@@ -117,6 +123,7 @@ fn apply_morale_and_cohesion_events(
     mut kill_counter: ResMut<EnemyKillRewardCounter>,
     commanders: Query<&Transform, With<CommanderUnit>>,
     transforms: Query<&Transform>,
+    units: Query<(&crate::model::Unit, Option<&UnitTier>)>,
     mut morale_sets: ParamSet<(
         Query<&mut Morale>,
         Query<&mut Morale, With<FriendlyUnit>>,
@@ -132,7 +139,12 @@ fn apply_morale_and_cohesion_events(
     let aura_context = commanders.get_single().ok().map(|transform| {
         (
             transform.translation.truncate(),
-            commander_aura_radius(&data, buffs.as_deref(), player_faction),
+            commander_aura_radius(
+                &data,
+                buffs.as_deref(),
+                inventory.as_deref(),
+                player_faction,
+            ),
         )
     });
     let mut friendly_morale_gain = 0.0;
@@ -150,12 +162,34 @@ fn apply_morale_and_cohesion_events(
         } else {
             false
         };
-        let loss_multiplier =
+        let authority_loss_multiplier =
             friendly_loss_multiplier_from_authority(friendly_in_aura, buffs.as_deref());
+        let (gear_morale_loss_multiplier, gear_cohesion_loss_multiplier) = if event.team
+            == Team::Friendly
+        {
+            units
+                .get(event.target)
+                .ok()
+                .map(|(unit, tier)| {
+                    let gear = inventory
+                        .as_deref()
+                        .map(|inv| gear_bonuses_for_unit(inv, unit.kind, tier.map(|value| value.0)))
+                        .unwrap_or_default();
+                    (
+                        loss_multiplier_from_gear_resistance(gear.morale_loss_resistance),
+                        loss_multiplier_from_gear_resistance(gear.cohesion_loss_resistance),
+                    )
+                })
+                .unwrap_or((1.0, 1.0))
+        } else {
+            (1.0, 1.0)
+        };
         if let Ok(mut morale) = morale_sets.p0().get_mut(event.target) {
             let morale_loss = unit_morale_loss_from_damage(event.amount)
                 * if event.team == Team::Friendly {
-                    loss_multiplier * faction_mods.friendly_morale_loss_multiplier
+                    authority_loss_multiplier
+                        * gear_morale_loss_multiplier
+                        * faction_mods.friendly_morale_loss_multiplier
                 } else {
                     1.0
                 };
@@ -165,10 +199,12 @@ fn apply_morale_and_cohesion_events(
         }
         if event.team == Team::Friendly && !friendly_loss_immunity {
             cohesion.value -= friendly_cohesion_loss_from_damage(event.amount)
-                * loss_multiplier
+                * authority_loss_multiplier
+                * gear_cohesion_loss_multiplier
                 * faction_mods.friendly_cohesion_loss_multiplier;
             friendly_morale_loss += friendly_army_morale_loss_from_damage(event.amount)
-                * loss_multiplier
+                * authority_loss_multiplier
+                * gear_morale_loss_multiplier
                 * faction_mods.friendly_morale_loss_multiplier;
         }
     }
@@ -190,15 +226,26 @@ fn apply_morale_and_cohesion_events(
             }
             Team::Friendly => {
                 let in_aura = in_commander_aura(event.world_position, aura_context);
-                let loss_multiplier =
+                let authority_loss_multiplier =
                     friendly_loss_multiplier_from_authority(in_aura, buffs.as_deref());
+                let death_role = combat_role_for_unit_kind(event.kind);
+                let armywide = inventory
+                    .as_deref()
+                    .map(|inv| commander_armywide_bonuses(inv, death_role))
+                    .unwrap_or_default();
+                let gear_morale_loss_multiplier =
+                    loss_multiplier_from_gear_resistance(armywide.morale_loss_resistance);
+                let gear_cohesion_loss_multiplier =
+                    loss_multiplier_from_gear_resistance(armywide.cohesion_loss_resistance);
                 if !friendly_loss_immunity {
                     cohesion.value -= friendly_death_cohesion_loss(event.max_health, event.kind)
-                        * loss_multiplier
+                        * authority_loss_multiplier
+                        * gear_cohesion_loss_multiplier
                         * faction_mods.friendly_cohesion_loss_multiplier;
                     friendly_morale_loss +=
                         friendly_death_morale_loss(event.max_health, event.kind)
-                            * loss_multiplier
+                            * authority_loss_multiplier
+                            * gear_morale_loss_multiplier
                             * faction_mods.friendly_morale_loss_multiplier;
                 }
                 enemy_morale_gain += ENEMY_MORALE_GAIN_ON_FRIENDLY_DEATH;
@@ -228,6 +275,7 @@ fn apply_authority_enemy_morale_drain(
     data: Res<GameData>,
     setup_selection: Option<Res<MatchSetupSelection>>,
     buffs: Option<Res<GlobalBuffs>>,
+    inventory: Option<Res<InventoryState>>,
     commanders: Query<&Transform, With<CommanderUnit>>,
     mut enemies: Query<(&Transform, &mut Morale, Option<&mut UnitCohesion>), With<EnemyUnit>>,
 ) {
@@ -244,13 +292,23 @@ fn apply_authority_enemy_morale_drain(
     let Ok(commander_transform) = commanders.get_single() else {
         return;
     };
-    let aura_radius = commander_aura_radius(&data, Some(buffs), player_faction);
+    let aura_radius =
+        commander_aura_radius(&data, Some(buffs), inventory.as_deref(), player_faction);
+    let aura_enemy_effect_multiplier = (1.0
+        + inventory
+            .as_deref()
+            .map(|inv| commander_armywide_bonuses(inv, UnitCombatRole::Commander))
+            .unwrap_or_default()
+            .aura_enemy_effect_bonus_multiplier)
+        .max(0.0);
     let commander_position = commander_transform.translation.truncate();
     let dt = time.delta_seconds();
     let morale_drain = buffs.authority_enemy_morale_drain_per_sec
         * faction_mods.authority_enemy_morale_drain_multiplier
+        * aura_enemy_effect_multiplier
         * dt;
-    let cohesion_drain = faction_mods.authority_enemy_cohesion_drain_per_sec * dt;
+    let cohesion_drain =
+        faction_mods.authority_enemy_cohesion_drain_per_sec * aura_enemy_effect_multiplier * dt;
     for (transform, mut morale, maybe_cohesion) in &mut enemies {
         let in_aura = in_commander_aura(
             transform.translation.truncate(),
@@ -270,11 +328,13 @@ fn apply_authority_enemy_morale_drain(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn apply_hospitalier_aura_regen(
     time: Res<Time>,
     data: Res<GameData>,
     setup_selection: Option<Res<MatchSetupSelection>>,
     buffs: Option<Res<GlobalBuffs>>,
+    inventory: Option<Res<InventoryState>>,
     commanders: Query<&Transform, With<CommanderUnit>>,
     mut cohesion: ResMut<Cohesion>,
     mut friendlies: Query<(&Transform, &mut Health, &mut Morale), With<FriendlyUnit>>,
@@ -293,7 +353,8 @@ fn apply_hospitalier_aura_regen(
     };
     let player_faction = selected_player_faction(setup_selection.as_deref());
     let faction_mods = data.factions.for_faction(player_faction);
-    let aura_radius = commander_aura_radius(&data, Some(buffs), player_faction);
+    let aura_radius =
+        commander_aura_radius(&data, Some(buffs), inventory.as_deref(), player_faction);
     let commander_position = commander_transform.translation.truncate();
     let dt = time.delta_seconds();
 
@@ -323,6 +384,39 @@ fn apply_hospitalier_aura_regen(
             * faction_mods.friendly_cohesion_gain_multiplier
             * dt
             * coverage;
+        cohesion.value = cohesion.value.clamp(0.0, 100.0);
+    }
+}
+
+fn apply_friendly_gear_regen(
+    time: Res<Time>,
+    inventory: Option<Res<InventoryState>>,
+    mut cohesion: ResMut<Cohesion>,
+    mut friendlies: Query<
+        (&crate::model::Unit, Option<&UnitTier>, &mut Morale),
+        With<FriendlyUnit>,
+    >,
+) {
+    let Some(inventory) = inventory.as_deref() else {
+        return;
+    };
+    let dt = time.delta_seconds().max(0.0);
+    if dt <= f32::EPSILON {
+        return;
+    }
+    let mut cohesion_regen_sum = 0.0;
+    let mut friendly_count = 0u32;
+    for (unit, tier, mut morale) in &mut friendlies {
+        let gear = gear_bonuses_for_unit(inventory, unit.kind, tier.map(|value| value.0));
+        if gear.morale_regen_per_sec > 0.0 {
+            morale.current =
+                (morale.current + gear.morale_regen_per_sec * dt).clamp(0.0, morale.max);
+        }
+        cohesion_regen_sum += gear.cohesion_regen_per_sec.max(0.0);
+        friendly_count = friendly_count.saturating_add(1);
+    }
+    if friendly_count > 0 {
+        cohesion.value += cohesion_regen_sum / friendly_count as f32 * dt;
         cohesion.value = cohesion.value.clamp(0.0, 100.0);
     }
 }
@@ -428,6 +522,7 @@ fn selected_player_faction(setup_selection: Option<&MatchSetupSelection>) -> Pla
 pub fn commander_aura_radius(
     data: &GameData,
     buffs: Option<&GlobalBuffs>,
+    inventory: Option<&InventoryState>,
     player_faction: PlayerFaction,
 ) -> f32 {
     let base_radius = data
@@ -442,7 +537,10 @@ pub fn commander_aura_radius(
     let upgrade_bonus = buffs
         .map(|value| value.commander_aura_radius_bonus)
         .unwrap_or(0.0);
-    (base_radius + faction_bonus + upgrade_bonus).max(0.0)
+    let gear_bonus = inventory
+        .map(|inv| commander_armywide_bonuses(inv, UnitCombatRole::Commander).aura_radius_bonus)
+        .unwrap_or(0.0);
+    (base_radius + faction_bonus + upgrade_bonus + gear_bonus).max(0.0)
 }
 
 pub fn in_commander_aura(position: Vec2, aura_context: Option<(Vec2, f32)>) -> bool {
@@ -461,6 +559,19 @@ pub fn friendly_loss_multiplier_from_authority(in_aura: bool, buffs: Option<&Glo
         .unwrap_or(0.0)
         .clamp(0.0, MAX_AUTHORITY_LOSS_RESISTANCE);
     (1.0 - resistance).clamp(0.1, 1.0)
+}
+
+fn loss_multiplier_from_gear_resistance(resistance: f32) -> f32 {
+    (1.0 - resistance.clamp(0.0, MAX_GEAR_LOSS_RESISTANCE)).clamp(0.1, 1.0)
+}
+
+fn combat_role_for_unit_kind(kind: UnitKind) -> UnitCombatRole {
+    match kind {
+        UnitKind::Commander => UnitCombatRole::Commander,
+        UnitKind::ChristianPeasantArcher | UnitKind::MuslimPeasantArcher => UnitCombatRole::Ranged,
+        UnitKind::ChristianPeasantPriest | UnitKind::MuslimPeasantPriest => UnitCombatRole::Support,
+        _ => UnitCombatRole::Melee,
+    }
 }
 
 pub fn cohesion_modifiers(value: f32) -> CohesionCombatModifiers {
@@ -517,8 +628,8 @@ mod tests {
         should_apply_enemy_kill_reward, unit_morale_loss_from_damage,
     };
     use crate::{
-        data::GameData, model::GlobalBuffs, morale::commander_aura_radius,
-        upgrades::ConditionalUpgradeEffects,
+        data::GameData, inventory::InventoryState, model::GlobalBuffs,
+        morale::commander_aura_radius, upgrades::ConditionalUpgradeEffects,
     };
 
     #[test]
@@ -602,9 +713,14 @@ mod tests {
             commander_aura_radius_bonus: 20.0,
             ..GlobalBuffs::default()
         };
+        let inventory = InventoryState::default();
         assert!(
-            commander_aura_radius(&data, Some(&buffs), crate::model::PlayerFaction::Christian)
-                > data.units.commander_christian.aura_radius
+            commander_aura_radius(
+                &data,
+                Some(&buffs),
+                Some(&inventory),
+                crate::model::PlayerFaction::Christian
+            ) > data.units.commander_christian.aura_radius
         );
     }
 

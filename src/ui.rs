@@ -12,8 +12,8 @@ use crate::enemies::WaveRuntime;
 use crate::formation::{ActiveFormation, FormationModifiers, FormationSkillBar, SkillBarSkillKind};
 use crate::inventory::{
     EquipmentChestState, EquipmentUnitType, GearItemEntry, GearRarity, InventoryPlaceError,
-    InventorySlotRef, InventoryState, get_item_from_slot, item_rarity_tier_for_display,
-    place_item_into_slot, take_item_from_slot,
+    InventorySlotRef, InventoryState, gear_item_tooltip, get_item_from_slot,
+    item_rarity_tier_for_display, place_item_into_slot, take_item_from_slot,
 };
 use crate::map::MapBounds;
 use crate::model::{
@@ -266,6 +266,9 @@ struct InventorySlotButton {
 struct InventorySlotSelection {
     selected: Option<InventorySlotRef>,
 }
+
+#[derive(Component, Clone, Copy, Debug)]
+struct InventoryTooltipText;
 
 #[derive(Component, Clone, Copy, Debug)]
 struct UtilityBarRoot;
@@ -587,6 +590,8 @@ impl Plugin for UiPlugin {
                     sync_run_modal_overlay,
                     handle_run_modal_buttons,
                     handle_inventory_slot_buttons,
+                    update_inventory_hover_tooltip,
+                    clear_chest_state_when_modal_exits,
                     clear_inventory_slot_selection,
                     handle_utility_bar_buttons,
                 )
@@ -2009,9 +2014,7 @@ fn sync_run_modal_overlay(
                     || deps.unit_upgrade_state.is_changed());
             let should_refresh_inventory =
                 matches!(screen, RunModalScreen::Inventory | RunModalScreen::Chest)
-                    && (deps.inventory.is_changed()
-                        || deps.chest.is_changed()
-                        || deps.slot_selection.is_changed());
+                    && (deps.inventory.is_changed() || deps.chest.is_changed());
             if let Some((_, root)) = existing
                 && root.screen == screen
                 && !should_refresh_unit_upgrade
@@ -2174,10 +2177,10 @@ fn spawn_run_modal_overlay(
                     });
                 }
                 if matches!(screen, RunModalScreen::Inventory) {
-                    spawn_inventory_modal_sections(panel, inventory, selected_slot);
+                    spawn_inventory_modal_sections(panel, inventory, selected_slot, art);
                 }
                 if matches!(screen, RunModalScreen::Chest) {
-                    spawn_chest_modal_sections(panel, chest, inventory, selected_slot);
+                    spawn_chest_modal_sections(panel, chest, inventory, selected_slot, art);
                 }
                 if matches!(screen, RunModalScreen::Stats) {
                     spawn_stats_modal_sections(panel, stats);
@@ -3053,6 +3056,7 @@ fn spawn_inventory_modal_sections(
     parent: &mut ChildBuilder,
     inventory: &InventoryState,
     selected_slot: Option<InventorySlotRef>,
+    art: &ArtAssets,
 ) {
     parent
         .spawn(NodeBundle {
@@ -3092,7 +3096,7 @@ fn spawn_inventory_modal_sections(
                             ..default()
                         },
                     ));
-                    spawn_inventory_backpack_grid(bag, inventory, selected_slot, 60.0);
+                    spawn_inventory_backpack_grid(bag, inventory, selected_slot, 60.0, art);
                 });
 
             layout
@@ -3184,6 +3188,7 @@ fn spawn_inventory_modal_sections(
                                                     &slot.display_name,
                                                     62.0,
                                                     selected_slot,
+                                                    art,
                                                 );
                                             }
                                         });
@@ -3192,6 +3197,35 @@ fn spawn_inventory_modal_sections(
                     });
                 });
         });
+    parent.spawn(TextBundle::from_section(
+        "Hover any item to inspect stats and effects.",
+        TextStyle {
+            font_size: 12.0,
+            color: HUD_TEXT_COLOR,
+            ..default()
+        },
+    ));
+    spawn_gear_rarity_legend(parent);
+    parent.spawn((
+        InventoryTooltipText,
+        TextBundle {
+            style: Style {
+                width: Val::Percent(100.0),
+                max_height: Val::Px(110.0),
+                ..default()
+            },
+            text: Text::from_section(
+                "Item tooltip",
+                TextStyle {
+                    font_size: 12.0,
+                    color: MENU_BUTTON_TEXT_DISABLED,
+                    ..default()
+                },
+            )
+            .with_justify(JustifyText::Left),
+            ..default()
+        },
+    ));
 }
 
 fn spawn_chest_modal_sections(
@@ -3199,6 +3233,7 @@ fn spawn_chest_modal_sections(
     chest: &EquipmentChestState,
     inventory: &InventoryState,
     selected_slot: Option<InventorySlotRef>,
+    art: &ArtAssets,
 ) {
     parent.spawn(TextBundle::from_section(
         "Select source slot, then destination slot to move/swap gear.",
@@ -3266,6 +3301,7 @@ fn spawn_chest_modal_sections(
                                     "Chest",
                                     70.0,
                                     selected_slot,
+                                    art,
                                 );
                             }
                         });
@@ -3295,9 +3331,30 @@ fn spawn_chest_modal_sections(
                             ..default()
                         },
                     ));
-                    spawn_inventory_backpack_grid(bag_col, inventory, selected_slot, 52.0);
+                    spawn_inventory_backpack_grid(bag_col, inventory, selected_slot, 52.0, art);
                 });
         });
+    spawn_gear_rarity_legend(parent);
+    parent.spawn((
+        InventoryTooltipText,
+        TextBundle {
+            style: Style {
+                width: Val::Percent(100.0),
+                max_height: Val::Px(120.0),
+                ..default()
+            },
+            text: Text::from_section(
+                "Item tooltip",
+                TextStyle {
+                    font_size: 12.0,
+                    color: MENU_BUTTON_TEXT_DISABLED,
+                    ..default()
+                },
+            )
+            .with_justify(JustifyText::Left),
+            ..default()
+        },
+    ));
 }
 
 fn spawn_inventory_backpack_grid(
@@ -3305,6 +3362,7 @@ fn spawn_inventory_backpack_grid(
     inventory: &InventoryState,
     selected_slot: Option<InventorySlotRef>,
     slot_size: f32,
+    art: &ArtAssets,
 ) {
     const BACKPACK_ROWS: usize = 5;
     const BACKPACK_COLS: usize = 6;
@@ -3348,6 +3406,7 @@ fn spawn_inventory_backpack_grid(
                                 "--",
                                 slot_size,
                                 selected_slot,
+                                art,
                             );
                         }
                     });
@@ -3362,6 +3421,7 @@ fn spawn_inventory_slot_button(
     fallback_label: &str,
     size: f32,
     selected_slot: Option<InventorySlotRef>,
+    art: &ArtAssets,
 ) {
     let border = inventory_slot_border_color(maybe_item, selected_slot == Some(slot_ref));
     let label = maybe_item
@@ -3392,6 +3452,21 @@ fn spawn_inventory_slot_button(
             InventorySlotButton { slot: slot_ref },
         ))
         .with_children(|slot| {
+            if let Some(item) = maybe_item {
+                slot.spawn(ImageBundle {
+                    style: Style {
+                        position_type: PositionType::Absolute,
+                        top: Val::Px(3.0),
+                        left: Val::Px(3.0),
+                        width: Val::Px(18.0),
+                        height: Val::Px(18.0),
+                        ..default()
+                    },
+                    image: UiImage::new(gear_item_icon_handle(item, art)),
+                    background_color: BackgroundColor(Color::NONE),
+                    ..default()
+                });
+            }
             slot.spawn(TextBundle::from_section(
                 label,
                 TextStyle {
@@ -3431,6 +3506,84 @@ fn gear_rarity_border_color(rarity: GearRarity) -> Color {
         GearRarity::Epic => Color::srgb(0.67, 0.38, 0.91),
         GearRarity::Mythical => Color::srgb(1.0, 0.56, 0.08),
         GearRarity::Unique => Color::srgb(0.92, 0.2, 0.2),
+    }
+}
+
+fn spawn_gear_rarity_legend(parent: &mut ChildBuilder) {
+    const LEGEND: [(GearRarity, &str); 6] = [
+        (GearRarity::Common, "Common"),
+        (GearRarity::Uncommon, "Uncommon"),
+        (GearRarity::Rare, "Rare"),
+        (GearRarity::Epic, "Epic"),
+        (GearRarity::Mythical, "Mythical"),
+        (GearRarity::Unique, "Unique"),
+    ];
+    parent
+        .spawn(NodeBundle {
+            style: Style {
+                width: Val::Percent(100.0),
+                flex_direction: FlexDirection::Row,
+                flex_wrap: FlexWrap::Wrap,
+                column_gap: Val::Px(8.0),
+                row_gap: Val::Px(4.0),
+                ..default()
+            },
+            background_color: BackgroundColor(Color::NONE),
+            ..default()
+        })
+        .with_children(|legend| {
+            for (rarity, label) in LEGEND {
+                legend
+                    .spawn(NodeBundle {
+                        style: Style {
+                            flex_direction: FlexDirection::Row,
+                            align_items: AlignItems::Center,
+                            column_gap: Val::Px(4.0),
+                            ..default()
+                        },
+                        background_color: BackgroundColor(Color::NONE),
+                        ..default()
+                    })
+                    .with_children(|entry| {
+                        entry.spawn(NodeBundle {
+                            style: Style {
+                                width: Val::Px(10.0),
+                                height: Val::Px(10.0),
+                                border: UiRect::all(Val::Px(1.0)),
+                                ..default()
+                            },
+                            background_color: BackgroundColor(Color::srgba(0.08, 0.07, 0.06, 0.75)),
+                            border_color: BorderColor(gear_rarity_border_color(rarity)),
+                            ..default()
+                        });
+                        entry.spawn(TextBundle::from_section(
+                            label,
+                            TextStyle {
+                                font_size: 10.0,
+                                color: HUD_TEXT_COLOR,
+                                ..default()
+                            },
+                        ));
+                    });
+            }
+        });
+}
+
+fn gear_item_icon_handle(item: &GearItemEntry, art: &ArtAssets) -> Handle<Image> {
+    use crate::inventory::GearItemType;
+
+    match item.item_type {
+        GearItemType::Banner => art.item_banner_icon.clone(),
+        GearItemType::Instrument => art.item_instrument_icon.clone(),
+        GearItemType::Chant => art.item_chant_icon.clone(),
+        GearItemType::Squire => art.item_squire_icon.clone(),
+        GearItemType::Symbol => match item.faction.unwrap_or(PlayerFaction::Christian) {
+            PlayerFaction::Christian => art.item_symbol_cross_icon.clone(),
+            PlayerFaction::Muslim => art.item_symbol_crescent_icon.clone(),
+        },
+        GearItemType::MeleeWeapon => art.item_sword_icon.clone(),
+        GearItemType::RangedWeapon => art.item_bow_icon.clone(),
+        GearItemType::Armor => art.item_armor_icon.clone(),
     }
 }
 
@@ -5451,8 +5604,9 @@ fn handle_inventory_slot_buttons(
             &mut BorderColor,
             &mut BackgroundColor,
         ),
-        (Changed<Interaction>, With<Button>),
+        With<Button>,
     >,
+    mouse_buttons: Option<Res<ButtonInput<MouseButton>>>,
     mut text_query: Query<&mut Text>,
     modal_state: Res<RunModalState>,
     mut inventory: ResMut<InventoryState>,
@@ -5468,6 +5622,42 @@ fn handle_inventory_slot_buttons(
     inventory.ensure_bag_capacity();
     chest.ensure_capacity();
 
+    let hovered_slot = buttons.iter().find_map(|(interaction, button, _, _, _)| {
+        matches!(interaction, Interaction::Hovered | Interaction::Pressed).then_some(button.slot)
+    });
+
+    let left_pressed = mouse_buttons
+        .as_deref()
+        .map(|buttons| buttons.just_pressed(MouseButton::Left))
+        .unwrap_or(false);
+    let left_released = mouse_buttons
+        .as_deref()
+        .map(|buttons| buttons.just_released(MouseButton::Left))
+        .unwrap_or(false);
+    let right_pressed = mouse_buttons
+        .as_deref()
+        .map(|buttons| buttons.just_pressed(MouseButton::Right))
+        .unwrap_or(false);
+
+    if left_pressed
+        && selected_slot.selected.is_none()
+        && let Some(slot) = hovered_slot
+        && get_item_from_slot(&inventory, &chest, slot).is_some()
+    {
+        selected_slot.selected = Some(slot);
+    }
+
+    if left_released && let Some(source_slot) = selected_slot.selected {
+        if let Some(target_slot) = hovered_slot {
+            if source_slot != target_slot {
+                attempt_inventory_transfer(&mut inventory, &mut chest, source_slot, target_slot);
+                selected_slot.selected = None;
+            }
+        } else {
+            selected_slot.selected = None;
+        }
+    }
+
     for (interaction, button, children, mut border_color, mut background_color) in &mut buttons {
         let maybe_item = get_item_from_slot(&inventory, &chest, button.slot);
         let is_selected = selected_slot.selected == Some(button.slot);
@@ -5481,43 +5671,63 @@ fn handle_inventory_slot_buttons(
             };
         }
 
-        match *interaction {
-            Interaction::Pressed => {
-                *background_color = BackgroundColor(Color::srgba(0.13, 0.11, 0.095, 0.86));
-                if let Some(source_slot) = selected_slot.selected {
-                    if source_slot == button.slot {
-                        selected_slot.selected = None;
-                        *border_color = BorderColor(inventory_slot_border_color(maybe_item, false));
-                        continue;
-                    }
-                    attempt_inventory_transfer(
-                        &mut inventory,
-                        &mut chest,
-                        source_slot,
-                        button.slot,
-                    );
-                    selected_slot.selected = None;
-                    *border_color = BorderColor(inventory_slot_border_color(
-                        get_item_from_slot(&inventory, &chest, button.slot),
-                        false,
-                    ));
-                } else if maybe_item.is_some() {
-                    selected_slot.selected = Some(button.slot);
-                    *border_color = BorderColor(MENU_BUTTON_BORDER_HOVERED);
-                } else {
-                    *border_color =
-                        BorderColor(inventory_slot_border_color(maybe_item, is_selected));
-                }
-            }
-            Interaction::Hovered => {
-                *border_color = BorderColor(MENU_BUTTON_BORDER_HOVERED);
-                *background_color = BackgroundColor(Color::srgba(0.12, 0.1, 0.086, 0.82));
-            }
-            Interaction::None => {
-                *border_color = BorderColor(inventory_slot_border_color(maybe_item, is_selected));
-                *background_color = BackgroundColor(Color::srgba(0.1, 0.085, 0.075, 0.74));
-            }
+        let hovered = matches!(*interaction, Interaction::Hovered | Interaction::Pressed);
+        *border_color = BorderColor(if is_selected || hovered {
+            MENU_BUTTON_BORDER_HOVERED
+        } else {
+            inventory_slot_border_color(maybe_item, false)
+        });
+        *background_color = BackgroundColor(if hovered {
+            Color::srgba(0.12, 0.1, 0.086, 0.82)
+        } else {
+            Color::srgba(0.1, 0.085, 0.075, 0.74)
+        });
+
+        if is_selected && right_pressed {
+            selected_slot.selected = None;
         }
+    }
+}
+
+fn update_inventory_hover_tooltip(
+    modal_state: Res<RunModalState>,
+    slot_buttons: Query<(&Interaction, &InventorySlotButton)>,
+    inventory: Res<InventoryState>,
+    chest: Res<EquipmentChestState>,
+    mut tooltip_text: Query<&mut Text, With<InventoryTooltipText>>,
+) {
+    if !matches!(
+        *modal_state,
+        RunModalState::Open(RunModalScreen::Inventory | RunModalScreen::Chest)
+    ) {
+        return;
+    }
+    let hovered_slot = slot_buttons.iter().find_map(|(interaction, button)| {
+        matches!(interaction, Interaction::Hovered | Interaction::Pressed).then_some(button.slot)
+    });
+    let tooltip = hovered_slot
+        .and_then(|slot| get_item_from_slot(&inventory, &chest, slot))
+        .map(gear_item_tooltip)
+        .unwrap_or_else(|| "Hover an item to show details.".to_string());
+    for mut text in &mut tooltip_text {
+        text.sections[0].value = tooltip.clone();
+        text.sections[0].style.color = if hovered_slot.is_some() {
+            HUD_TEXT_COLOR
+        } else {
+            MENU_BUTTON_TEXT_DISABLED
+        };
+    }
+}
+
+fn clear_chest_state_when_modal_exits(
+    modal_state: Res<RunModalState>,
+    mut chest: ResMut<EquipmentChestState>,
+) {
+    if !modal_state.is_changed() {
+        return;
+    }
+    if !matches!(*modal_state, RunModalState::Open(RunModalScreen::Chest)) && !chest.is_empty() {
+        chest.clear();
     }
 }
 
@@ -6019,6 +6229,7 @@ fn draw_commander_aura_footprint(
     mut gizmos: Gizmos,
     data: Res<GameData>,
     buffs: Res<crate::model::GlobalBuffs>,
+    inventory: Option<Res<InventoryState>>,
     setup_selection: Option<Res<MatchSetupSelection>>,
     commanders: Query<&Transform, With<CommanderUnit>>,
 ) {
@@ -6032,7 +6243,8 @@ fn draw_commander_aura_footprint(
         .as_deref()
         .map(|selection| selection.faction)
         .unwrap_or(PlayerFaction::Christian);
-    let radius = commander_aura_radius(&data, Some(&buffs), player_faction).max(1.0);
+    let radius =
+        commander_aura_radius(&data, Some(&buffs), inventory.as_deref(), player_faction).max(1.0);
     let center = commander_transform.translation.truncate();
     let edge_color = Color::srgba(0.62, 0.86, 1.0, 0.18);
     gizmos.circle_2d(center, radius, edge_color);

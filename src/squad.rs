@@ -9,6 +9,7 @@ use crate::enemies::WaveRuntime;
 use crate::formation::{
     ActiveFormation, FormationModifiers, active_formation_config, formation_contains_position,
 };
+use crate::inventory::{InventoryState, gear_bonuses_for_unit};
 use crate::map::{MapBounds, playable_bounds};
 use crate::model::{
     Armor, AttackCooldown, AttackProfile, BaseMaxHealth, ColliderRadius, CommanderUnit, EnemyUnit,
@@ -433,6 +434,7 @@ fn scale_cooldown_for_attack_speed(base_cooldown: f32, speed_multiplier: f32, mi
 fn commander_movement(
     time: Res<Time>,
     data: Res<GameData>,
+    inventory: Option<Res<InventoryState>>,
     active_formation: Res<ActiveFormation>,
     formation_mods: Res<FormationModifiers>,
     buffs: Option<Res<GlobalBuffs>>,
@@ -444,7 +446,7 @@ fn commander_movement(
     friendlies: Query<Entity, (With<FriendlyUnit>, Without<CommanderUnit>)>,
     enemies: Query<&Transform, (With<EnemyUnit>, Without<CommanderUnit>)>,
     mut commanders: Query<
-        (&MoveSpeed, &mut Transform),
+        (&Unit, Option<&UnitTier>, &MoveSpeed, &mut Transform),
         (With<PlayerControlled>, With<CommanderUnit>),
     >,
 ) {
@@ -489,7 +491,7 @@ fn commander_movement(
             .map(|value| value.friendly_move_speed_bonus)
             .unwrap_or(0.0);
 
-    for (move_speed, mut transform) in &mut commanders {
+    for (unit, tier, move_speed, mut transform) in &mut commanders {
         let commander_position = transform.translation.truncate();
         let inside_enemy_count = enemies
             .iter()
@@ -505,8 +507,12 @@ fn commander_movement(
             .count();
         let formation_slowdown =
             movement_multiplier_from_inside_enemy_count(inside_enemy_count as u32);
-        let effective_speed =
-            (move_speed.0 + movement_bonus).max(1.0) * formation_mods.move_speed_multiplier;
+        let gear = inventory
+            .as_deref()
+            .map(|inv| gear_bonuses_for_unit(inv, unit.kind, tier.map(|value| value.0)))
+            .unwrap_or_default();
+        let effective_speed = (move_speed.0 + movement_bonus + gear.move_speed_bonus).max(1.0)
+            * formation_mods.move_speed_multiplier;
         let delta = direction * effective_speed * speed_multiplier * time.delta_seconds();
         transform.translation.x += delta.x * formation_slowdown;
         transform.translation.y += delta.y * formation_slowdown;
@@ -824,7 +830,13 @@ fn apply_tier0_conversion_events(
 fn run_priest_support_logic(
     mut commands: Commands,
     time: Res<Time>,
-    mut priests: Query<(&Unit, &Transform, &mut PriestSupportCaster)>,
+    inventory: Option<Res<InventoryState>>,
+    mut priests: Query<(
+        &Unit,
+        Option<&UnitTier>,
+        &Transform,
+        &mut PriestSupportCaster,
+    )>,
     units: Query<(Entity, &Transform, &Unit), Without<RescuableUnit>>,
     mut blessings: Query<(Entity, &Unit, &mut PriestAttackSpeedBlessing), Without<RescuableUnit>>,
 ) {
@@ -858,7 +870,7 @@ fn run_priest_support_logic(
         return;
     }
 
-    for (priest_unit, priest_transform, mut caster) in &mut priests {
+    for (priest_unit, priest_tier, priest_transform, mut caster) in &mut priests {
         if !priest_unit.kind.is_priest() || priest_unit.team == Team::Neutral {
             continue;
         }
@@ -878,7 +890,19 @@ fn run_priest_support_logic(
                 });
             }
         }
-        caster.cooldown = PRIEST_BLESSING_COOLDOWN_SECS;
+        let cooldown_reduction = if priest_unit.team == Team::Friendly {
+            inventory
+                .as_deref()
+                .map(|inv| {
+                    gear_bonuses_for_unit(inv, priest_unit.kind, priest_tier.map(|value| value.0))
+                })
+                .unwrap_or_default()
+                .cooldown_reduction_secs
+                .max(0.0)
+        } else {
+            0.0
+        };
+        caster.cooldown = (PRIEST_BLESSING_COOLDOWN_SECS - cooldown_reduction).max(4.0);
     }
 }
 
