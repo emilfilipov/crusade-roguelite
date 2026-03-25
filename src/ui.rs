@@ -11,9 +11,10 @@ use crate::drops::{EquipmentChestDrop, ExpPack, MagnetPickup, chest_pickup_progr
 use crate::enemies::WaveRuntime;
 use crate::formation::{ActiveFormation, FormationModifiers, FormationSkillBar, SkillBarSkillKind};
 use crate::inventory::{
-    EquipmentChestState, EquipmentUnitType, GearItemEntry, GearRarity, InventoryPlaceError,
-    InventorySlotRef, InventoryState, gear_item_tooltip, get_item_from_slot,
-    item_rarity_tier_for_display, place_item_into_slot, take_item_from_slot,
+    BACKPACK_SLOT_CAPACITY, CHEST_SLOT_CAPACITY, EquipmentChestState, EquipmentUnitType,
+    GearItemEntry, GearRarity, InventoryPlaceError, InventorySlotRef, InventoryState,
+    gear_item_tooltip, get_item_from_slot, item_rarity_tier_for_display, place_item_into_slot,
+    take_item_from_slot,
 };
 use crate::map::MapBounds;
 use crate::model::{
@@ -3413,11 +3414,8 @@ fn spawn_inventory_slot_button(
             if let Some(item) = maybe_item {
                 slot.spawn(ImageBundle {
                     style: Style {
-                        position_type: PositionType::Absolute,
-                        top: Val::Px(3.0),
-                        left: Val::Px(3.0),
-                        width: Val::Px(18.0),
-                        height: Val::Px(18.0),
+                        width: Val::Percent(100.0),
+                        height: Val::Percent(100.0),
                         ..default()
                     },
                     image: UiImage::new(gear_item_icon_handle(item, art)),
@@ -5577,8 +5575,12 @@ fn handle_inventory_slot_buttons(
     ) {
         return;
     }
-    inventory.ensure_bag_capacity();
-    chest.ensure_capacity();
+    if inventory.bag_slots.len() != BACKPACK_SLOT_CAPACITY {
+        inventory.ensure_bag_capacity();
+    }
+    if chest.slots.len() != CHEST_SLOT_CAPACITY {
+        chest.ensure_capacity();
+    }
     let hovered_slot = buttons.iter().find_map(|(interaction, button, _, _)| {
         matches!(interaction, Interaction::Hovered | Interaction::Pressed).then_some(button.slot)
     });
@@ -5642,6 +5644,7 @@ fn update_inventory_hover_tooltip(
     slot_buttons: Query<(&Interaction, &InventorySlotButton)>,
     inventory: Res<InventoryState>,
     chest: Res<EquipmentChestState>,
+    selected_slot: Res<InventorySlotSelection>,
     mut tooltip_text: Query<&mut Text, With<InventoryTooltipText>>,
 ) {
     if !matches!(
@@ -5653,13 +5656,14 @@ fn update_inventory_hover_tooltip(
     let hovered_slot = slot_buttons.iter().find_map(|(interaction, button)| {
         matches!(interaction, Interaction::Hovered | Interaction::Pressed).then_some(button.slot)
     });
-    let tooltip = hovered_slot
+    let inspected_slot = hovered_slot.or(selected_slot.selected);
+    let tooltip = inspected_slot
         .and_then(|slot| get_item_from_slot(&inventory, &chest, slot))
         .map(gear_item_tooltip)
         .unwrap_or_else(|| "Hover an item to show details.".to_string());
     for mut text in &mut tooltip_text {
         text.sections[0].value = tooltip.clone();
-        text.sections[0].style.color = if hovered_slot.is_some() {
+        text.sections[0].style.color = if inspected_slot.is_some() {
             HUD_TEXT_COLOR
         } else {
             MENU_BUTTON_TEXT_DISABLED
