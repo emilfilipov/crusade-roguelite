@@ -687,15 +687,24 @@ pub fn reached_target(position: Vec2, target: Vec2, radius: f32) -> bool {
     position.distance_squared(target) <= radius * radius
 }
 
+pub fn chest_pickup_progress_ratio(chest: &EquipmentChestDrop) -> Option<f32> {
+    if chest.pickup_delay_remaining > 0.0 || chest.pickup_progress <= 0.0 {
+        return None;
+    }
+    let ratio = (chest.pickup_progress / CHEST_PICKUP_CHANNEL_SECS).clamp(0.0, 1.0);
+    if ratio >= 1.0 { None } else { Some(ratio) }
+}
+
 #[cfg(test)]
 mod tests {
     use bevy::prelude::Vec2;
 
     use crate::drops::{
-        any_friendly_in_pickup_radius, apply_xp_gain_multiplier, chest_wave_lifecycle,
-        drop_spawn_position, force_home_pack_state, homing_speed_from_commander_base,
-        magnet_wave_lifecycle, reached_target, scaled_pack_xp, should_spawn_chest_for_wave,
-        should_spawn_magnet_for_wave, step_towards_target, tick_pickup_delay,
+        EquipmentChestDrop, any_friendly_in_pickup_radius, apply_xp_gain_multiplier,
+        chest_pickup_progress_ratio, chest_wave_lifecycle, drop_spawn_position,
+        force_home_pack_state, homing_speed_from_commander_base, magnet_wave_lifecycle,
+        reached_target, scaled_pack_xp, should_spawn_chest_for_wave, should_spawn_magnet_for_wave,
+        step_towards_target, tick_pickup_delay,
     };
     use crate::map::MapBounds;
     use crate::model::GlobalBuffs;
@@ -816,5 +825,21 @@ mod tests {
         assert_eq!(chest_wave_lifecycle(2, 2), (false, false));
         assert_eq!(chest_wave_lifecycle(2, 3), (true, true));
         assert_eq!(chest_wave_lifecycle(3, 4), (true, false));
+    }
+
+    #[test]
+    fn chest_pickup_progress_ratio_visible_only_after_delay_and_before_completion() {
+        let mut chest = EquipmentChestDrop {
+            wave: 3,
+            pickup_delay_remaining: 0.4,
+            pickup_progress: 0.8,
+        };
+        assert_eq!(chest_pickup_progress_ratio(&chest), None);
+
+        chest.pickup_delay_remaining = 0.0;
+        assert!(chest_pickup_progress_ratio(&chest).is_some());
+
+        chest.pickup_progress = 2.0;
+        assert_eq!(chest_pickup_progress_ratio(&chest), None);
     }
 }

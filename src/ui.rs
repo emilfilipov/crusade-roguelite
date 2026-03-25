@@ -7,7 +7,7 @@ use bevy::window::PrimaryWindow;
 use crate::archive::{ArchiveCategory, ArchiveDataset, ArchiveEntry};
 use crate::banner::{BannerState, banner_pickup_progress_ratio};
 use crate::data::GameData;
-use crate::drops::{ExpPack, MagnetPickup};
+use crate::drops::{EquipmentChestDrop, ExpPack, MagnetPickup, chest_pickup_progress_ratio};
 use crate::enemies::WaveRuntime;
 use crate::formation::{ActiveFormation, FormationModifiers, FormationSkillBar, SkillBarSkillKind};
 use crate::inventory::{
@@ -5982,6 +5982,7 @@ fn update_skill_bar_hud(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn update_rescue_progress_hud(
     mut commands: Commands,
     data: Res<GameData>,
@@ -5990,6 +5991,7 @@ fn update_rescue_progress_hud(
     banner_state: Res<BannerState>,
     rescue_bars_root: Query<Entity, With<RescueProgressBarsRoot>>,
     rescuables: Query<&RescueProgress, With<RescuableUnit>>,
+    chests: Query<&EquipmentChestDrop>,
 ) {
     let Ok(root_entity) = rescue_bars_root.get_single() else {
         return;
@@ -6012,6 +6014,12 @@ fn update_rescue_progress_hud(
     if let Some(progress_ratio) = banner_pickup_progress_ratio(&banner_state) {
         bars.push((progress_ratio, Color::srgb(0.94, 0.68, 0.32)));
     }
+    bars.extend(
+        chests
+            .iter()
+            .filter_map(chest_pickup_progress_ratio)
+            .map(|ratio| (ratio, Color::srgb(0.86, 0.52, 0.22))),
+    );
     bars.extend(
         rescuables
             .iter()
