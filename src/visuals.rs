@@ -114,7 +114,7 @@ fn load_art_assets(mut assets: ResMut<ArtAssets>, asset_server: Option<Res<Asset
     assets.magnet_cross_pickup = asset_server.load("sprites/pickups/magnet_cross.png");
     assets.magnet_crescent_pickup = asset_server.load("sprites/pickups/magnet_crescent.png");
     assets.chest_drop_closed =
-        asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0088.png");
+        asset_server.load("third_party/kenney_tiny-dungeon_1.0/Tiles/tile_0089.png");
     assets.item_banner_icon = asset_server
         .load("third_party/oga_ishtar_top-down-pack_1.1/top-down-pack-1/tiles/Slice 25.png");
     assets.item_instrument_icon =
