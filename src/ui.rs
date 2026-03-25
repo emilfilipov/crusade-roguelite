@@ -2,6 +2,7 @@ use bevy::app::AppExit;
 use bevy::ecs::system::SystemParam;
 use bevy::input::mouse::MouseWheel;
 use bevy::prelude::*;
+use bevy::ui::FocusPolicy;
 use bevy::window::PrimaryWindow;
 
 use crate::archive::{ArchiveCategory, ArchiveDataset, ArchiveEntry};
@@ -2850,6 +2851,8 @@ fn spawn_scrollable_panel(
                 border_color: BorderColor(UTILITY_BAR_BORDER),
                 ..default()
             },
+            Interaction::default(),
+            FocusPolicy::Pass,
         ))
         .with_children(|viewport| {
             viewport
@@ -5722,13 +5725,33 @@ fn attempt_inventory_transfer(
 
 fn handle_scroll_views(
     mut wheel_events: EventReader<MouseWheel>,
+    viewport_query: Query<(Entity, &Node, &ScrollViewport, Option<&Interaction>)>,
     mut content_query: Query<(&Parent, &Node, &mut Style, &mut ScrollContent), With<ScrollContent>>,
-    viewport_query: Query<(&Node, &ScrollViewport), With<ScrollViewport>>,
 ) {
     let wheel_delta = wheel_events.read().map(|event| event.y).sum::<f32>() * 28.0;
+    if wheel_delta.abs() <= f32::EPSILON {
+        return;
+    }
+
+    let hovered_viewports: std::collections::HashSet<Entity> = viewport_query
+        .iter()
+        .filter_map(|(entity, _, _, interaction)| {
+            let is_hovered = interaction
+                .copied()
+                .map(scroll_viewport_is_hovered)
+                .unwrap_or(false);
+            is_hovered.then_some(entity)
+        })
+        .collect();
+    if hovered_viewports.is_empty() {
+        return;
+    }
 
     for (parent, content_node, mut style, mut content) in &mut content_query {
-        let Ok((viewport_node, viewport)) = viewport_query.get(parent.get()) else {
+        if !hovered_viewports.contains(&parent.get()) {
+            continue;
+        }
+        let Ok((_, viewport_node, viewport, _)) = viewport_query.get(parent.get()) else {
             continue;
         };
         let viewport_height = if viewport_node.size().y > 1.0 {
@@ -5746,6 +5769,10 @@ fn handle_scroll_views(
             style.top = Val::Px(0.0);
         }
     }
+}
+
+fn scroll_viewport_is_hovered(interaction: Interaction) -> bool {
+    matches!(interaction, Interaction::Hovered | Interaction::Pressed)
 }
 
 #[allow(clippy::type_complexity)]
@@ -6617,7 +6644,7 @@ mod tests {
         format_retinue_count, frame_cap_label, health_bar_fill_width, level_up_tier_border_color,
         main_menu_dispatch, max_affordable_promotions, max_affordable_tier0_conversions,
         modal_action_for_utility_button, requested_promotion_count, rescue_progress_ratio,
-        responsive_ui_scale_for_resolution, world_to_minimap_pos,
+        responsive_ui_scale_for_resolution, scroll_viewport_is_hovered, world_to_minimap_pos,
     };
     use crate::upgrades::{
         ConditionalUpgradeStatus, ConditionalUpgradeStatusEntry, OneTimeUpgradeTracker,
@@ -6721,6 +6748,19 @@ mod tests {
         assert_eq!(frame_cap_label(FrameRateCap::Fps60), "60");
         assert_eq!(frame_cap_label(FrameRateCap::Fps90), "90");
         assert_eq!(frame_cap_label(FrameRateCap::Fps120), "120");
+    }
+
+    #[test]
+    fn scroll_viewport_hover_detection_accepts_hovered_and_pressed_only() {
+        assert!(scroll_viewport_is_hovered(
+            bevy::prelude::Interaction::Hovered
+        ));
+        assert!(scroll_viewport_is_hovered(
+            bevy::prelude::Interaction::Pressed
+        ));
+        assert!(!scroll_viewport_is_hovered(
+            bevy::prelude::Interaction::None
+        ));
     }
 
     #[test]
