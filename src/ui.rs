@@ -2,7 +2,6 @@ use bevy::app::AppExit;
 use bevy::ecs::system::SystemParam;
 use bevy::input::mouse::MouseWheel;
 use bevy::prelude::*;
-use bevy::ui::FocusPolicy;
 use bevy::window::PrimaryWindow;
 
 use crate::archive::{ArchiveCategory, ArchiveDataset, ArchiveEntry};
@@ -2288,7 +2287,6 @@ fn spawn_run_modal_overlay(
                         z_index: ZIndex::Global(118),
                         ..default()
                     },
-                    FocusPolicy::Pass,
                 ))
                 .with_children(|tooltip| {
                     tooltip.spawn((InventoryTooltipText, build_inventory_tooltip_text_bundle()));
@@ -2900,7 +2898,6 @@ fn spawn_scrollable_panel(
                 ..default()
             },
             Interaction::default(),
-            FocusPolicy::Pass,
         ))
         .with_children(|viewport| {
             viewport
