@@ -475,6 +475,7 @@ const MINIMAP_MAX_FRIENDLY_BLIPS: usize = 260;
 const MINIMAP_MAX_RESCUABLE_BLIPS: usize = 80;
 const MINIMAP_MAX_EXP_BLIPS: usize = 320;
 const MINIMAP_MAX_MAGNET_BLIPS: usize = 4;
+const MINIMAP_MAX_CHEST_BLIPS: usize = 8;
 const SKILL_BAR_SLOT_BG: Color = Color::srgba(0.05, 0.045, 0.04, 0.82);
 const SKILL_BAR_SLOT_BORDER: Color = Color::srgba(0.78, 0.72, 0.58, 0.4);
 const SKILL_BAR_SLOT_ACTIVE_BORDER: Color = Color::srgb(0.94, 0.82, 0.43);
@@ -6073,6 +6074,7 @@ fn update_minimap_hud(
     rescuables: Query<&Transform, With<RescuableUnit>>,
     exp_packs: Query<&Transform, With<ExpPack>>,
     magnets: Query<(&Transform, &MagnetPickup)>,
+    chests: Query<&Transform, With<EquipmentChestDrop>>,
 ) {
     runtime.timer.tick(time.delta());
     if !runtime.timer.just_finished() {
@@ -6094,6 +6096,7 @@ fn update_minimap_hud(
         let mut rescuable_count = 0usize;
         let mut exp_count = 0usize;
         let mut magnet_count = 0usize;
+        let mut chest_count = 0usize;
         for (unit, transform) in &units {
             if commander_seen
                 && friendly_count >= MINIMAP_MAX_FRIENDLY_BLIPS
@@ -6169,6 +6172,18 @@ fn update_minimap_hud(
                 PlayerFaction::Muslim => art.magnet_crescent_pickup.clone(),
             };
             spawn_minimap_icon(parent, draw_pos, 9.0, texture);
+        }
+
+        for transform in &chests {
+            if chest_count >= MINIMAP_MAX_CHEST_BLIPS {
+                break;
+            }
+            let position = transform.translation.truncate();
+            let Some(draw_pos) = world_to_minimap_pos(position, *bounds, MINIMAP_SIZE) else {
+                continue;
+            };
+            chest_count += 1;
+            spawn_minimap_icon(parent, draw_pos, 9.0, art.chest_drop_closed.clone());
         }
 
         if banner_state.is_dropped
