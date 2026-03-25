@@ -274,6 +274,21 @@ struct InventorySlotSelection {
     selected: Option<InventorySlotRef>,
 }
 
+#[derive(Resource, Clone, Copy, Debug)]
+struct InventoryDoubleClickState {
+    last_slot: Option<InventorySlotRef>,
+    last_click_time: f64,
+}
+
+impl Default for InventoryDoubleClickState {
+    fn default() -> Self {
+        Self {
+            last_slot: None,
+            last_click_time: f64::NEG_INFINITY,
+        }
+    }
+}
+
 #[derive(Component, Clone, Copy, Debug)]
 struct InventoryTooltipRoot;
 
@@ -504,6 +519,9 @@ const UI_REFERENCE_HEIGHT: f32 = 720.0;
 const UI_SCALE_MIN: f32 = 0.7;
 const UI_SCALE_MAX: f32 = 3.0;
 const BASE_CRIT_DAMAGE_MULTIPLIER: f32 = 1.2;
+const RUN_MODAL_PANEL_WIDTH: f32 = 980.0;
+const RUN_MODAL_PANEL_HEIGHT: f32 = 620.0;
+const INVENTORY_DOUBLE_CLICK_WINDOW_SECS: f64 = 0.28;
 
 pub struct UiPlugin;
 
@@ -513,6 +531,7 @@ impl Plugin for UiPlugin {
             .init_resource::<MinimapRefreshRuntime>()
             .init_resource::<UnitUpgradeUiState>()
             .init_resource::<InventorySlotSelection>()
+            .init_resource::<InventoryDoubleClickState>()
             .add_systems(OnEnter(GameState::MainMenu), spawn_main_menu)
             .add_systems(OnExit(GameState::MainMenu), despawn_main_menu)
             .add_systems(OnEnter(GameState::MatchSetup), spawn_match_setup_menu)
@@ -2028,7 +2047,11 @@ fn sync_run_modal_overlay(
         }
         RunModalState::Open(screen) => {
             let should_refresh_unit_upgrade = screen == RunModalScreen::UnitUpgrade
-                && (deps.roster_economy.is_changed() || deps.progression.is_changed());
+                && (deps.roster_economy.is_changed()
+                    || deps.progression.is_changed()
+                    || deps.roster_feedback.is_changed()
+                    || deps.progression_lock_feedback.is_changed()
+                    || deps.unit_upgrade_state.is_changed());
             let should_refresh_inventory = false;
             let has_single_current_root =
                 existing_roots.len() == 1 && existing_roots[0].1 == screen;
@@ -2043,7 +2066,6 @@ fn sync_run_modal_overlay(
                         entity_commands.despawn_recursive();
                     }
                 }
-                return;
             }
             let stats = build_stats_panel_data(
                 &deps.data,
@@ -2114,14 +2136,6 @@ fn spawn_run_modal_overlay(
     const INVENTORY_TOOLTIP_WIDTH: f32 = 360.0;
     const INVENTORY_TOOLTIP_MIN_HEIGHT: f32 = 128.0;
     let (title, subtitle) = run_modal_titles(screen);
-    let (panel_width, panel_height) = match screen {
-        RunModalScreen::Inventory => (Val::Px(920.0), Val::Px(520.0)),
-        RunModalScreen::Chest => (Val::Px(860.0), Val::Px(560.0)),
-        RunModalScreen::Stats => (Val::Px(980.0), Val::Px(560.0)),
-        RunModalScreen::SkillBook => (Val::Px(900.0), Val::Px(640.0)),
-        RunModalScreen::Archive => (Val::Px(980.0), Val::Px(620.0)),
-        RunModalScreen::UnitUpgrade => (Val::Px(980.0), Val::Px(560.0)),
-    };
     commands
         .spawn((
             RunModalRoot { screen },
@@ -2144,14 +2158,14 @@ fn spawn_run_modal_overlay(
         .with_children(|root| {
             root.spawn(NodeBundle {
                 style: Style {
-                    width: panel_width,
-                    height: panel_height,
+                    width: Val::Px(RUN_MODAL_PANEL_WIDTH),
+                    height: Val::Px(RUN_MODAL_PANEL_HEIGHT),
                     border: UiRect::all(Val::Px(1.0)),
                     flex_direction: FlexDirection::Column,
                     justify_content: JustifyContent::FlexStart,
                     align_items: AlignItems::Center,
-                    row_gap: Val::Px(10.0),
-                    padding: UiRect::all(Val::Px(14.0)),
+                    row_gap: Val::Px(8.0),
+                    padding: UiRect::all(Val::Px(12.0)),
                     overflow: Overflow::clip_y(),
                     ..default()
                 },
@@ -2186,7 +2200,7 @@ fn spawn_run_modal_overlay(
                 if let Some(subtitle) = subtitle {
                     panel.spawn(TextBundle {
                         style: Style {
-                            max_width: Val::Px(640.0),
+                            max_width: Val::Px(760.0),
                             ..default()
                         },
                         text: Text::from_section(
@@ -2214,7 +2228,7 @@ fn spawn_run_modal_overlay(
                     spawn_skill_book_modal_sections(panel, skill_book_panel, art);
                 }
                 if matches!(screen, RunModalScreen::Archive) {
-                    spawn_archive_sections(panel, archive, art, 430.0);
+                    spawn_archive_sections(panel, archive, art, 472.0);
                 }
                 if matches!(screen, RunModalScreen::UnitUpgrade) {
                     spawn_unit_upgrade_modal_sections(panel, unit_upgrade_panel);
@@ -2225,7 +2239,7 @@ fn spawn_run_modal_overlay(
                             width: Val::Percent(100.0),
                             justify_content: JustifyContent::Center,
                             align_items: AlignItems::Center,
-                            margin: UiRect::top(Val::Px(8.0)),
+                            margin: UiRect::top(Val::Auto),
                             ..default()
                         },
                         background_color: BackgroundColor(Color::NONE),
@@ -2236,15 +2250,11 @@ fn spawn_run_modal_overlay(
                             .spawn((
                                 ButtonBundle {
                                     style: Style {
-                                        width: Val::Px(154.0),
-                                        height: Val::Px(40.0),
+                                        width: Val::Px(142.0),
+                                        height: Val::Px(36.0),
                                         border: UiRect::all(Val::Px(1.0)),
                                         justify_content: JustifyContent::Center,
                                         align_items: AlignItems::Center,
-                                        margin: UiRect {
-                                            top: Val::Px(6.0),
-                                            ..default()
-                                        },
                                         ..default()
                                     },
                                     background_color: BackgroundColor(Color::NONE),
@@ -2508,7 +2518,8 @@ fn spawn_stats_modal_sections(parent: &mut ChildBuilder, stats: &StatsPanelData)
         .spawn(NodeBundle {
             style: Style {
                 width: Val::Percent(100.0),
-                min_height: Val::Px(360.0),
+                min_height: Val::Px(0.0),
+                flex_grow: 1.0,
                 flex_direction: FlexDirection::Row,
                 column_gap: Val::Px(10.0),
                 ..default()
@@ -2521,6 +2532,8 @@ fn spawn_stats_modal_sections(parent: &mut ChildBuilder, stats: &StatsPanelData)
                 .spawn(NodeBundle {
                     style: Style {
                         width: Val::Percent(72.0),
+                        min_height: Val::Px(0.0),
+                        flex_grow: 1.0,
                         border: UiRect::all(Val::Px(1.0)),
                         padding: UiRect::all(Val::Px(8.0)),
                         flex_direction: FlexDirection::Column,
@@ -2549,7 +2562,7 @@ fn spawn_stats_modal_sections(parent: &mut ChildBuilder, stats: &StatsPanelData)
                             spawn_stats_cell(header, "Stat", 54.0, MENU_BUTTON_TEXT_HOVERED);
                             spawn_stats_cell(header, "Bonus", 46.0, MENU_BUTTON_TEXT_HOVERED);
                         });
-                    spawn_scrollable_panel(table, 272.0, |rows| {
+                    spawn_scrollable_panel(table, 320.0, |rows| {
                         for row in &stats.rows {
                             rows.spawn(NodeBundle {
                                 style: Style {
@@ -2581,6 +2594,8 @@ fn spawn_stats_modal_sections(parent: &mut ChildBuilder, stats: &StatsPanelData)
                 .spawn(NodeBundle {
                     style: Style {
                         width: Val::Percent(28.0),
+                        min_height: Val::Px(0.0),
+                        flex_grow: 1.0,
                         border: UiRect::all(Val::Px(1.0)),
                         padding: UiRect::all(Val::Px(8.0)),
                         flex_direction: FlexDirection::Column,
@@ -2600,7 +2615,7 @@ fn spawn_stats_modal_sections(parent: &mut ChildBuilder, stats: &StatsPanelData)
                             ..default()
                         },
                     ));
-                    spawn_scrollable_panel(buffs_col, 148.0, |buffs_list| {
+                    spawn_scrollable_panel(buffs_col, 172.0, |buffs_list| {
                         if stats.active_buffs.is_empty() {
                             buffs_list.spawn(TextBundle::from_section(
                                 "No active buffs.",
@@ -2663,7 +2678,7 @@ fn spawn_stats_modal_sections(parent: &mut ChildBuilder, stats: &StatsPanelData)
                             ..default()
                         },
                     ));
-                    spawn_scrollable_panel(buffs_col, 124.0, |unique_list| {
+                    spawn_scrollable_panel(buffs_col, 146.0, |unique_list| {
                         if stats.unique_upgrades.is_empty() {
                             unique_list.spawn(TextBundle::from_section(
                                 "No unique upgrades yet.",
@@ -2927,7 +2942,7 @@ fn spawn_skill_book_modal_sections(
     skill_book: &SkillBookPanelData,
     art: &crate::visuals::ArtAssets,
 ) {
-    spawn_scrollable_panel(parent, 420.0, |root| {
+    spawn_scrollable_panel(parent, 472.0, |root| {
         if skill_book.sections.is_empty() {
             root.spawn(TextBundle::from_section(
                 "No skills selected yet.",
@@ -3126,6 +3141,8 @@ fn spawn_inventory_modal_sections(
         .spawn(NodeBundle {
             style: Style {
                 width: Val::Percent(100.0),
+                flex_grow: 1.0,
+                min_height: Val::Px(0.0),
                 flex_direction: FlexDirection::Row,
                 align_items: AlignItems::FlexStart,
                 justify_content: JustifyContent::SpaceBetween,
@@ -3139,8 +3156,9 @@ fn spawn_inventory_modal_sections(
             layout
                 .spawn(NodeBundle {
                     style: Style {
-                        width: Val::Percent(50.0),
-                        min_height: Val::Px(380.0),
+                        width: Val::Percent(49.0),
+                        min_height: Val::Px(0.0),
+                        flex_grow: 1.0,
                         border: UiRect::all(Val::Px(1.0)),
                         padding: UiRect::all(Val::Px(8.0)),
                         flex_direction: FlexDirection::Column,
@@ -3166,8 +3184,9 @@ fn spawn_inventory_modal_sections(
             layout
                 .spawn(NodeBundle {
                     style: Style {
-                        width: Val::Percent(50.0),
-                        min_height: Val::Px(380.0),
+                        width: Val::Percent(49.0),
+                        min_height: Val::Px(0.0),
+                        flex_grow: 1.0,
                         border: UiRect::all(Val::Px(1.0)),
                         padding: UiRect::all(Val::Px(8.0)),
                         flex_direction: FlexDirection::Column,
@@ -3187,7 +3206,7 @@ fn spawn_inventory_modal_sections(
                             ..default()
                         },
                     ));
-                    spawn_scrollable_panel(setups, 340.0, |setups_scroll| {
+                    spawn_scrollable_panel(setups, 392.0, |setups_scroll| {
                         for unit_type in EquipmentUnitType::all() {
                             let Some(setup) = inventory.setup_for(unit_type) else {
                                 continue;
@@ -3276,6 +3295,7 @@ fn spawn_chest_modal_sections(
             style: Style {
                 width: Val::Percent(100.0),
                 flex_grow: 1.0,
+                min_height: Val::Px(0.0),
                 flex_direction: FlexDirection::Row,
                 column_gap: Val::Px(10.0),
                 justify_content: JustifyContent::Center,
@@ -3289,7 +3309,8 @@ fn spawn_chest_modal_sections(
             layout
                 .spawn(NodeBundle {
                     style: Style {
-                        width: Val::Percent(34.0),
+                        width: Val::Percent(32.0),
+                        flex_grow: 1.0,
                         border: UiRect::all(Val::Px(1.0)),
                         padding: UiRect::all(Val::Px(8.0)),
                         flex_direction: FlexDirection::Column,
@@ -3340,7 +3361,8 @@ fn spawn_chest_modal_sections(
             layout
                 .spawn(NodeBundle {
                     style: Style {
-                        width: Val::Percent(64.0),
+                        width: Val::Percent(66.0),
+                        flex_grow: 1.0,
                         border: UiRect::all(Val::Px(1.0)),
                         padding: UiRect::all(Val::Px(8.0)),
                         flex_direction: FlexDirection::Column,
@@ -3748,7 +3770,8 @@ fn spawn_unit_upgrade_modal_sections(parent: &mut ChildBuilder, panel_data: &Uni
         .spawn(NodeBundle {
             style: Style {
                 width: Val::Percent(100.0),
-                min_height: Val::Px(360.0),
+                min_height: Val::Px(0.0),
+                flex_grow: 1.0,
                 border: UiRect::all(Val::Px(1.0)),
                 padding: UiRect::all(Val::Px(8.0)),
                 flex_direction: FlexDirection::Column,
@@ -3801,7 +3824,7 @@ fn spawn_unit_upgrade_modal_sections(parent: &mut ChildBuilder, panel_data: &Uni
                 },
             ));
             root.spawn(TextBundle::from_section(
-                "Promotions are shown in a grid table. Upgrades consume level budget per step.",
+                "Roster tools: promotions consume level budget; tier-0 swaps consume XP progress.",
                 TextStyle {
                     font_size: 13.0,
                     color: MENU_BUTTON_TEXT_DISABLED,
@@ -3809,412 +3832,483 @@ fn spawn_unit_upgrade_modal_sections(parent: &mut ChildBuilder, panel_data: &Uni
                 },
             ));
 
-            root.spawn(NodeBundle {
-                style: Style {
-                    width: Val::Percent(100.0),
-                    flex_direction: FlexDirection::Row,
-                    align_items: AlignItems::FlexStart,
-                    justify_content: JustifyContent::SpaceBetween,
-                    column_gap: Val::Px(10.0),
-                    ..default()
-                },
-                background_color: BackgroundColor(Color::NONE),
-                ..default()
-            })
-            .with_children(|layout| {
-                layout
-                    .spawn(NodeBundle {
-                        style: Style {
-                            width: Val::Percent(38.0),
-                            border: UiRect::all(Val::Px(1.0)),
-                            padding: UiRect::all(Val::Px(8.0)),
-                            flex_direction: FlexDirection::Column,
-                            row_gap: Val::Px(6.0),
-                            ..default()
-                        },
-                        background_color: BackgroundColor(Color::srgba(0.04, 0.04, 0.04, 0.34)),
-                        border_color: BorderColor(UTILITY_BAR_BORDER),
-                        ..default()
-                    })
-                    .with_children(|roster| {
-                        roster.spawn(TextBundle::from_section(
-                            "Roster",
-                            TextStyle {
-                                font_size: 18.0,
-                                color: MENU_BUTTON_TEXT_HOVERED,
-                                ..default()
-                            },
-                        ));
-                        for entry in &panel_data.roster_entries {
-                            let selected = entry.kind == panel_data.selected_source;
-                            roster
-                                .spawn((
-                                    ButtonBundle {
-                                        style: Style {
-                                            width: Val::Percent(100.0),
-                                            min_height: Val::Px(34.0),
-                                            justify_content: JustifyContent::FlexStart,
-                                            align_items: AlignItems::Center,
-                                            border: UiRect::all(Val::Px(1.0)),
-                                            padding: UiRect::axes(Val::Px(8.0), Val::Px(4.0)),
-                                            ..default()
-                                        },
-                                        background_color: BackgroundColor(Color::srgba(
-                                            0.08, 0.07, 0.06, 0.62,
-                                        )),
-                                        border_color: BorderColor(if selected {
-                                            MENU_BUTTON_BORDER_HOVERED
-                                        } else {
-                                            Color::srgba(0.78, 0.72, 0.58, 0.24)
-                                        }),
-                                        ..default()
-                                    },
-                                    UnitUpgradeSourceButton { kind: entry.kind },
-                                ))
-                                .with_children(|button| {
-                                    button.spawn(TextBundle::from_section(
-                                        format!(
-                                            "{} (Tier {}) x{}",
-                                            unit_kind_label(entry.kind),
-                                            entry.tier,
-                                            entry.count
-                                        ),
-                                        TextStyle {
-                                            font_size: 14.0,
-                                            color: if selected {
-                                                MENU_BUTTON_TEXT_HOVERED
-                                            } else {
-                                                HUD_TEXT_COLOR
-                                            },
-                                            ..default()
-                                        },
-                                    ));
-                                });
-                        }
-                    });
-
-                layout
-                    .spawn(NodeBundle {
-                        style: Style {
-                            width: Val::Percent(60.0),
-                            border: UiRect::all(Val::Px(1.0)),
-                            padding: UiRect::all(Val::Px(8.0)),
-                            flex_direction: FlexDirection::Column,
-                            row_gap: Val::Px(8.0),
-                            ..default()
-                        },
-                        background_color: BackgroundColor(Color::srgba(0.04, 0.04, 0.04, 0.34)),
-                        border_color: BorderColor(UTILITY_BAR_BORDER),
-                        ..default()
-                    })
-                    .with_children(|tree| {
-                        let selected_tier =
-                            friendly_tier_for_kind(panel_data.selected_source).unwrap_or(0);
-                        tree.spawn(TextBundle::from_section(
-                            format!(
-                                "Selected: {} (Tier {})",
-                                unit_kind_label(panel_data.selected_source),
-                                selected_tier
-                            ),
-                            TextStyle {
-                                font_size: 18.0,
-                                color: MENU_BUTTON_TEXT_HOVERED,
-                                ..default()
-                            },
-                        ));
-                        tree.spawn(TextBundle::from_section(
-                            "Promotion Table: Target | Tier | Source | Max Affordable | Actions",
-                            TextStyle {
-                                font_size: 13.0,
-                                color: MENU_BUTTON_TEXT_DISABLED,
-                                ..default()
-                            },
-                        ));
-
-                        if panel_data.promotion_options.is_empty() {
-                            tree.spawn(TextBundle::from_section(
-                                "No promotion paths available for this unit type.",
-                                TextStyle {
-                                    font_size: 14.0,
-                                    color: HUD_TEXT_COLOR,
-                                    ..default()
-                                },
-                            ));
-                        } else {
-                            tree.spawn(NodeBundle {
-                                style: Style {
-                                    width: Val::Percent(100.0),
-                                    min_height: Val::Px(28.0),
-                                    border: UiRect::all(Val::Px(1.0)),
-                                    align_items: AlignItems::Center,
-                                    ..default()
-                                },
-                                background_color: BackgroundColor(Color::srgba(0.1, 0.09, 0.08, 0.7)),
-                                border_color: BorderColor(Color::srgba(0.78, 0.72, 0.58, 0.24)),
-                                ..default()
-                            })
-                            .with_children(|header| {
-                                spawn_stats_cell(header, "Target", 30.0, MENU_BUTTON_TEXT_HOVERED);
-                                spawn_stats_cell(header, "Tier", 12.0, MENU_BUTTON_TEXT_HOVERED);
-                                spawn_stats_cell(header, "Source", 14.0, MENU_BUTTON_TEXT_HOVERED);
-                                spawn_stats_cell(header, "Max", 16.0, MENU_BUTTON_TEXT_HOVERED);
-                                spawn_stats_cell(header, "Actions", 28.0, MENU_BUTTON_TEXT_HOVERED);
-                            });
-
-                            for option in &panel_data.promotion_options {
-                                tree.spawn(NodeBundle {
-                                    style: Style {
-                                        width: Val::Percent(100.0),
-                                        border: UiRect::all(Val::Px(1.0)),
-                                        padding: UiRect::all(Val::Px(4.0)),
-                                        flex_direction: FlexDirection::Row,
-                                        align_items: AlignItems::Center,
-                                        column_gap: Val::Px(6.0),
-                                        ..default()
-                                    },
-                                    background_color: BackgroundColor(Color::srgba(
-                                        0.07, 0.07, 0.07, 0.46,
-                                    )),
-                                    border_color: BorderColor(Color::srgba(0.78, 0.72, 0.58, 0.24)),
-                                    ..default()
-                                })
-                                .with_children(|row| {
-                                    let target_label = if let Some(unlock_wave) = option.unlock_wave {
-                                        format!(
-                                            "{} (unlocks W{})",
-                                            unit_kind_label(option.to_kind),
-                                            unlock_wave
-                                        )
-                                    } else {
-                                        unit_kind_label(option.to_kind).to_string()
-                                    };
-                                    spawn_stats_cell(
-                                        row,
-                                        target_label.as_str(),
-                                        30.0,
-                                        if option.tier_unlocked {
-                                            HUD_TEXT_COLOR
-                                        } else {
-                                            MENU_BUTTON_TEXT_DISABLED
-                                        },
-                                    );
-                                    spawn_stats_cell(
-                                        row,
-                                        format!("{}", option.to_tier).as_str(),
-                                        12.0,
-                                        HUD_TEXT_COLOR,
-                                    );
-                                    spawn_stats_cell(
-                                        row,
-                                        format!("{}", option.source_count).as_str(),
-                                        14.0,
-                                        HUD_TEXT_COLOR,
-                                    );
-                                    spawn_stats_cell(
-                                        row,
-                                        format!("{}", option.max_affordable).as_str(),
-                                        16.0,
-                                        HUD_TEXT_COLOR,
-                                    );
-                                    row.spawn(NodeBundle {
-                                        style: Style {
-                                            width: Val::Percent(28.0),
-                                            flex_direction: FlexDirection::Row,
-                                            column_gap: Val::Px(6.0),
-                                            ..default()
-                                        },
-                                        background_color: BackgroundColor(Color::NONE),
-                                        ..default()
-                                    })
-                                    .with_children(|actions| {
-                                        for quantity in [
-                                            UnitUpgradeQuantity::One,
-                                            UnitUpgradeQuantity::Five,
-                                            UnitUpgradeQuantity::Max,
-                                        ] {
-                                            let enabled = option.max_affordable > 0;
-                                            actions
-                                                .spawn((
-                                                    ButtonBundle {
-                                                        style: Style {
-                                                            width: Val::Px(64.0),
-                                                            height: Val::Px(28.0),
-                                                            justify_content: JustifyContent::Center,
-                                                            align_items: AlignItems::Center,
-                                                            border: UiRect::all(Val::Px(1.0)),
-                                                            ..default()
-                                                        },
-                                                        background_color: BackgroundColor(
-                                                            Color::srgba(0.08, 0.07, 0.06, 0.7),
-                                                        ),
-                                                        border_color: BorderColor(if enabled {
-                                                            Color::srgba(0.78, 0.72, 0.58, 0.24)
-                                                        } else {
-                                                            MENU_BUTTON_BORDER_DISABLED
-                                                        }),
-                                                        ..default()
-                                                    },
-                                                    UnitUpgradePromoteButton {
-                                                        from: panel_data.selected_source,
-                                                        to: option.to_kind,
-                                                        quantity,
-                                                    },
-                                                ))
-                                                .with_children(|button| {
-                                                    button.spawn(TextBundle::from_section(
-                                                        quantity.button_label(),
-                                                        TextStyle {
-                                                            font_size: 13.0,
-                                                            color: if enabled {
-                                                                HUD_TEXT_COLOR
-                                                            } else {
-                                                                MENU_BUTTON_TEXT_DISABLED
-                                                            },
-                                                            ..default()
-                                                        },
-                                                    ));
-                                                });
-                                        }
-                                    });
-                                });
-                            }
-                        }
-                    });
-
-                layout
+            spawn_scrollable_panel(root, 402.0, |scroll_root| {
+                scroll_root
                     .spawn(NodeBundle {
                         style: Style {
                             width: Val::Percent(100.0),
-                            border: UiRect::all(Val::Px(1.0)),
-                            padding: UiRect::all(Val::Px(8.0)),
-                            flex_direction: FlexDirection::Column,
-                            row_gap: Val::Px(8.0),
+                            flex_direction: FlexDirection::Row,
+                            align_items: AlignItems::FlexStart,
+                            justify_content: JustifyContent::SpaceBetween,
+                            column_gap: Val::Px(10.0),
                             ..default()
                         },
-                        background_color: BackgroundColor(Color::srgba(0.04, 0.04, 0.04, 0.34)),
-                        border_color: BorderColor(UTILITY_BAR_BORDER),
+                        background_color: BackgroundColor(Color::NONE),
                         ..default()
                     })
-                    .with_children(|convert| {
-                        convert.spawn(TextBundle::from_section(
-                            "Tier-0 Conversion: Target | Source | Target Count | Max Affordable | Action",
-                            TextStyle {
-                                font_size: 13.0,
-                                color: MENU_BUTTON_TEXT_DISABLED,
-                                ..default()
-                            },
-                        ));
-                        convert
+                    .with_children(|layout| {
+                        layout
                             .spawn(NodeBundle {
                                 style: Style {
-                                    width: Val::Percent(100.0),
-                                    min_height: Val::Px(28.0),
+                                    width: Val::Percent(32.0),
                                     border: UiRect::all(Val::Px(1.0)),
-                                    align_items: AlignItems::Center,
+                                    padding: UiRect::all(Val::Px(8.0)),
+                                    flex_direction: FlexDirection::Column,
+                                    row_gap: Val::Px(6.0),
                                     ..default()
                                 },
-                                background_color: BackgroundColor(Color::srgba(0.1, 0.09, 0.08, 0.7)),
-                                border_color: BorderColor(Color::srgba(0.78, 0.72, 0.58, 0.24)),
+                                background_color: BackgroundColor(Color::srgba(0.04, 0.04, 0.04, 0.34)),
+                                border_color: BorderColor(UTILITY_BAR_BORDER),
                                 ..default()
                             })
-                            .with_children(|header| {
-                                spawn_stats_cell(header, "Target", 28.0, MENU_BUTTON_TEXT_HOVERED);
-                                spawn_stats_cell(header, "Source", 12.0, MENU_BUTTON_TEXT_HOVERED);
-                                spawn_stats_cell(
-                                    header,
-                                    "Target Count",
-                                    16.0,
-                                    MENU_BUTTON_TEXT_HOVERED,
-                                );
-                                spawn_stats_cell(header, "Max", 14.0, MENU_BUTTON_TEXT_HOVERED);
-                                spawn_stats_cell(header, "Action", 30.0, MENU_BUTTON_TEXT_HOVERED);
-                            });
-
-                        for option in &panel_data.conversion_options {
-                            convert
-                                .spawn(NodeBundle {
-                                    style: Style {
-                                        width: Val::Percent(100.0),
-                                        border: UiRect::all(Val::Px(1.0)),
-                                        padding: UiRect::all(Val::Px(4.0)),
-                                        flex_direction: FlexDirection::Row,
-                                        align_items: AlignItems::Center,
-                                        column_gap: Val::Px(6.0),
+                            .with_children(|roster| {
+                                roster.spawn(TextBundle::from_section(
+                                    "Roster",
+                                    TextStyle {
+                                        font_size: 18.0,
+                                        color: MENU_BUTTON_TEXT_HOVERED,
                                         ..default()
                                     },
-                                    background_color: BackgroundColor(Color::srgba(
-                                        0.07, 0.07, 0.07, 0.46,
-                                    )),
-                                    border_color: BorderColor(Color::srgba(0.78, 0.72, 0.58, 0.24)),
+                                ));
+                                for entry in &panel_data.roster_entries {
+                                    let selected = entry.kind == panel_data.selected_source;
+                                    roster
+                                        .spawn((
+                                            ButtonBundle {
+                                                style: Style {
+                                                    width: Val::Percent(100.0),
+                                                    min_height: Val::Px(34.0),
+                                                    justify_content: JustifyContent::FlexStart,
+                                                    align_items: AlignItems::Center,
+                                                    border: UiRect::all(Val::Px(1.0)),
+                                                    padding: UiRect::axes(Val::Px(8.0), Val::Px(4.0)),
+                                                    ..default()
+                                                },
+                                                background_color: BackgroundColor(Color::srgba(
+                                                    0.08, 0.07, 0.06, 0.62,
+                                                )),
+                                                border_color: BorderColor(if selected {
+                                                    MENU_BUTTON_BORDER_HOVERED
+                                                } else {
+                                                    Color::srgba(0.78, 0.72, 0.58, 0.24)
+                                                }),
+                                                ..default()
+                                            },
+                                            UnitUpgradeSourceButton { kind: entry.kind },
+                                        ))
+                                        .with_children(|button| {
+                                            button.spawn(TextBundle::from_section(
+                                                format!(
+                                                    "{} (Tier {}) x{}",
+                                                    unit_kind_label(entry.kind),
+                                                    entry.tier,
+                                                    entry.count
+                                                ),
+                                                TextStyle {
+                                                    font_size: 14.0,
+                                                    color: if selected {
+                                                        MENU_BUTTON_TEXT_HOVERED
+                                                    } else {
+                                                        HUD_TEXT_COLOR
+                                                    },
+                                                    ..default()
+                                                },
+                                            ));
+                                        });
+                                }
+                            });
+
+                        layout
+                            .spawn(NodeBundle {
+                                style: Style {
+                                    width: Val::Percent(66.0),
+                                    border: UiRect::all(Val::Px(1.0)),
+                                    padding: UiRect::all(Val::Px(8.0)),
+                                    flex_direction: FlexDirection::Column,
+                                    row_gap: Val::Px(8.0),
                                     ..default()
-                                })
-                                .with_children(|row| {
-                                    let enabled = option.max_affordable > 0;
-                                    spawn_stats_cell(
-                                        row,
-                                        unit_kind_label(option.to_kind),
-                                        28.0,
-                                        HUD_TEXT_COLOR,
-                                    );
-                                    spawn_stats_cell(
-                                        row,
-                                        format!("{}", option.source_count).as_str(),
-                                        12.0,
-                                        HUD_TEXT_COLOR,
-                                    );
-                                    spawn_stats_cell(
-                                        row,
-                                        format!("{}", option.target_count).as_str(),
-                                        16.0,
-                                        HUD_TEXT_COLOR,
-                                    );
-                                    spawn_stats_cell(
-                                        row,
-                                        format!("{}", option.max_affordable).as_str(),
-                                        14.0,
-                                        HUD_TEXT_COLOR,
-                                    );
-                                    row.spawn((
-                                        ButtonBundle {
+                                },
+                                background_color: BackgroundColor(Color::srgba(0.04, 0.04, 0.04, 0.34)),
+                                border_color: BorderColor(UTILITY_BAR_BORDER),
+                                ..default()
+                            })
+                            .with_children(|tables| {
+                                let selected_tier =
+                                    friendly_tier_for_kind(panel_data.selected_source).unwrap_or(0);
+                                tables.spawn(TextBundle::from_section(
+                                    format!(
+                                        "Selected: {} (Tier {})",
+                                        unit_kind_label(panel_data.selected_source),
+                                        selected_tier
+                                    ),
+                                    TextStyle {
+                                        font_size: 18.0,
+                                        color: MENU_BUTTON_TEXT_HOVERED,
+                                        ..default()
+                                    },
+                                ));
+                                tables.spawn(TextBundle::from_section(
+                                    "Promotion Table: Target | Tier | Source | Max Affordable | Actions",
+                                    TextStyle {
+                                        font_size: 13.0,
+                                        color: MENU_BUTTON_TEXT_DISABLED,
+                                        ..default()
+                                    },
+                                ));
+
+                                if panel_data.promotion_options.is_empty() {
+                                    tables.spawn(TextBundle::from_section(
+                                        "No promotion paths available for this unit type.",
+                                        TextStyle {
+                                            font_size: 14.0,
+                                            color: HUD_TEXT_COLOR,
+                                            ..default()
+                                        },
+                                    ));
+                                } else {
+                                    tables
+                                        .spawn(NodeBundle {
                                             style: Style {
-                                                width: Val::Percent(30.0),
-                                                height: Val::Px(28.0),
-                                                justify_content: JustifyContent::Center,
-                                                align_items: AlignItems::Center,
+                                                width: Val::Percent(100.0),
+                                                min_height: Val::Px(28.0),
                                                 border: UiRect::all(Val::Px(1.0)),
+                                                align_items: AlignItems::Center,
                                                 ..default()
                                             },
                                             background_color: BackgroundColor(Color::srgba(
-                                                0.08, 0.07, 0.06, 0.7,
+                                                0.1, 0.09, 0.08, 0.7,
                                             )),
-                                            border_color: BorderColor(if enabled {
-                                                Color::srgba(0.78, 0.72, 0.58, 0.24)
-                                            } else {
-                                                MENU_BUTTON_BORDER_DISABLED
-                                            }),
+                                            border_color: BorderColor(Color::srgba(
+                                                0.78, 0.72, 0.58, 0.24,
+                                            )),
+                                            ..default()
+                                        })
+                                        .with_children(|header| {
+                                            spawn_stats_cell(
+                                                header,
+                                                "Target",
+                                                30.0,
+                                                MENU_BUTTON_TEXT_HOVERED,
+                                            );
+                                            spawn_stats_cell(
+                                                header,
+                                                "Tier",
+                                                12.0,
+                                                MENU_BUTTON_TEXT_HOVERED,
+                                            );
+                                            spawn_stats_cell(
+                                                header,
+                                                "Source",
+                                                14.0,
+                                                MENU_BUTTON_TEXT_HOVERED,
+                                            );
+                                            spawn_stats_cell(
+                                                header,
+                                                "Max",
+                                                16.0,
+                                                MENU_BUTTON_TEXT_HOVERED,
+                                            );
+                                            spawn_stats_cell(
+                                                header,
+                                                "Actions",
+                                                28.0,
+                                                MENU_BUTTON_TEXT_HOVERED,
+                                            );
+                                        });
+
+                                    for option in &panel_data.promotion_options {
+                                        tables
+                                            .spawn(NodeBundle {
+                                                style: Style {
+                                                    width: Val::Percent(100.0),
+                                                    border: UiRect::all(Val::Px(1.0)),
+                                                    padding: UiRect::all(Val::Px(4.0)),
+                                                    flex_direction: FlexDirection::Row,
+                                                    align_items: AlignItems::Center,
+                                                    column_gap: Val::Px(6.0),
+                                                    ..default()
+                                                },
+                                                background_color: BackgroundColor(Color::srgba(
+                                                    0.07, 0.07, 0.07, 0.46,
+                                                )),
+                                                border_color: BorderColor(Color::srgba(
+                                                    0.78, 0.72, 0.58, 0.24,
+                                                )),
+                                                ..default()
+                                            })
+                                            .with_children(|row| {
+                                                let target_label =
+                                                    if let Some(unlock_wave) = option.unlock_wave {
+                                                        format!(
+                                                            "{} (unlocks W{})",
+                                                            unit_kind_label(option.to_kind),
+                                                            unlock_wave
+                                                        )
+                                                    } else {
+                                                        unit_kind_label(option.to_kind).to_string()
+                                                    };
+                                                spawn_stats_cell(
+                                                    row,
+                                                    target_label.as_str(),
+                                                    30.0,
+                                                    if option.tier_unlocked {
+                                                        HUD_TEXT_COLOR
+                                                    } else {
+                                                        MENU_BUTTON_TEXT_DISABLED
+                                                    },
+                                                );
+                                                spawn_stats_cell(
+                                                    row,
+                                                    format!("{}", option.to_tier).as_str(),
+                                                    12.0,
+                                                    HUD_TEXT_COLOR,
+                                                );
+                                                spawn_stats_cell(
+                                                    row,
+                                                    format!("{}", option.source_count).as_str(),
+                                                    14.0,
+                                                    HUD_TEXT_COLOR,
+                                                );
+                                                spawn_stats_cell(
+                                                    row,
+                                                    format!("{}", option.max_affordable).as_str(),
+                                                    16.0,
+                                                    HUD_TEXT_COLOR,
+                                                );
+                                                row.spawn(NodeBundle {
+                                                    style: Style {
+                                                        width: Val::Percent(28.0),
+                                                        flex_direction: FlexDirection::Row,
+                                                        column_gap: Val::Px(6.0),
+                                                        ..default()
+                                                    },
+                                                    background_color: BackgroundColor(Color::NONE),
+                                                    ..default()
+                                                })
+                                                .with_children(|actions| {
+                                                    for quantity in [
+                                                        UnitUpgradeQuantity::One,
+                                                        UnitUpgradeQuantity::Five,
+                                                        UnitUpgradeQuantity::Max,
+                                                    ] {
+                                                        let enabled = option.max_affordable > 0;
+                                                        actions
+                                                            .spawn((
+                                                                ButtonBundle {
+                                                                    style: Style {
+                                                                        width: Val::Px(64.0),
+                                                                        height: Val::Px(28.0),
+                                                                        justify_content:
+                                                                            JustifyContent::Center,
+                                                                        align_items:
+                                                                            AlignItems::Center,
+                                                                        border: UiRect::all(
+                                                                            Val::Px(1.0),
+                                                                        ),
+                                                                        ..default()
+                                                                    },
+                                                                    background_color:
+                                                                        BackgroundColor(
+                                                                            Color::srgba(
+                                                                                0.08, 0.07, 0.06,
+                                                                                0.7,
+                                                                            ),
+                                                                        ),
+                                                                    border_color: BorderColor(
+                                                                        if enabled {
+                                                                            Color::srgba(
+                                                                                0.78, 0.72, 0.58,
+                                                                                0.24,
+                                                                            )
+                                                                        } else {
+                                                                            MENU_BUTTON_BORDER_DISABLED
+                                                                        },
+                                                                    ),
+                                                                    ..default()
+                                                                },
+                                                                UnitUpgradePromoteButton {
+                                                                    from: panel_data.selected_source,
+                                                                    to: option.to_kind,
+                                                                    quantity,
+                                                                },
+                                                            ))
+                                                            .with_children(|button| {
+                                                                button.spawn(TextBundle::from_section(
+                                                                    quantity.button_label(),
+                                                                    TextStyle {
+                                                                        font_size: 13.0,
+                                                                        color: if enabled {
+                                                                            HUD_TEXT_COLOR
+                                                                        } else {
+                                                                            MENU_BUTTON_TEXT_DISABLED
+                                                                        },
+                                                                        ..default()
+                                                                    },
+                                                                ));
+                                                            });
+                                                    }
+                                                });
+                                            });
+                                    }
+                                }
+
+                                tables.spawn(NodeBundle {
+                                    style: Style {
+                                        width: Val::Percent(100.0),
+                                        height: Val::Px(1.0),
+                                        margin: UiRect::top(Val::Px(4.0)),
+                                        ..default()
+                                    },
+                                    background_color: BackgroundColor(Color::srgba(0.78, 0.72, 0.58, 0.24)),
+                                    ..default()
+                                });
+
+                                tables.spawn(TextBundle::from_section(
+                                    "Tier-0 Conversion: Target | Source | Target Count | Max Affordable | Action",
+                                    TextStyle {
+                                        font_size: 13.0,
+                                        color: MENU_BUTTON_TEXT_DISABLED,
+                                        ..default()
+                                    },
+                                ));
+                                tables
+                                    .spawn(NodeBundle {
+                                        style: Style {
+                                            width: Val::Percent(100.0),
+                                            min_height: Val::Px(28.0),
+                                            border: UiRect::all(Val::Px(1.0)),
+                                            align_items: AlignItems::Center,
                                             ..default()
                                         },
-                                        UnitUpgradeConvertButton {
-                                            from: panel_data.selected_source,
-                                            to: option.to_kind,
-                                        },
-                                    ))
-                                    .with_children(|button| {
-                                        button.spawn(TextBundle::from_section(
-                                            "Swap 1",
-                                            TextStyle {
-                                                font_size: 13.0,
-                                                color: if enabled {
-                                                    HUD_TEXT_COLOR
-                                                } else {
-                                                    MENU_BUTTON_TEXT_DISABLED
-                                                },
+                                        background_color: BackgroundColor(Color::srgba(
+                                            0.1, 0.09, 0.08, 0.7,
+                                        )),
+                                        border_color: BorderColor(Color::srgba(
+                                            0.78, 0.72, 0.58, 0.24,
+                                        )),
+                                        ..default()
+                                    })
+                                    .with_children(|header| {
+                                        spawn_stats_cell(
+                                            header,
+                                            "Target",
+                                            28.0,
+                                            MENU_BUTTON_TEXT_HOVERED,
+                                        );
+                                        spawn_stats_cell(
+                                            header,
+                                            "Source",
+                                            12.0,
+                                            MENU_BUTTON_TEXT_HOVERED,
+                                        );
+                                        spawn_stats_cell(
+                                            header,
+                                            "Target Count",
+                                            16.0,
+                                            MENU_BUTTON_TEXT_HOVERED,
+                                        );
+                                        spawn_stats_cell(
+                                            header,
+                                            "Max",
+                                            14.0,
+                                            MENU_BUTTON_TEXT_HOVERED,
+                                        );
+                                        spawn_stats_cell(
+                                            header,
+                                            "Action",
+                                            30.0,
+                                            MENU_BUTTON_TEXT_HOVERED,
+                                        );
+                                    });
+
+                                for option in &panel_data.conversion_options {
+                                    tables
+                                        .spawn(NodeBundle {
+                                            style: Style {
+                                                width: Val::Percent(100.0),
+                                                border: UiRect::all(Val::Px(1.0)),
+                                                padding: UiRect::all(Val::Px(4.0)),
+                                                flex_direction: FlexDirection::Row,
+                                                align_items: AlignItems::Center,
+                                                column_gap: Val::Px(6.0),
                                                 ..default()
                                             },
-                                        ));
-                                    });
-                                });
-                        }
+                                            background_color: BackgroundColor(Color::srgba(
+                                                0.07, 0.07, 0.07, 0.46,
+                                            )),
+                                            border_color: BorderColor(Color::srgba(
+                                                0.78, 0.72, 0.58, 0.24,
+                                            )),
+                                            ..default()
+                                        })
+                                        .with_children(|row| {
+                                            let enabled = option.max_affordable > 0;
+                                            spawn_stats_cell(
+                                                row,
+                                                unit_kind_label(option.to_kind),
+                                                28.0,
+                                                HUD_TEXT_COLOR,
+                                            );
+                                            spawn_stats_cell(
+                                                row,
+                                                format!("{}", option.source_count).as_str(),
+                                                12.0,
+                                                HUD_TEXT_COLOR,
+                                            );
+                                            spawn_stats_cell(
+                                                row,
+                                                format!("{}", option.target_count).as_str(),
+                                                16.0,
+                                                HUD_TEXT_COLOR,
+                                            );
+                                            spawn_stats_cell(
+                                                row,
+                                                format!("{}", option.max_affordable).as_str(),
+                                                14.0,
+                                                HUD_TEXT_COLOR,
+                                            );
+                                            row.spawn((
+                                                ButtonBundle {
+                                                    style: Style {
+                                                        width: Val::Percent(30.0),
+                                                        height: Val::Px(28.0),
+                                                        justify_content: JustifyContent::Center,
+                                                        align_items: AlignItems::Center,
+                                                        border: UiRect::all(Val::Px(1.0)),
+                                                        ..default()
+                                                    },
+                                                    background_color: BackgroundColor(Color::srgba(
+                                                        0.08, 0.07, 0.06, 0.7,
+                                                    )),
+                                                    border_color: BorderColor(if enabled {
+                                                        Color::srgba(0.78, 0.72, 0.58, 0.24)
+                                                    } else {
+                                                        MENU_BUTTON_BORDER_DISABLED
+                                                    }),
+                                                    ..default()
+                                                },
+                                                UnitUpgradeConvertButton {
+                                                    from: panel_data.selected_source,
+                                                    to: option.to_kind,
+                                                },
+                                            ))
+                                            .with_children(|button| {
+                                                button.spawn(TextBundle::from_section(
+                                                    "Swap 1",
+                                                    TextStyle {
+                                                        font_size: 13.0,
+                                                        color: if enabled {
+                                                            HUD_TEXT_COLOR
+                                                        } else {
+                                                            MENU_BUTTON_TEXT_DISABLED
+                                                        },
+                                                        ..default()
+                                                    },
+                                                ));
+                                            });
+                                        });
+                                }
+                            });
                     });
             });
         });
@@ -5662,18 +5756,20 @@ fn handle_inventory_slot_buttons(
     >,
     mut slot_hints: Query<&mut Style, (With<InventorySlotHint>, Without<InventorySlotIcon>)>,
     mouse_buttons: Option<Res<ButtonInput<MouseButton>>>,
+    time: Res<Time>,
     art: Res<ArtAssets>,
     modal_state: Res<RunModalState>,
     mut inventory: ResMut<InventoryState>,
     mut chest: ResMut<EquipmentChestState>,
     mut selected_slot: ResMut<InventorySlotSelection>,
+    mut double_click_state: ResMut<InventoryDoubleClickState>,
 ) {
-    if !matches!(
-        *modal_state,
-        RunModalState::Open(RunModalScreen::Inventory | RunModalScreen::Chest)
-    ) {
-        return;
-    }
+    let screen = match *modal_state {
+        RunModalState::Open(screen @ (RunModalScreen::Inventory | RunModalScreen::Chest)) => screen,
+        _ => {
+            return;
+        }
+    };
     if inventory.bag_slots.len() != BACKPACK_SLOT_CAPACITY {
         inventory.ensure_bag_capacity();
     }
@@ -5691,24 +5787,43 @@ fn handle_inventory_slot_buttons(
         .map(|buttons| buttons.just_pressed(MouseButton::Left))
         .unwrap_or(false);
     if left_pressed && let Some(clicked_slot) = active_slot {
-        let clicked_slot_has_item = get_item_from_slot(&inventory, &chest, clicked_slot).is_some();
-        match selected_slot.selected {
-            None => {
-                if clicked_slot_has_item {
-                    selected_slot.selected = Some(clicked_slot);
-                }
+        let now = time.elapsed_seconds_f64();
+        let is_double_click = double_click_state.last_slot == Some(clicked_slot)
+            && (now - double_click_state.last_click_time) <= INVENTORY_DOUBLE_CLICK_WINDOW_SECS;
+        double_click_state.last_slot = Some(clicked_slot);
+        double_click_state.last_click_time = now;
+
+        if is_double_click {
+            let transferred = handle_inventory_double_click_transfer(
+                screen,
+                clicked_slot,
+                &mut inventory,
+                &mut chest,
+            );
+            if transferred {
+                selected_slot.selected = None;
             }
-            Some(source_slot) => {
-                if source_slot == clicked_slot {
-                    selected_slot.selected = None;
-                } else {
-                    attempt_inventory_transfer(
-                        &mut inventory,
-                        &mut chest,
-                        source_slot,
-                        clicked_slot,
-                    );
-                    selected_slot.selected = None;
+        } else {
+            let clicked_slot_has_item =
+                get_item_from_slot(&inventory, &chest, clicked_slot).is_some();
+            match selected_slot.selected {
+                None => {
+                    if clicked_slot_has_item {
+                        selected_slot.selected = Some(clicked_slot);
+                    }
+                }
+                Some(source_slot) => {
+                    if source_slot == clicked_slot {
+                        selected_slot.selected = None;
+                    } else {
+                        attempt_inventory_transfer(
+                            &mut inventory,
+                            &mut chest,
+                            source_slot,
+                            clicked_slot,
+                        );
+                        selected_slot.selected = None;
+                    }
                 }
             }
         }
@@ -5846,6 +5961,7 @@ fn clear_chest_state_when_modal_exits(
 fn clear_inventory_slot_selection(
     modal_state: Res<RunModalState>,
     mut selected_slot: ResMut<InventorySlotSelection>,
+    mut double_click_state: ResMut<InventoryDoubleClickState>,
 ) {
     if !modal_state.is_changed() {
         return;
@@ -5857,6 +5973,76 @@ fn clear_inventory_slot_selection(
     if !keep_selection && selected_slot.selected.is_some() {
         selected_slot.selected = None;
     }
+    if !keep_selection {
+        double_click_state.last_slot = None;
+        double_click_state.last_click_time = f64::NEG_INFINITY;
+    }
+}
+
+fn handle_inventory_double_click_transfer(
+    screen: RunModalScreen,
+    clicked_slot: InventorySlotRef,
+    inventory: &mut InventoryState,
+    chest: &mut EquipmentChestState,
+) -> bool {
+    let Some(clicked_item) = get_item_from_slot(inventory, chest, clicked_slot).cloned() else {
+        return false;
+    };
+    let destination = match screen {
+        RunModalScreen::Chest => match clicked_slot {
+            InventorySlotRef::Chest(_) => inventory
+                .first_free_bag_slot()
+                .map(InventorySlotRef::Backpack),
+            InventorySlotRef::Backpack(_) => {
+                first_free_chest_slot(chest).map(InventorySlotRef::Chest)
+            }
+            InventorySlotRef::Equipment { .. } => None,
+        },
+        RunModalScreen::Inventory => match clicked_slot {
+            InventorySlotRef::Backpack(_) => {
+                first_compatible_empty_equipment_slot(inventory, &clicked_item).map(
+                    |(unit_type, slot_index)| InventorySlotRef::Equipment {
+                        unit_type,
+                        slot_index,
+                    },
+                )
+            }
+            InventorySlotRef::Equipment { .. } => inventory
+                .first_free_bag_slot()
+                .map(InventorySlotRef::Backpack),
+            InventorySlotRef::Chest(_) => None,
+        },
+        _ => None,
+    };
+    let Some(destination) = destination else {
+        return false;
+    };
+    if destination == clicked_slot {
+        return false;
+    }
+    attempt_inventory_transfer(inventory, chest, clicked_slot, destination);
+    true
+}
+
+fn first_free_chest_slot(chest: &EquipmentChestState) -> Option<usize> {
+    chest.slots.iter().position(Option::is_none)
+}
+
+fn first_compatible_empty_equipment_slot(
+    inventory: &InventoryState,
+    item: &GearItemEntry,
+) -> Option<(EquipmentUnitType, usize)> {
+    for unit_type in EquipmentUnitType::all() {
+        let Some(setup) = inventory.setup_for(unit_type) else {
+            continue;
+        };
+        for (slot_index, slot) in setup.slots.iter().enumerate() {
+            if slot.item.is_none() && slot.accepted_item_types.contains(&item.item_type) {
+                return Some((unit_type, slot_index));
+            }
+        }
+    }
+    None
 }
 
 fn attempt_inventory_transfer(
@@ -7518,6 +7704,124 @@ mod tests {
         assert!(
             commander_setup.slots[0].item.is_none(),
             "mismatched equip slot must stay empty"
+        );
+    }
+
+    #[test]
+    fn double_click_chest_item_moves_to_first_free_backpack_slot() {
+        let mut inventory = InventoryState::default();
+        let mut chest = EquipmentChestState::default();
+        chest.ensure_capacity();
+        chest.slots[0] = Some(make_test_item("sword", GearItemType::MeleeWeapon));
+        inventory.bag_slots[0] = Some(make_test_item("filled", GearItemType::Armor));
+
+        let moved = super::handle_inventory_double_click_transfer(
+            RunModalScreen::Chest,
+            InventorySlotRef::Chest(0),
+            &mut inventory,
+            &mut chest,
+        );
+
+        assert!(moved);
+        assert!(chest.slots[0].is_none());
+        assert_eq!(
+            inventory.bag_slots[1]
+                .as_ref()
+                .expect("slot 1 should receive moved item")
+                .name,
+            "sword"
+        );
+    }
+
+    #[test]
+    fn double_click_backpack_item_moves_to_first_free_chest_slot_in_chest_modal() {
+        let mut inventory = InventoryState::default();
+        let mut chest = EquipmentChestState::default();
+        chest.ensure_capacity();
+        inventory.bag_slots[0] = Some(make_test_item("bow", GearItemType::RangedWeapon));
+        chest.slots[0] = Some(make_test_item("occupied", GearItemType::Armor));
+
+        let moved = super::handle_inventory_double_click_transfer(
+            RunModalScreen::Chest,
+            InventorySlotRef::Backpack(0),
+            &mut inventory,
+            &mut chest,
+        );
+
+        assert!(moved);
+        assert!(inventory.bag_slots[0].is_none());
+        assert_eq!(
+            chest.slots[1]
+                .as_ref()
+                .expect("slot 1 should receive moved item")
+                .name,
+            "bow"
+        );
+    }
+
+    #[test]
+    fn double_click_backpack_item_equips_to_first_matching_slot_in_inventory_modal() {
+        let mut inventory = InventoryState::default();
+        let mut chest = EquipmentChestState::default();
+        chest.ensure_capacity();
+        inventory.bag_slots[0] = Some(make_test_item("sword", GearItemType::MeleeWeapon));
+
+        let moved = super::handle_inventory_double_click_transfer(
+            RunModalScreen::Inventory,
+            InventorySlotRef::Backpack(0),
+            &mut inventory,
+            &mut chest,
+        );
+
+        assert!(moved);
+        assert!(inventory.bag_slots[0].is_none());
+        let tier0_setup = inventory
+            .setup_for(EquipmentUnitType::Tier0)
+            .expect("tier0 setup");
+        assert_eq!(
+            tier0_setup.slots[0]
+                .item
+                .as_ref()
+                .expect("first matching slot should be filled")
+                .name,
+            "sword"
+        );
+    }
+
+    #[test]
+    fn double_click_equipped_item_moves_back_to_first_free_backpack_slot() {
+        let mut inventory = InventoryState::default();
+        let mut chest = EquipmentChestState::default();
+        chest.ensure_capacity();
+        {
+            let tier0_setup = inventory
+                .setup_for_mut(EquipmentUnitType::Tier0)
+                .expect("tier0 setup");
+            tier0_setup.slots[0].item = Some(make_test_item("sword", GearItemType::MeleeWeapon));
+        }
+        inventory.bag_slots[0] = Some(make_test_item("filled", GearItemType::Armor));
+
+        let moved = super::handle_inventory_double_click_transfer(
+            RunModalScreen::Inventory,
+            InventorySlotRef::Equipment {
+                unit_type: EquipmentUnitType::Tier0,
+                slot_index: 0,
+            },
+            &mut inventory,
+            &mut chest,
+        );
+
+        assert!(moved);
+        let tier0_setup = inventory
+            .setup_for(EquipmentUnitType::Tier0)
+            .expect("tier0 setup");
+        assert!(tier0_setup.slots[0].item.is_none());
+        assert_eq!(
+            inventory.bag_slots[1]
+                .as_ref()
+                .expect("first free backpack slot should be filled")
+                .name,
+            "sword"
         );
     }
 }

@@ -637,23 +637,50 @@ pub fn apply_xp_gain_multiplier(
 }
 
 fn drop_spawn_position(sequence: u32, bounds: Option<MapBounds>, center: Vec2) -> Vec2 {
-    let max_radius = bounds
-        .map(|b| b.half_width.min(b.half_height) * 0.48)
-        .unwrap_or(520.0);
-    let min_radius = max_radius * 0.16;
-    let ring_fraction = 0.2 + (sequence % 9) as f32 * 0.08;
-    let radius = min_radius + (max_radius - min_radius) * ring_fraction.clamp(0.2, 0.92);
-    let angle = sequence as f32 * 2.399_963_1 + 0.75;
-    let mut position = center + Vec2::new(radius * angle.cos(), radius * angle.sin());
     if let Some(map_bounds) = bounds {
-        position.x = position
-            .x
-            .clamp(-map_bounds.half_width, map_bounds.half_width);
-        position.y = position
-            .y
-            .clamp(-map_bounds.half_height, map_bounds.half_height);
+        let spawn_half_width = map_bounds.half_width * 0.92;
+        let spawn_half_height = map_bounds.half_height * 0.92;
+        for attempt in 0..8 {
+            let seed = drop_hash_seed(sequence, attempt);
+            let candidate = Vec2::new(
+                lerp(-spawn_half_width, spawn_half_width, normalized_seed(seed)),
+                lerp(
+                    -spawn_half_height,
+                    spawn_half_height,
+                    normalized_seed(seed ^ 0x9E37_79B9),
+                ),
+            );
+            let keep = candidate.distance_squared(center) >= 92.0 * 92.0 || attempt == 7;
+            if keep {
+                return candidate;
+            }
+        }
+        return Vec2::ZERO;
     }
-    position
+    let seed = drop_hash_seed(sequence, 0xA5A5_5A5A);
+    let radius = lerp(120.0, 520.0, normalized_seed(seed));
+    let angle = normalized_seed(seed ^ 0xD1B5_4A35) * std::f32::consts::TAU;
+    center + Vec2::new(radius * angle.cos(), radius * angle.sin())
+}
+
+fn drop_hash_seed(sequence: u32, attempt: u32) -> u32 {
+    let mut value = sequence
+        .wrapping_mul(1_103_515_245)
+        .wrapping_add(attempt.wrapping_mul(747_796_405))
+        .wrapping_add(0x9E37_79B9);
+    value ^= value >> 16;
+    value = value.wrapping_mul(0x85EB_CA6B);
+    value ^= value >> 13;
+    value = value.wrapping_mul(0xC2B2_AE35);
+    value ^ (value >> 16)
+}
+
+fn normalized_seed(seed: u32) -> f32 {
+    seed as f32 / u32::MAX as f32
+}
+
+fn lerp(min: f32, max: f32, t: f32) -> f32 {
+    min + (max - min) * t
 }
 
 fn chest_spawn_position(sequence: u32, bounds: Option<MapBounds>, center: Vec2) -> Vec2 {
@@ -728,15 +755,28 @@ mod tests {
     use crate::model::GlobalBuffs;
 
     #[test]
-    fn drop_spawn_points_stay_inside_expected_radius() {
+    fn drop_spawn_points_stay_inside_bounds_and_are_varied() {
         let bounds = MapBounds {
             half_width: 1200.0,
             half_height: 900.0,
         };
+        let mut min_x = f32::MAX;
+        let mut max_x = f32::MIN;
+        let mut min_y = f32::MAX;
+        let mut max_y = f32::MIN;
         for sequence in 0..48 {
             let point = drop_spawn_position(sequence, Some(bounds), Vec2::ZERO);
-            assert!(point.length() <= 900.0 * 0.48 + 0.01);
+            assert!(point.x >= -bounds.half_width * 0.92 - 0.01);
+            assert!(point.x <= bounds.half_width * 0.92 + 0.01);
+            assert!(point.y >= -bounds.half_height * 0.92 - 0.01);
+            assert!(point.y <= bounds.half_height * 0.92 + 0.01);
+            min_x = min_x.min(point.x);
+            max_x = max_x.max(point.x);
+            min_y = min_y.min(point.y);
+            max_y = max_y.max(point.y);
         }
+        assert!(max_x - min_x > 800.0);
+        assert!(max_y - min_y > 600.0);
     }
 
     #[test]
