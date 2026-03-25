@@ -1995,7 +1995,9 @@ fn spawn_in_run_hud(
 
 fn despawn_in_run_hud(mut commands: Commands, roots: Query<Entity, With<InRunHudRoot>>) {
     for entity in &roots {
-        commands.entity(entity).despawn_recursive();
+        if let Some(entity_commands) = commands.get_entity(entity) {
+            entity_commands.despawn_recursive();
+        }
     }
 }
 
@@ -2034,10 +2036,13 @@ fn sync_run_modal_overlay(
             if !should_rebuild {
                 return;
             }
-            for (entity, _) in existing_roots {
-                if let Some(entity_commands) = commands.get_entity(entity) {
-                    entity_commands.despawn_recursive();
+            if !existing_roots.is_empty() {
+                for (entity, _) in existing_roots {
+                    if let Some(entity_commands) = commands.get_entity(entity) {
+                        entity_commands.despawn_recursive();
+                    }
                 }
+                return;
             }
             let stats = build_stats_panel_data(
                 &deps.data,
@@ -6110,7 +6115,10 @@ fn update_rescue_progress_hud(
     let Ok(root_entity) = rescue_bars_root.get_single() else {
         return;
     };
-    commands.entity(root_entity).despawn_descendants();
+    let Some(mut root_commands) = commands.get_entity(root_entity) else {
+        return;
+    };
+    root_commands.despawn_descendants();
 
     let duration = effective_rescue_duration(
         data.rescue.rescue_duration_secs,
@@ -6145,7 +6153,7 @@ fn update_rescue_progress_hud(
     }
     bars.sort_by(|a, b| b.0.total_cmp(&a.0));
 
-    commands.entity(root_entity).with_children(|parent| {
+    root_commands.with_children(|parent| {
         for (ratio, color) in bars {
             parent
                 .spawn(NodeBundle {
@@ -6200,9 +6208,11 @@ fn update_minimap_hud(
     let Ok(root) = minimap_roots.get_single() else {
         return;
     };
-
-    commands.entity(root).despawn_descendants();
-    commands.entity(root).with_children(|parent| {
+    let Some(mut root_commands) = commands.get_entity(root) else {
+        return;
+    };
+    root_commands.despawn_descendants();
+    root_commands.with_children(|parent| {
         let mut friendly_count = 0usize;
         let mut enemy_count = 0usize;
         let mut commander_seen = false;
