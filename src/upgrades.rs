@@ -20,7 +20,7 @@ const AUTHORITY_ENEMY_MORALE_DRAIN_SCALE: f32 = 10.8;
 const MAX_AUTHORITY_LOSS_RESISTANCE: f32 = 0.75;
 const HOSPITALIER_COHESION_REGEN_SCALE: f32 = 0.2;
 const HOSPITALIER_MORALE_REGEN_SCALE: f32 = 0.1;
-const XP_BASE_REQUIREMENT: f32 = 300.0;
+const XP_BASE_REQUIREMENT: f32 = 100.0;
 const XP_GROWTH_PER_LEVEL: f32 = 1.061;
 
 const MOB_FURY_DAMAGE_BONUS: f32 = 0.18;
@@ -1479,7 +1479,7 @@ mod tests {
 
     #[test]
     fn xp_requirements_increase_each_level() {
-        assert!((xp_required_for_level(1) - 300.0).abs() < 0.001);
+        assert!((xp_required_for_level(1) - 100.0).abs() < 0.001);
         assert!(xp_required_for_level(2) > xp_required_for_level(1));
         assert!(xp_required_for_level(5) > xp_required_for_level(4));
         assert!(xp_required_for_level(11) > xp_required_for_level(10));
