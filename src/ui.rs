@@ -2006,11 +2006,17 @@ fn sync_run_modal_overlay(
     deps: RunModalOverlayDeps,
     priest_blessings: Query<&PriestAttackSpeedBlessing, With<FriendlyUnit>>,
 ) {
-    let existing = deps.roots.get_single().ok();
+    let existing_roots: Vec<(Entity, RunModalScreen)> = deps
+        .roots
+        .iter()
+        .map(|(entity, root)| (entity, root.screen))
+        .collect();
     match *modal_state {
         RunModalState::None => {
-            if let Some((entity, _)) = existing {
-                commands.entity(entity).despawn_recursive();
+            for (entity, _) in existing_roots {
+                if let Some(entity_commands) = commands.get_entity(entity) {
+                    entity_commands.despawn_recursive();
+                }
             }
         }
         RunModalState::Open(screen) => {
@@ -2021,15 +2027,17 @@ fn sync_run_modal_overlay(
             let should_refresh_inventory =
                 matches!(screen, RunModalScreen::Inventory | RunModalScreen::Chest)
                     && (deps.inventory.is_changed() || deps.chest.is_changed());
-            if let Some((_, root)) = existing
-                && root.screen == screen
-                && !should_refresh_unit_upgrade
-                && !should_refresh_inventory
-            {
+            let has_single_current_root =
+                existing_roots.len() == 1 && existing_roots[0].1 == screen;
+            let should_rebuild =
+                !has_single_current_root || should_refresh_unit_upgrade || should_refresh_inventory;
+            if !should_rebuild {
                 return;
             }
-            if let Some((entity, _)) = existing {
-                commands.entity(entity).despawn_recursive();
+            for (entity, _) in existing_roots {
+                if let Some(entity_commands) = commands.get_entity(entity) {
+                    entity_commands.despawn_recursive();
+                }
             }
             let stats = build_stats_panel_data(
                 &deps.data,
@@ -2078,7 +2086,9 @@ fn sync_run_modal_overlay(
 
 fn despawn_run_modal_overlay(mut commands: Commands, roots: Query<Entity, With<RunModalRoot>>) {
     for entity in &roots {
-        commands.entity(entity).despawn_recursive();
+        if let Some(entity_commands) = commands.get_entity(entity) {
+            entity_commands.despawn_recursive();
+        }
     }
 }
 
