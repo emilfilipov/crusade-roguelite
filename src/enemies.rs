@@ -98,6 +98,9 @@ pub struct BanditVisualRuntime {
 #[derive(Component, Clone, Copy, Debug)]
 struct EnemyMovementState {
     moving: bool,
+    crowd_hold_secs: f32,
+    last_position: Vec2,
+    stuck_secs: f32,
 }
 
 const ENEMY_BASE_SPEED_MULTIPLIER: f32 = 0.72;
@@ -121,6 +124,13 @@ const ENEMY_LEVEL_PRESSURE_PER_LEVEL: f32 = 0.011;
 const ENEMY_RETINUE_PRESSURE_PER_UNIT: f32 = 0.008;
 const ENEMY_RETINUE_PRESSURE_EXPONENT: f32 = 0.72;
 const ENEMY_PLAYER_PRESSURE_STAT_CAP: f32 = 3.5;
+const ENEMY_CROWD_STOP_NEIGHBOR_RADIUS: f32 = 26.0;
+const ENEMY_CROWD_STOP_NEIGHBOR_COUNT: usize = 6;
+const ENEMY_CROWD_STOP_DISTANCE_FACTOR: f32 = 1.35;
+const ENEMY_CROWD_HOLD_SECS: f32 = 0.18;
+const ENEMY_CROWD_STUCK_DISTANCE_EPS: f32 = 0.7;
+const ENEMY_CROWD_STUCK_MIN_SECS: f32 = 0.22;
+const ENEMY_CROWD_STUCK_DECAY_PER_SEC: f32 = 0.65;
 
 pub struct EnemyPlugin;
 
@@ -366,7 +376,12 @@ fn spawn_enemy_batch(
                 last_position: pos,
                 state: BanditVisualState::Idle,
             },
-            EnemyMovementState { moving: true },
+            EnemyMovementState {
+                moving: true,
+                crowd_hold_secs: 0.0,
+                last_position: pos,
+                stuck_secs: 0.0,
+            },
             Health::new(hp),
             Morale::new(morale),
             UnitCohesion::new(cohesion),
@@ -695,6 +710,7 @@ fn enemy_chase_targets(
         (With<FriendlyUnit>, Without<EnemyUnit>),
     >,
 ) {
+    let delta_seconds = time.delta_seconds().max(0.0);
     let all_friendlies: Vec<(Vec2, bool)> = friendlies
         .iter()
         .map(|(transform, commander)| (transform.translation.truncate(), commander.is_some()))
@@ -736,6 +752,19 @@ fn enemy_chase_targets(
     ) in &mut enemy_sets.p0()
     {
         let enemy_position = enemy_transform.translation.truncate();
+        let frame_displacement = enemy_position.distance(movement_state.last_position);
+        movement_state.last_position = enemy_position;
+        movement_state.stuck_secs = next_enemy_stuck_secs(
+            movement_state.moving,
+            frame_displacement,
+            movement_state.stuck_secs,
+            delta_seconds,
+        );
+
+        if movement_state.crowd_hold_secs > 0.0 {
+            movement_state.crowd_hold_secs =
+                (movement_state.crowd_hold_secs - delta_seconds).max(0.0);
+        }
         let target = if unit.kind.is_priest() {
             choose_support_follow_target(
                 enemy_entity,
@@ -752,6 +781,27 @@ fn enemy_chase_targets(
             let desired_range = enemy_engagement_range(attack_profile.range, ranged_profile);
             let stop_distance = (desired_range * STOP_FACTOR).max(10.0);
             let resume_distance = (desired_range * RESUME_FACTOR).max(stop_distance + 3.0);
+            let crowded = crowded_enemy_neighbor_count(
+                enemy_entity,
+                enemy_position,
+                &all_enemy_positions,
+                ENEMY_CROWD_STOP_NEIGHBOR_RADIUS,
+            ) >= ENEMY_CROWD_STOP_NEIGHBOR_COUNT;
+            if should_start_crowd_hold(
+                crowded,
+                distance,
+                desired_range,
+                movement_state.crowd_hold_secs,
+                movement_state.stuck_secs,
+            ) {
+                movement_state.crowd_hold_secs = ENEMY_CROWD_HOLD_SECS;
+            }
+            if movement_state.crowd_hold_secs > 0.0
+                && distance <= (desired_range * ENEMY_CROWD_STOP_DISTANCE_FACTOR)
+            {
+                movement_state.moving = false;
+                continue;
+            }
 
             movement_state.moving = should_move_towards_target(
                 movement_state.moving,
@@ -772,8 +822,55 @@ fn enemy_chase_targets(
                 enemy_transform.translation.x += step.x;
                 enemy_transform.translation.y += step.y;
             }
+        } else {
+            movement_state.moving = false;
+            movement_state.stuck_secs = 0.0;
         }
     }
+}
+
+fn next_enemy_stuck_secs(
+    was_moving: bool,
+    frame_displacement: f32,
+    current_stuck_secs: f32,
+    delta_seconds: f32,
+) -> f32 {
+    if delta_seconds <= 0.0 {
+        return current_stuck_secs.max(0.0);
+    }
+    if was_moving && frame_displacement <= ENEMY_CROWD_STUCK_DISTANCE_EPS {
+        return (current_stuck_secs + delta_seconds).max(0.0);
+    }
+    (current_stuck_secs - delta_seconds * ENEMY_CROWD_STUCK_DECAY_PER_SEC).max(0.0)
+}
+
+fn should_start_crowd_hold(
+    crowded: bool,
+    distance: f32,
+    desired_range: f32,
+    crowd_hold_secs: f32,
+    stuck_secs: f32,
+) -> bool {
+    crowded
+        && crowd_hold_secs <= 0.0
+        && stuck_secs >= ENEMY_CROWD_STUCK_MIN_SECS
+        && distance <= (desired_range * ENEMY_CROWD_STOP_DISTANCE_FACTOR)
+}
+
+fn crowded_enemy_neighbor_count(
+    enemy_entity: Entity,
+    enemy_position: Vec2,
+    all_enemy_positions: &[(Entity, Vec2, bool)],
+    radius: f32,
+) -> usize {
+    let radius_sq = radius * radius;
+    all_enemy_positions
+        .iter()
+        .filter(|(other_entity, other_position, _)| {
+            *other_entity != enemy_entity
+                && enemy_position.distance_squared(*other_position) <= radius_sq
+        })
+        .count()
 }
 
 pub fn enemy_engagement_range(
@@ -1046,7 +1143,7 @@ pub fn decide_bandit_visual_state(
 
 #[cfg(test)]
 mod tests {
-    use bevy::prelude::Vec2;
+    use bevy::prelude::{Entity, Vec2};
 
     use crate::ai::{
         chase_step_distance, chase_target_positions, choose_nearest, should_move_towards_target,
@@ -1055,10 +1152,11 @@ mod tests {
     use crate::data::{WaveConfig, WavesConfigFile};
     use crate::enemies::{
         BanditVisualState, EnemyRoleCounts, EnemySpawnRole, batch_interval_secs,
-        batch_size_for_wave, decide_bandit_visual_state, enemy_engagement_range, enemy_move_speed,
-        enemy_player_pressure_multiplier, formation_overflow_repel_target,
-        formation_perimeter_target, max_inside_enemy_count_for_formation,
-        overflow_indices_by_distance, pick_next_spawn_role, random_spawn_position,
+        batch_size_for_wave, crowded_enemy_neighbor_count, decide_bandit_visual_state,
+        enemy_engagement_range, enemy_move_speed, enemy_player_pressure_multiplier,
+        formation_overflow_repel_target, formation_perimeter_target,
+        max_inside_enemy_count_for_formation, next_enemy_stuck_secs, overflow_indices_by_distance,
+        pick_next_spawn_role, random_spawn_position, should_start_crowd_hold,
         units_per_second_for_wave, wave_duration_secs, wave_stat_multiplier,
     };
     use crate::formation::{ActiveFormation, formation_contains_position};
@@ -1334,5 +1432,36 @@ mod tests {
             assert!(point.y >= -350.0 && point.y <= 350.0);
             assert!(point.length() >= 170.0);
         }
+    }
+
+    #[test]
+    fn crowded_neighbor_count_ignores_self_and_out_of_radius_entities() {
+        let entries = vec![
+            (Entity::from_raw(1), Vec2::new(0.0, 0.0), false),
+            (Entity::from_raw(2), Vec2::new(10.0, 0.0), false),
+            (Entity::from_raw(3), Vec2::new(15.0, 0.0), true),
+            (Entity::from_raw(4), Vec2::new(50.0, 0.0), false),
+        ];
+        let count =
+            crowded_enemy_neighbor_count(Entity::from_raw(1), Vec2::new(0.0, 0.0), &entries, 20.0);
+        assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn stuck_seconds_accumulate_while_moving_but_not_progressing_and_decay_otherwise() {
+        let growing = next_enemy_stuck_secs(true, 0.2, 0.1, 0.16);
+        assert!(growing > 0.24);
+        let decaying = next_enemy_stuck_secs(false, 2.0, growing, 0.16);
+        assert!(decaying < growing);
+        assert!(decaying >= 0.0);
+    }
+
+    #[test]
+    fn crowd_hold_requires_crowd_range_and_stuck_threshold() {
+        assert!(should_start_crowd_hold(true, 24.0, 20.0, 0.0, 0.3));
+        assert!(!should_start_crowd_hold(true, 24.0, 20.0, 0.1, 0.3));
+        assert!(!should_start_crowd_hold(false, 24.0, 20.0, 0.0, 0.3));
+        assert!(!should_start_crowd_hold(true, 40.0, 20.0, 0.0, 0.3));
+        assert!(!should_start_crowd_hold(true, 24.0, 20.0, 0.0, 0.05));
     }
 }
