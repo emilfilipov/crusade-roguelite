@@ -37,7 +37,7 @@ const PRIEST_BLESSING_VFX_ALPHA: f32 = 0.28;
 const PRIEST_BLESSING_VFX_SCALE_X: f32 = 1.75;
 const PRIEST_BLESSING_VFX_SCALE_Y: f32 = 0.92;
 const PRIEST_BLESSING_VFX_MIN_RADIUS: f32 = 8.0;
-const TIER0_CONVERSION_XP_PROGRESS_COST_RATIO: f32 = 0.10;
+const TIER0_CONVERSION_XP_PROGRESS_COST_RATIO: f32 = 0.05;
 
 #[derive(Resource, Clone, Debug, Default)]
 pub struct SquadRoster {
@@ -1737,9 +1737,9 @@ mod tests {
     }
 
     #[test]
-    fn tier0_conversion_cost_is_ten_percent_of_level_progress_requirement() {
-        assert!((tier0_conversion_xp_cost(100.0) - 10.0).abs() < 0.001);
-        assert!((tier0_conversion_xp_cost(257.0) - 25.7).abs() < 0.001);
+    fn tier0_conversion_cost_is_five_percent_of_level_progress_requirement() {
+        assert!((tier0_conversion_xp_cost(100.0) - 5.0).abs() < 0.001);
+        assert!((tier0_conversion_xp_cost(257.0) - 12.85).abs() < 0.001);
     }
 
     #[test]
@@ -1801,7 +1801,7 @@ mod tests {
         assert_eq!(infantry_count, 0);
 
         let progression = app.world().resource::<Progression>();
-        assert!((progression.xp - 20.0).abs() < 0.001);
+        assert!((progression.xp - 25.0).abs() < 0.001);
     }
 
     #[test]
@@ -1817,7 +1817,7 @@ mod tests {
         app.insert_resource(ActiveFormation::Square);
         app.insert_resource(FormationModifiers::default());
         app.insert_resource(Progression {
-            xp: 5.0,
+            xp: 4.0,
             level: 8,
             next_level_xp: 100.0,
         });
