@@ -328,6 +328,8 @@ struct ScrollContent {
 struct UnitUpgradeUiState {
     selected_source: UnitKind,
     swap_targets: HashMap<UnitKind, UnitKind>,
+    context_swap_source: Option<UnitKind>,
+    graph_scroll_offset: f32,
 }
 
 impl Default for UnitUpgradeUiState {
@@ -335,6 +337,8 @@ impl Default for UnitUpgradeUiState {
         Self {
             selected_source: UnitKind::ChristianPeasantInfantry,
             swap_targets: HashMap::new(),
+            context_swap_source: None,
+            graph_scroll_offset: 0.0,
         }
     }
 }
@@ -354,6 +358,17 @@ struct UnitUpgradeConvertButton {
 struct UnitUpgradeSwapTargetCycleButton {
     from: UnitKind,
 }
+
+#[derive(Component, Clone, Copy, Debug, Eq, PartialEq)]
+struct UnitUpgradeGraphScrollButton {
+    direction: i8,
+}
+
+#[derive(Component, Clone, Copy, Debug)]
+struct UnitUpgradeGraphContent;
+
+#[derive(Component, Clone, Copy, Debug)]
+struct UnitUpgradeGraphScrollFill;
 
 #[derive(Clone, Debug)]
 struct StatsPanelData {
@@ -396,15 +411,13 @@ struct UnitUpgradePanelData {
     commander_level: u32,
     allowed_max_level: u32,
     locked_levels: u32,
-    current_wave: u32,
     selected_source: UnitKind,
-    blocked_upgrade_reason: Option<String>,
-    progression_lock_reason: Option<String>,
     roster_entries: Vec<UnitUpgradeRosterEntry>,
-    conversion_options: Vec<UnitConversionOption>,
     current_xp: f32,
-    next_level_xp: f32,
     conversion_xp_cost_per_unit: f32,
+    context_swap_option: Option<UnitConversionOption>,
+    graph_scroll_offset: f32,
+    graph_scroll_max_offset: f32,
 }
 
 #[derive(Clone, Debug)]
@@ -416,9 +429,7 @@ struct UnitUpgradeRosterEntry {
 struct UnitConversionOption {
     from_kind: UnitKind,
     to_kind: UnitKind,
-    target_choices: Vec<UnitKind>,
     source_count: u32,
-    target_count: u32,
     max_affordable: u32,
 }
 
@@ -451,8 +462,6 @@ struct RunModalOverlayDeps<'w, 's> {
     data: Res<'w, GameData>,
     archive: Res<'w, ArchiveDataset>,
     progression: Res<'w, Progression>,
-    waves: Res<'w, WaveRuntime>,
-    progression_lock_feedback: Res<'w, ProgressionLockFeedback>,
     roster_economy: Res<'w, RosterEconomy>,
     roster_feedback: Res<'w, RosterEconomyFeedback>,
     unit_upgrade_state: Res<'w, UnitUpgradeUiState>,
@@ -515,6 +524,11 @@ const BASE_CRIT_DAMAGE_MULTIPLIER: f32 = 1.2;
 const RUN_MODAL_PANEL_WIDTH: f32 = 980.0;
 const RUN_MODAL_PANEL_HEIGHT: f32 = 620.0;
 const INVENTORY_DOUBLE_CLICK_WINDOW_SECS: f64 = 0.28;
+const UNIT_UPGRADE_GRAPH_CELL_WIDTH: f32 = 136.0;
+const UNIT_UPGRADE_GRAPH_CONNECTOR_WIDTH: f32 = 18.0;
+const UNIT_UPGRADE_GRAPH_HERO_GAP_WIDTH: f32 = 24.0;
+const UNIT_UPGRADE_GRAPH_VIEWPORT_HEIGHT: f32 = 354.0;
+const UNIT_UPGRADE_GRAPH_SCROLL_STEP: f32 = 160.0;
 
 pub struct UiPlugin;
 
@@ -2087,10 +2101,7 @@ fn sync_run_modal_overlay(
             );
             let unit_upgrade_panel = build_unit_upgrade_panel_data(
                 &deps.roster_economy,
-                &deps.roster_feedback,
                 &deps.progression,
-                deps.waves.current_wave.max(1),
-                &deps.progression_lock_feedback,
                 &deps.unit_upgrade_state,
                 deps.setup_selection.faction,
             );
@@ -2174,7 +2185,7 @@ fn spawn_run_modal_overlay(
                     align_items: AlignItems::Center,
                     row_gap: Val::Px(8.0),
                     padding: UiRect::all(Val::Px(12.0)),
-                    overflow: Overflow::clip_y(),
+                    overflow: Overflow::clip(),
                     ..default()
                 },
                 background_color: BackgroundColor(Color::srgba(0.08, 0.07, 0.06, 0.95)),
@@ -2410,7 +2421,7 @@ fn unit_description(kind: UnitKind) -> &'static str {
             "Support priest that periodically buffs nearby allies."
         }
         UnitKind::Commander => "Army command center with leadership-focused progression.",
-        _ => "Scaffold node for future roster expansion.",
+        _ => "Inactive node for future roster expansion.",
     }
 }
 
@@ -2426,14 +2437,22 @@ fn unit_abilities(kind: UnitKind) -> &'static str {
             "Auto-cast priest blessing (attack speed buff aura pulse)."
         }
         UnitKind::Commander => "Auras, formations, battle-support combat.",
-        _ => "No active ability (scaffold).",
+        _ => "No active ability.",
     }
 }
 
-fn unit_box_tooltip(kind: UnitKind, data: &GameData) -> String {
+fn unit_box_tooltip(kind: UnitKind, data: &GameData, swap_cost: Option<f32>) -> String {
+    let swap_hint = if friendly_tier_for_kind(kind) == Some(0) {
+        format!(
+            "\nSwap Cost: {:.1}\nHint: right-click unit to open swap menu.",
+            swap_cost.unwrap_or(0.0)
+        )
+    } else {
+        String::new()
+    };
     if let Some(stats) = friendly_unit_stats_for_kind(data, kind) {
         format!(
-            "{}\nType: {}\nDescription: {}\nStats: HP {:.0}, Armor {:.1}, Damage {:.1}, AS {:.2}s, Range {:.1}, Move {:.1}, Morale {:.0}\nAbilities: {}",
+            "{}\nType: {}\nDescription: {}\nStats: HP {:.0}, Armor {:.1}, Damage {:.1}, AS {:.2}s, Range {:.1}, Move {:.1}, Morale {:.0}\nAbilities: {}{}",
             unit_kind_label(kind),
             unit_role_label(kind),
             unit_description(kind),
@@ -2444,29 +2463,34 @@ fn unit_box_tooltip(kind: UnitKind, data: &GameData) -> String {
             stats.attack_range,
             stats.move_speed,
             stats.morale,
-            unit_abilities(kind)
+            unit_abilities(kind),
+            swap_hint
         )
     } else {
         format!(
-            "{}\nType: {}\nDescription: {}\nStats: N/A\nAbilities: {}",
+            "{}\nType: {}\nDescription: {}\nStats: N/A\nAbilities: {}{}",
             unit_kind_label(kind),
             unit_role_label(kind),
             unit_description(kind),
-            unit_abilities(kind)
+            unit_abilities(kind),
+            swap_hint
         )
     }
 }
 
 fn tier_placeholder_tooltip(source_kind: UnitKind, tier: u8) -> String {
     format!(
-        "{} Tier {}\nType: Promotion Scaffold\nDescription: Future tier node scaffold.\nStats: N/A (not implemented)\nAbilities: N/A\nUpgrade Rule: Requires matching lower tier unit and +1 locked level per tier step.",
+        "{} Tier {}\nType: Promotion\nDescription: Tier slot currently inactive.\nStats: N/A (not implemented)\nAbilities: N/A\nUpgrade Rule: Requires matching lower tier unit and +1 locked level per tier step.",
         unit_kind_label(source_kind),
         tier
     )
 }
 
-fn hero_scaffold_tooltip() -> String {
-    "Hero Tier Scaffold\nType: Hero\nDescription: Hero slot is scaffolded for future content.\nStats: N/A (not implemented)\nAbilities: N/A".to_string()
+fn hero_scaffold_tooltip(source_kind: UnitKind) -> String {
+    format!(
+        "{} Hero\nType: Hero\nDescription: Hero tier slot currently inactive for this unit type.\nStats: N/A (not implemented)\nAbilities: N/A",
+        unit_kind_label(source_kind)
+    )
 }
 
 fn stats_bonus_row(label: &'static str, bonus_value: f32, bonus_text: String) -> StatsPanelRow {
@@ -3819,10 +3843,7 @@ fn equipment_unit_short_label(unit_type: EquipmentUnitType) -> &'static str {
 
 fn build_unit_upgrade_panel_data(
     economy: &RosterEconomy,
-    feedback: &RosterEconomyFeedback,
     progression: &Progression,
-    current_wave: u32,
-    lock_feedback: &ProgressionLockFeedback,
     ui_state: &UnitUpgradeUiState,
     player_faction: PlayerFaction,
 ) -> UnitUpgradePanelData {
@@ -3845,9 +3866,7 @@ fn build_unit_upgrade_panel_data(
             UnitConversionOption {
                 from_kind: *from_kind,
                 to_kind: selected_target,
-                target_choices,
                 source_count,
-                target_count: roster_count_for_kind(economy, selected_target),
                 max_affordable: max_affordable_tier0_conversions(
                     progression.xp,
                     conversion_xp_cost,
@@ -3856,20 +3875,27 @@ fn build_unit_upgrade_panel_data(
             }
         })
         .collect::<Vec<_>>();
+    let context_swap_option = ui_state.context_swap_source.and_then(|source| {
+        conversion_options
+            .iter()
+            .find(|option| option.from_kind == source)
+            .cloned()
+    });
+    let graph_scroll_max_offset = unit_upgrade_graph_max_scroll_offset();
 
     UnitUpgradePanelData {
         commander_level: current_level,
         allowed_max_level: economy.allowed_max_level,
         locked_levels: economy.locked_levels,
-        current_wave,
         selected_source,
-        blocked_upgrade_reason: feedback.blocked_upgrade_reason.clone(),
-        progression_lock_reason: lock_feedback.message.clone(),
         roster_entries,
-        conversion_options,
         current_xp: progression.xp,
-        next_level_xp: progression.next_level_xp,
         conversion_xp_cost_per_unit: conversion_xp_cost,
+        context_swap_option,
+        graph_scroll_offset: ui_state
+            .graph_scroll_offset
+            .clamp(0.0, graph_scroll_max_offset),
+        graph_scroll_max_offset,
     }
 }
 
@@ -3879,22 +3905,12 @@ fn spawn_unit_upgrade_modal_sections(
     data: &GameData,
 ) {
     let budget_text = format!(
-        "Commander Level Budget: {}/{}  |  Locked by Roster: {}",
-        panel_data.commander_level, panel_data.allowed_max_level, panel_data.locked_levels
+        "Commander Level Budget: {}/{}  |  Locked by Roster: {}  |  Exp Budget Available: {:.1}",
+        panel_data.commander_level,
+        panel_data.allowed_max_level,
+        panel_data.locked_levels,
+        panel_data.current_xp
     );
-    let wave_text = format!("Current Wave: {}", panel_data.current_wave);
-    let xp_progress_text = format!(
-        "XP Progress: {:.1}/{:.1} | Tier-0 Swap Cost: {:.1} XP (10%)",
-        panel_data.current_xp, panel_data.next_level_xp, panel_data.conversion_xp_cost_per_unit
-    );
-    let upgrade_feedback = panel_data
-        .blocked_upgrade_reason
-        .as_deref()
-        .unwrap_or("No blocked promotion event in the current frame.");
-    let progression_feedback = panel_data
-        .progression_lock_reason
-        .as_deref()
-        .unwrap_or("Level progression is currently not budget-locked.");
     let tier_headers = [
         ("I", "Tier 0"),
         ("II", "Tier 1"),
@@ -3902,9 +3918,15 @@ fn spawn_unit_upgrade_modal_sections(
         ("IV", "Tier 3"),
         ("V", "Tier 4"),
         ("VI", "Tier 5"),
+        ("VII", "Hero"),
     ];
-    const GRAPH_CELL_WIDTH: f32 = 136.0;
-    const GRAPH_CONNECTOR_WIDTH: f32 = 18.0;
+    let graph_fill_percent = if panel_data.graph_scroll_max_offset <= 0.0 {
+        100.0
+    } else {
+        let ratio =
+            (panel_data.graph_scroll_offset / panel_data.graph_scroll_max_offset).clamp(0.0, 1.0);
+        (ratio * 100.0).max(8.0)
+    };
 
     parent
         .spawn(NodeBundle {
@@ -3931,103 +3953,285 @@ fn spawn_unit_upgrade_modal_sections(
                     ..default()
                 },
             ));
-            root.spawn(TextBundle::from_section(
-                wave_text,
-                TextStyle {
-                    font_size: 14.0,
-                    color: MENU_BUTTON_TEXT_DISABLED,
+            if let Some(option) = panel_data.context_swap_option.as_ref() {
+                let enabled = option.max_affordable > 0;
+                root.spawn(NodeBundle {
+                    style: Style {
+                        width: Val::Percent(100.0),
+                        border: UiRect::all(Val::Px(1.0)),
+                        padding: UiRect::all(Val::Px(6.0)),
+                        flex_direction: FlexDirection::Row,
+                        align_items: AlignItems::Center,
+                        justify_content: JustifyContent::SpaceBetween,
+                        column_gap: Val::Px(10.0),
+                        ..default()
+                    },
+                    background_color: BackgroundColor(Color::srgba(0.07, 0.07, 0.07, 0.44)),
+                    border_color: BorderColor(Color::srgba(0.78, 0.72, 0.58, 0.24)),
                     ..default()
-                },
-            ));
-            root.spawn(TextBundle::from_section(
-                xp_progress_text,
-                TextStyle {
-                    font_size: 14.0,
-                    color: MENU_BUTTON_TEXT_DISABLED,
-                    ..default()
-                },
-            ));
-            root.spawn(TextBundle::from_section(
-                format!("Upgrade feedback: {upgrade_feedback}"),
-                TextStyle {
-                    font_size: 13.0,
-                    color: HUD_TEXT_COLOR,
-                    ..default()
-                },
-            ));
-            root.spawn(TextBundle::from_section(
-                format!("Progression feedback: {progression_feedback}"),
-                TextStyle {
-                    font_size: 13.0,
-                    color: HUD_TEXT_COLOR,
-                    ..default()
-                },
-            ));
-            root.spawn(TextBundle::from_section(
-                "Tier graph scaffold: tier-0 swaps are active; tier-1+ promotions are scaffolded/inactive.",
-                TextStyle {
-                    font_size: 13.0,
-                    color: MENU_BUTTON_TEXT_DISABLED,
-                    ..default()
-                },
-            ));
+                })
+                .with_children(|menu| {
+                    menu.spawn(TextBundle::from_section(
+                        format!(
+                            "Tier-0 Swap Menu: {} (Owned {}, Max {})",
+                            unit_kind_label(option.from_kind),
+                            option.source_count,
+                            option.max_affordable
+                        ),
+                        TextStyle {
+                            font_size: 13.0,
+                            color: HUD_TEXT_COLOR,
+                            ..default()
+                        },
+                    ));
+                    menu.spawn((
+                        ButtonBundle {
+                            style: Style {
+                                width: Val::Px(224.0),
+                                height: Val::Px(28.0),
+                                border: UiRect::all(Val::Px(1.0)),
+                                justify_content: JustifyContent::Center,
+                                align_items: AlignItems::Center,
+                                ..default()
+                            },
+                            background_color: BackgroundColor(Color::srgba(0.08, 0.07, 0.06, 0.7)),
+                            border_color: BorderColor(Color::srgba(0.78, 0.72, 0.58, 0.24)),
+                            ..default()
+                        },
+                        UnitUpgradeSwapTargetCycleButton {
+                            from: option.from_kind,
+                        },
+                    ))
+                    .with_children(|button| {
+                        button.spawn(TextBundle::from_section(
+                            format!("{}  v", unit_kind_label(option.to_kind)),
+                            TextStyle {
+                                font_size: 13.0,
+                                color: HUD_TEXT_COLOR,
+                                ..default()
+                            },
+                        ));
+                    });
+                    menu.spawn((
+                        ButtonBundle {
+                            style: Style {
+                                width: Val::Px(96.0),
+                                height: Val::Px(28.0),
+                                border: UiRect::all(Val::Px(1.0)),
+                                justify_content: JustifyContent::Center,
+                                align_items: AlignItems::Center,
+                                ..default()
+                            },
+                            background_color: BackgroundColor(Color::srgba(0.08, 0.07, 0.06, 0.7)),
+                            border_color: BorderColor(if enabled {
+                                Color::srgba(0.78, 0.72, 0.58, 0.24)
+                            } else {
+                                MENU_BUTTON_BORDER_DISABLED
+                            }),
+                            ..default()
+                        },
+                        UnitUpgradeConvertButton {
+                            from: option.from_kind,
+                            to: option.to_kind,
+                        },
+                    ))
+                    .with_children(|button| {
+                        button.spawn(TextBundle::from_section(
+                            "Swap 1",
+                            TextStyle {
+                                font_size: 13.0,
+                                color: if enabled {
+                                    HUD_TEXT_COLOR
+                                } else {
+                                    MENU_BUTTON_TEXT_DISABLED
+                                },
+                                ..default()
+                            },
+                        ));
+                    });
+                });
+            } else {
+                root.spawn(TextBundle::from_section(
+                    "Right-click a Tier 0 unit to open swap menu.",
+                    TextStyle {
+                        font_size: 13.0,
+                        color: MENU_BUTTON_TEXT_DISABLED,
+                        ..default()
+                    },
+                ));
+            }
 
-            spawn_scrollable_panel(root, 402.0, |scroll_root| {
-                scroll_root
+            root.spawn(NodeBundle {
+                style: Style {
+                    width: Val::Percent(100.0),
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    column_gap: Val::Px(8.0),
+                    ..default()
+                },
+                background_color: BackgroundColor(Color::NONE),
+                ..default()
+            })
+            .with_children(|scroll_controls| {
+                scroll_controls
+                    .spawn((
+                        ButtonBundle {
+                            style: Style {
+                                width: Val::Px(24.0),
+                                height: Val::Px(22.0),
+                                border: UiRect::all(Val::Px(1.0)),
+                                justify_content: JustifyContent::Center,
+                                align_items: AlignItems::Center,
+                                ..default()
+                            },
+                            background_color: BackgroundColor(Color::srgba(0.08, 0.07, 0.06, 0.7)),
+                            border_color: BorderColor(Color::srgba(0.78, 0.72, 0.58, 0.24)),
+                            ..default()
+                        },
+                        UnitUpgradeGraphScrollButton { direction: -1 },
+                    ))
+                    .with_children(|button| {
+                        button.spawn(TextBundle::from_section(
+                            "<",
+                            TextStyle {
+                                font_size: 13.0,
+                                color: HUD_TEXT_COLOR,
+                                ..default()
+                            },
+                        ));
+                    });
+                scroll_controls
                     .spawn(NodeBundle {
                         style: Style {
                             width: Val::Percent(100.0),
-                            flex_direction: FlexDirection::Row,
-                            align_items: AlignItems::Center,
-                            justify_content: JustifyContent::FlexStart,
-                            column_gap: Val::Px(6.0),
+                            height: Val::Px(8.0),
+                            border: UiRect::all(Val::Px(1.0)),
                             ..default()
                         },
-                        background_color: BackgroundColor(Color::NONE),
+                        background_color: BackgroundColor(Color::srgba(0.05, 0.045, 0.04, 0.86)),
+                        border_color: BorderColor(Color::srgba(0.78, 0.72, 0.58, 0.24)),
                         ..default()
                     })
-                    .with_children(|header| {
-                        for (index, (roman, label)) in tier_headers.iter().enumerate() {
-                            header.spawn(NodeBundle {
+                    .with_children(|track| {
+                        track.spawn((
+                            UnitUpgradeGraphScrollFill,
+                            NodeBundle {
                                 style: Style {
-                                    width: Val::Px(GRAPH_CELL_WIDTH),
-                                    min_height: Val::Px(34.0),
-                                    border: UiRect::all(Val::Px(1.0)),
-                                    justify_content: JustifyContent::Center,
-                                    align_items: AlignItems::Center,
-                                    flex_direction: FlexDirection::Column,
+                                    width: Val::Percent(graph_fill_percent),
+                                    height: Val::Percent(100.0),
                                     ..default()
                                 },
-                                background_color: BackgroundColor(Color::srgba(0.08, 0.07, 0.06, 0.7)),
-                                border_color: BorderColor(UTILITY_BAR_BORDER),
+                                background_color: BackgroundColor(Color::srgba(
+                                    0.83, 0.71, 0.31, 0.72,
+                                )),
                                 ..default()
-                            })
-                            .with_children(|cell| {
-                                cell.spawn(TextBundle::from_section(
-                                    *roman,
-                                    TextStyle {
-                                        font_size: 14.0,
-                                        color: MENU_BUTTON_TEXT_HOVERED,
+                            },
+                        ));
+                    });
+                scroll_controls
+                    .spawn((
+                        ButtonBundle {
+                            style: Style {
+                                width: Val::Px(24.0),
+                                height: Val::Px(22.0),
+                                border: UiRect::all(Val::Px(1.0)),
+                                justify_content: JustifyContent::Center,
+                                align_items: AlignItems::Center,
+                                ..default()
+                            },
+                            background_color: BackgroundColor(Color::srgba(0.08, 0.07, 0.06, 0.7)),
+                            border_color: BorderColor(Color::srgba(0.78, 0.72, 0.58, 0.24)),
+                            ..default()
+                        },
+                        UnitUpgradeGraphScrollButton { direction: 1 },
+                    ))
+                    .with_children(|button| {
+                        button.spawn(TextBundle::from_section(
+                            ">",
+                            TextStyle {
+                                font_size: 13.0,
+                                color: HUD_TEXT_COLOR,
+                                ..default()
+                            },
+                        ));
+                    });
+            });
+
+            spawn_scrollable_panel(root, UNIT_UPGRADE_GRAPH_VIEWPORT_HEIGHT, |scroll_root| {
+                scroll_root
+                    .spawn((
+                        UnitUpgradeGraphContent,
+                        NodeBundle {
+                            style: Style {
+                                width: Val::Px(unit_upgrade_graph_content_width()),
+                                flex_direction: FlexDirection::Row,
+                                align_items: AlignItems::Center,
+                                justify_content: JustifyContent::FlexStart,
+                                column_gap: Val::Px(6.0),
+                                position_type: PositionType::Relative,
+                                left: Val::Px(-panel_data.graph_scroll_offset),
+                                ..default()
+                            },
+                            background_color: BackgroundColor(Color::NONE),
+                            ..default()
+                        },
+                    ))
+                    .with_children(|header| {
+                        for (index, (roman, label)) in tier_headers.iter().enumerate() {
+                            header
+                                .spawn(NodeBundle {
+                                    style: Style {
+                                        width: Val::Px(UNIT_UPGRADE_GRAPH_CELL_WIDTH),
+                                        min_height: Val::Px(34.0),
+                                        border: UiRect::all(Val::Px(1.0)),
+                                        justify_content: JustifyContent::Center,
+                                        align_items: AlignItems::Center,
+                                        flex_direction: FlexDirection::Column,
                                         ..default()
                                     },
-                                ));
-                                cell.spawn(TextBundle::from_section(
-                                    *label,
-                                    TextStyle {
-                                        font_size: 11.0,
-                                        color: HUD_TEXT_COLOR,
-                                        ..default()
-                                    },
-                                ));
-                            });
-                            if index < tier_headers.len() - 1 {
+                                    background_color: BackgroundColor(Color::srgba(
+                                        0.08, 0.07, 0.06, 0.7,
+                                    )),
+                                    border_color: BorderColor(UTILITY_BAR_BORDER),
+                                    ..default()
+                                })
+                                .with_children(|cell| {
+                                    cell.spawn(TextBundle::from_section(
+                                        *roman,
+                                        TextStyle {
+                                            font_size: 14.0,
+                                            color: MENU_BUTTON_TEXT_HOVERED,
+                                            ..default()
+                                        },
+                                    ));
+                                    cell.spawn(TextBundle::from_section(
+                                        *label,
+                                        TextStyle {
+                                            font_size: 11.0,
+                                            color: HUD_TEXT_COLOR,
+                                            ..default()
+                                        },
+                                    ));
+                                });
+                            if index < 5 {
                                 header.spawn(NodeBundle {
                                     style: Style {
-                                        width: Val::Px(GRAPH_CONNECTOR_WIDTH),
+                                        width: Val::Px(UNIT_UPGRADE_GRAPH_CONNECTOR_WIDTH),
                                         height: Val::Px(2.0),
                                         ..default()
                                     },
-                                    background_color: BackgroundColor(Color::srgba(0.78, 0.72, 0.58, 0.28)),
+                                    background_color: BackgroundColor(Color::srgba(
+                                        0.78, 0.72, 0.58, 0.28,
+                                    )),
+                                    ..default()
+                                });
+                            } else if index == 5 {
+                                header.spawn(NodeBundle {
+                                    style: Style {
+                                        width: Val::Px(UNIT_UPGRADE_GRAPH_HERO_GAP_WIDTH),
+                                        ..default()
+                                    },
+                                    background_color: BackgroundColor(Color::NONE),
                                     ..default()
                                 });
                             }
@@ -4038,22 +4242,27 @@ fn spawn_unit_upgrade_modal_sections(
                     let is_selected = entry.kind == panel_data.selected_source;
                     let base_label = unit_kind_label(entry.kind);
                     scroll_root
-                        .spawn(NodeBundle {
-                            style: Style {
-                                width: Val::Percent(100.0),
-                                flex_direction: FlexDirection::Row,
-                                align_items: AlignItems::Center,
-                                justify_content: JustifyContent::FlexStart,
-                                column_gap: Val::Px(6.0),
+                        .spawn((
+                            UnitUpgradeGraphContent,
+                            NodeBundle {
+                                style: Style {
+                                    width: Val::Px(unit_upgrade_graph_content_width()),
+                                    flex_direction: FlexDirection::Row,
+                                    align_items: AlignItems::Center,
+                                    justify_content: JustifyContent::FlexStart,
+                                    column_gap: Val::Px(6.0),
+                                    position_type: PositionType::Relative,
+                                    left: Val::Px(-panel_data.graph_scroll_offset),
+                                    ..default()
+                                },
+                                background_color: BackgroundColor(Color::NONE),
                                 ..default()
                             },
-                            background_color: BackgroundColor(Color::NONE),
-                            ..default()
-                        })
+                        ))
                         .with_children(|row| {
                             row.spawn(NodeBundle {
                                 style: Style {
-                                    width: Val::Px(GRAPH_CELL_WIDTH),
+                                    width: Val::Px(UNIT_UPGRADE_GRAPH_CELL_WIDTH),
                                     min_height: Val::Px(62.0),
                                     border: UiRect::all(Val::Px(1.0)),
                                     padding: UiRect::all(Val::Px(4.0)),
@@ -4061,7 +4270,9 @@ fn spawn_unit_upgrade_modal_sections(
                                     align_items: AlignItems::Center,
                                     ..default()
                                 },
-                                background_color: BackgroundColor(Color::srgba(0.06, 0.055, 0.05, 0.66)),
+                                background_color: BackgroundColor(Color::srgba(
+                                    0.06, 0.055, 0.05, 0.66,
+                                )),
                                 border_color: BorderColor(if is_selected {
                                     MENU_BUTTON_BORDER_HOVERED
                                 } else {
@@ -4093,7 +4304,11 @@ fn spawn_unit_upgrade_modal_sections(
                                     },
                                     UnitUpgradeSourceButton { kind: entry.kind },
                                     UnitUpgradeTooltipTarget {
-                                        tooltip: unit_box_tooltip(entry.kind, data),
+                                        tooltip: unit_box_tooltip(
+                                            entry.kind,
+                                            data,
+                                            Some(panel_data.conversion_xp_cost_per_unit),
+                                        ),
                                     },
                                 ))
                                 .with_children(|button| {
@@ -4114,18 +4329,20 @@ fn spawn_unit_upgrade_modal_sections(
 
                             row.spawn(NodeBundle {
                                 style: Style {
-                                    width: Val::Px(GRAPH_CONNECTOR_WIDTH),
+                                    width: Val::Px(UNIT_UPGRADE_GRAPH_CONNECTOR_WIDTH),
                                     height: Val::Px(2.0),
                                     ..default()
                                 },
-                                background_color: BackgroundColor(Color::srgba(0.78, 0.72, 0.58, 0.28)),
+                                background_color: BackgroundColor(Color::srgba(
+                                    0.78, 0.72, 0.58, 0.28,
+                                )),
                                 ..default()
                             });
 
                             for tier in 1..=5 {
                                 row.spawn(NodeBundle {
                                     style: Style {
-                                        width: Val::Px(GRAPH_CELL_WIDTH),
+                                        width: Val::Px(UNIT_UPGRADE_GRAPH_CELL_WIDTH),
                                         min_height: Val::Px(62.0),
                                         border: UiRect::all(Val::Px(1.0)),
                                         padding: UiRect::all(Val::Px(4.0)),
@@ -4133,7 +4350,9 @@ fn spawn_unit_upgrade_modal_sections(
                                         align_items: AlignItems::Center,
                                         ..default()
                                     },
-                                    background_color: BackgroundColor(Color::srgba(0.05, 0.05, 0.05, 0.58)),
+                                    background_color: BackgroundColor(Color::srgba(
+                                        0.05, 0.05, 0.05, 0.58,
+                                    )),
                                     border_color: BorderColor(Color::srgba(0.78, 0.72, 0.58, 0.22)),
                                     ..default()
                                 })
@@ -4173,7 +4392,7 @@ fn spawn_unit_upgrade_modal_sections(
                                 if tier < 5 {
                                     row.spawn(NodeBundle {
                                         style: Style {
-                                            width: Val::Px(GRAPH_CONNECTOR_WIDTH),
+                                            width: Val::Px(UNIT_UPGRADE_GRAPH_CONNECTOR_WIDTH),
                                             height: Val::Px(2.0),
                                             ..default()
                                         },
@@ -4184,226 +4403,67 @@ fn spawn_unit_upgrade_modal_sections(
                                     });
                                 }
                             }
-                        });
-                }
 
-                scroll_root
-                    .spawn(NodeBundle {
-                        style: Style {
-                            width: Val::Percent(100.0),
-                            flex_direction: FlexDirection::Row,
-                            align_items: AlignItems::Center,
-                            justify_content: JustifyContent::FlexStart,
-                            column_gap: Val::Px(6.0),
-                            ..default()
-                        },
-                        background_color: BackgroundColor(Color::NONE),
-                        ..default()
-                    })
-                    .with_children(|row| {
-                        row.spawn(NodeBundle {
-                            style: Style {
-                                width: Val::Px(GRAPH_CELL_WIDTH),
-                                min_height: Val::Px(62.0),
-                                border: UiRect::all(Val::Px(1.0)),
-                                padding: UiRect::all(Val::Px(4.0)),
-                                justify_content: JustifyContent::Center,
-                                align_items: AlignItems::Center,
+                            row.spawn(NodeBundle {
+                                style: Style {
+                                    width: Val::Px(UNIT_UPGRADE_GRAPH_HERO_GAP_WIDTH),
+                                    ..default()
+                                },
+                                background_color: BackgroundColor(Color::NONE),
                                 ..default()
-                            },
-                            background_color: BackgroundColor(Color::srgba(0.05, 0.05, 0.05, 0.58)),
-                            border_color: BorderColor(Color::srgba(0.78, 0.72, 0.58, 0.22)),
-                            ..default()
-                        })
-                        .with_children(|cell| {
-                            cell.spawn((
-                                ButtonBundle {
-                                    style: Style {
-                                        width: Val::Percent(100.0),
-                                        min_height: Val::Px(48.0),
-                                        border: UiRect::all(Val::Px(1.0)),
-                                        justify_content: JustifyContent::Center,
-                                        align_items: AlignItems::Center,
-                                        padding: UiRect::axes(Val::Px(6.0), Val::Px(4.0)),
-                                        ..default()
-                                    },
-                                    background_color: BackgroundColor(Color::srgba(
-                                        0.07, 0.07, 0.07, 0.6,
-                                    )),
-                                    border_color: BorderColor(MENU_BUTTON_BORDER_DISABLED),
+                            });
+
+                            row.spawn(NodeBundle {
+                                style: Style {
+                                    width: Val::Px(UNIT_UPGRADE_GRAPH_CELL_WIDTH),
+                                    min_height: Val::Px(62.0),
+                                    border: UiRect::all(Val::Px(1.0)),
+                                    padding: UiRect::all(Val::Px(4.0)),
+                                    justify_content: JustifyContent::Center,
+                                    align_items: AlignItems::Center,
                                     ..default()
                                 },
-                                UnitUpgradeTooltipTarget {
-                                    tooltip: hero_scaffold_tooltip(),
-                                },
-                            ))
-                            .with_children(|button| {
-                                button.spawn(TextBundle::from_section(
-                                    "Hero",
-                                    TextStyle {
-                                        font_size: 12.0,
-                                        color: MENU_BUTTON_TEXT_DISABLED,
-                                        ..default()
-                                    },
-                                ));
-                            });
-                        });
-                    });
-
-                scroll_root.spawn(TextBundle::from_section(
-                    "Tier-1+ promotions are scaffolded. Rule: matching lower-tier unit required, +1 locked level per tier step.",
-                    TextStyle {
-                        font_size: 12.0,
-                        color: MENU_BUTTON_TEXT_DISABLED,
-                        ..default()
-                    },
-                ));
-
-                scroll_root.spawn(NodeBundle {
-                    style: Style {
-                        width: Val::Percent(100.0),
-                        height: Val::Px(1.0),
-                        margin: UiRect::top(Val::Px(4.0)),
-                        ..default()
-                    },
-                    background_color: BackgroundColor(Color::srgba(0.78, 0.72, 0.58, 0.24)),
-                    ..default()
-                });
-
-                scroll_root.spawn(TextBundle::from_section(
-                    "Tier-0 Unit Swap",
-                    TextStyle {
-                        font_size: 16.0,
-                        color: MENU_BUTTON_TEXT_HOVERED,
-                        ..default()
-                    },
-                ));
-
-                for option in &panel_data.conversion_options {
-                    let enabled = option.max_affordable > 0;
-                    scroll_root
-                        .spawn(NodeBundle {
-                            style: Style {
-                                width: Val::Percent(100.0),
-                                border: UiRect::all(Val::Px(1.0)),
-                                padding: UiRect::all(Val::Px(6.0)),
-                                flex_direction: FlexDirection::Row,
-                                align_items: AlignItems::Center,
-                                column_gap: Val::Px(8.0),
+                                background_color: BackgroundColor(Color::srgba(
+                                    0.05, 0.05, 0.05, 0.58,
+                                )),
+                                border_color: BorderColor(Color::srgba(0.78, 0.72, 0.58, 0.22)),
                                 ..default()
-                            },
-                            background_color: BackgroundColor(Color::srgba(0.07, 0.07, 0.07, 0.46)),
-                            border_color: BorderColor(Color::srgba(0.78, 0.72, 0.58, 0.24)),
-                            ..default()
-                        })
-                        .with_children(|row| {
-                            row.spawn(TextBundle::from_section(
-                                unit_kind_label(option.from_kind),
-                                TextStyle {
-                                    font_size: 13.0,
-                                    color: HUD_TEXT_COLOR,
-                                    ..default()
-                                },
-                            ));
-                            row.spawn(TextBundle::from_section(
-                                "->",
-                                TextStyle {
-                                    font_size: 13.0,
-                                    color: MENU_BUTTON_TEXT_DISABLED,
-                                    ..default()
-                                },
-                            ));
-                            row.spawn((
-                                ButtonBundle {
-                                    style: Style {
-                                        width: Val::Px(230.0),
-                                        height: Val::Px(28.0),
-                                        border: UiRect::all(Val::Px(1.0)),
-                                        justify_content: JustifyContent::Center,
-                                        align_items: AlignItems::Center,
-                                        ..default()
-                                    },
-                                    background_color: BackgroundColor(Color::srgba(0.08, 0.07, 0.06, 0.7)),
-                                    border_color: BorderColor(Color::srgba(0.78, 0.72, 0.58, 0.24)),
-                                    ..default()
-                                },
-                                UnitUpgradeSwapTargetCycleButton {
-                                    from: option.from_kind,
-                                },
-                            ))
-                            .with_children(|button| {
-                                button.spawn(TextBundle::from_section(
-                                    format!("{}  v", unit_kind_label(option.to_kind)),
-                                    TextStyle {
-                                        font_size: 13.0,
-                                        color: HUD_TEXT_COLOR,
-                                        ..default()
-                                    },
-                                ));
-                            });
-                            row.spawn((
-                                ButtonBundle {
-                                    style: Style {
-                                        width: Val::Px(92.0),
-                                        height: Val::Px(28.0),
-                                        border: UiRect::all(Val::Px(1.0)),
-                                        justify_content: JustifyContent::Center,
-                                        align_items: AlignItems::Center,
-                                        ..default()
-                                    },
-                                    background_color: BackgroundColor(Color::srgba(0.08, 0.07, 0.06, 0.7)),
-                                    border_color: BorderColor(if enabled {
-                                        Color::srgba(0.78, 0.72, 0.58, 0.24)
-                                    } else {
-                                        MENU_BUTTON_BORDER_DISABLED
-                                    }),
-                                    ..default()
-                                },
-                                UnitUpgradeConvertButton {
-                                    from: option.from_kind,
-                                    to: option.to_kind,
-                                },
-                            ))
-                            .with_children(|button| {
-                                button.spawn(TextBundle::from_section(
-                                    "Swap 1",
-                                    TextStyle {
-                                        font_size: 13.0,
-                                        color: if enabled {
-                                            HUD_TEXT_COLOR
-                                        } else {
-                                            MENU_BUTTON_TEXT_DISABLED
+                            })
+                            .with_children(|cell| {
+                                cell.spawn((
+                                    ButtonBundle {
+                                        style: Style {
+                                            width: Val::Percent(100.0),
+                                            min_height: Val::Px(48.0),
+                                            border: UiRect::all(Val::Px(1.0)),
+                                            justify_content: JustifyContent::Center,
+                                            align_items: AlignItems::Center,
+                                            padding: UiRect::axes(Val::Px(6.0), Val::Px(4.0)),
+                                            ..default()
                                         },
+                                        background_color: BackgroundColor(Color::srgba(
+                                            0.07, 0.07, 0.07, 0.6,
+                                        )),
+                                        border_color: BorderColor(MENU_BUTTON_BORDER_DISABLED),
                                         ..default()
                                     },
-                                ));
+                                    UnitUpgradeTooltipTarget {
+                                        tooltip: hero_scaffold_tooltip(entry.kind),
+                                    },
+                                ))
+                                .with_children(|button| {
+                                    button.spawn(TextBundle::from_section(
+                                        base_label,
+                                        TextStyle {
+                                            font_size: 12.0,
+                                            color: MENU_BUTTON_TEXT_DISABLED,
+                                            ..default()
+                                        },
+                                    ));
+                                });
                             });
-                            row.spawn(TextBundle::from_section(
-                                format!(
-                                    "Owned {} | Target {} | Choices {} | Max {} | Cost {:.1} XP",
-                                    option.source_count,
-                                    option.target_count,
-                                    option.target_choices.len(),
-                                    option.max_affordable,
-                                    panel_data.conversion_xp_cost_per_unit
-                                ),
-                                TextStyle {
-                                    font_size: 12.0,
-                                    color: MENU_BUTTON_TEXT_DISABLED,
-                                    ..default()
-                                },
-                            ));
                         });
                 }
-
-                scroll_root.spawn(TextBundle::from_section(
-                    "Promotion actions are scaffolded for future tiers.",
-                    TextStyle {
-                        font_size: 12.0,
-                        color: MENU_BUTTON_TEXT_DISABLED,
-                        ..default()
-                    },
-                ));
             });
         });
 }
@@ -4497,6 +4557,16 @@ fn max_affordable_tier0_conversions(current_xp: f32, cost_per_unit: f32, source_
     }
     let affordable_by_xp = (current_xp / cost_per_unit).floor().max(0.0) as u32;
     affordable_by_xp.min(source_count)
+}
+
+fn unit_upgrade_graph_content_width() -> f32 {
+    UNIT_UPGRADE_GRAPH_CELL_WIDTH * 7.0
+        + UNIT_UPGRADE_GRAPH_CONNECTOR_WIDTH * 5.0
+        + UNIT_UPGRADE_GRAPH_HERO_GAP_WIDTH
+}
+
+fn unit_upgrade_graph_max_scroll_offset() -> f32 {
+    (unit_upgrade_graph_content_width() - (RUN_MODAL_PANEL_WIDTH - 72.0)).max(0.0)
 }
 
 fn spawn_vertical_meter<T: Component + Clone>(
@@ -5517,6 +5587,7 @@ fn handle_level_up_buttons(
 fn handle_unit_upgrade_buttons(
     modal_state: Res<RunModalState>,
     setup_selection: Option<Res<MatchSetupSelection>>,
+    mouse_buttons: Option<Res<ButtonInput<MouseButton>>>,
     mut source_buttons: Query<
         (
             &Interaction,
@@ -5525,7 +5596,13 @@ fn handle_unit_upgrade_buttons(
             &mut BorderColor,
             &mut BackgroundColor,
         ),
-        (Changed<Interaction>, With<Button>),
+        (
+            With<Button>,
+            With<UnitUpgradeSourceButton>,
+            Without<UnitUpgradeSwapTargetCycleButton>,
+            Without<UnitUpgradeConvertButton>,
+            Without<UnitUpgradeGraphScrollButton>,
+        ),
     >,
     mut swap_target_buttons: Query<
         (
@@ -5541,6 +5618,7 @@ fn handle_unit_upgrade_buttons(
             With<UnitUpgradeSwapTargetCycleButton>,
             Without<UnitUpgradeSourceButton>,
             Without<UnitUpgradeConvertButton>,
+            Without<UnitUpgradeGraphScrollButton>,
         ),
     >,
     mut convert_buttons: Query<
@@ -5556,6 +5634,31 @@ fn handle_unit_upgrade_buttons(
             With<Button>,
             With<UnitUpgradeConvertButton>,
             Without<UnitUpgradeSourceButton>,
+            Without<UnitUpgradeGraphScrollButton>,
+        ),
+    >,
+    mut graph_scroll_buttons: Query<
+        (
+            &Interaction,
+            &UnitUpgradeGraphScrollButton,
+            &Children,
+            &mut BorderColor,
+            &mut BackgroundColor,
+        ),
+        (Changed<Interaction>, With<Button>),
+    >,
+    mut graph_content: Query<
+        &mut Style,
+        (
+            With<UnitUpgradeGraphContent>,
+            Without<UnitUpgradeGraphScrollFill>,
+        ),
+    >,
+    mut graph_scroll_fill: Query<
+        &mut Style,
+        (
+            With<UnitUpgradeGraphScrollFill>,
+            Without<UnitUpgradeGraphContent>,
         ),
     >,
     mut text_query: Query<&mut Text>,
@@ -5569,6 +5672,7 @@ fn handle_unit_upgrade_buttons(
         *modal_state,
         RunModalState::Open(RunModalScreen::UnitUpgrade)
     ) {
+        ui_state.context_swap_source = None;
         return;
     }
     let player_faction = setup_selection
@@ -5576,11 +5680,19 @@ fn handle_unit_upgrade_buttons(
         .map(|selection| selection.faction)
         .unwrap_or(PlayerFaction::Christian);
     let roster_kinds = roster_upgrade_kinds_for_faction(player_faction);
+    let right_click_requested = mouse_buttons
+        .as_deref()
+        .map(|buttons| buttons.just_pressed(MouseButton::Right))
+        .unwrap_or(false);
+    let mut hovered_source_kind: Option<UnitKind> = None;
 
     for (interaction, button, children, mut border_color, mut background_color) in
         &mut source_buttons
     {
         let selected = ui_state.selected_source == button.kind;
+        if matches!(*interaction, Interaction::Hovered | Interaction::Pressed) {
+            hovered_source_kind = Some(button.kind);
+        }
         if let Some(&text_entity) = children.first()
             && let Ok(mut text) = text_query.get_mut(text_entity)
         {
@@ -5611,6 +5723,13 @@ fn handle_unit_upgrade_buttons(
                 });
                 *background_color = BackgroundColor(Color::srgba(0.08, 0.07, 0.06, 0.62));
             }
+        }
+    }
+
+    if right_click_requested {
+        ui_state.context_swap_source = hovered_source_kind;
+        if let Some(kind) = hovered_source_kind {
+            ui_state.selected_source = kind;
         }
     }
 
@@ -5707,6 +5826,50 @@ fn handle_unit_upgrade_buttons(
                 *background_color = BackgroundColor(Color::srgba(0.08, 0.07, 0.06, 0.62));
             }
         }
+    }
+
+    let max_scroll = unit_upgrade_graph_max_scroll_offset();
+    for (interaction, button, children, mut border_color, mut background_color) in
+        &mut graph_scroll_buttons
+    {
+        if let Some(&text_entity) = children.first()
+            && let Ok(mut text) = text_query.get_mut(text_entity)
+        {
+            text.sections[0].style.color = match *interaction {
+                Interaction::Hovered | Interaction::Pressed => MENU_BUTTON_TEXT_HOVERED,
+                Interaction::None => HUD_TEXT_COLOR,
+            };
+        }
+        match *interaction {
+            Interaction::Pressed => {
+                ui_state.graph_scroll_offset = (ui_state.graph_scroll_offset
+                    + UNIT_UPGRADE_GRAPH_SCROLL_STEP * button.direction as f32)
+                    .clamp(0.0, max_scroll);
+                *border_color = BorderColor(MENU_BUTTON_BORDER_HOVERED);
+                *background_color = BackgroundColor(Color::srgba(0.11, 0.09, 0.08, 0.7));
+            }
+            Interaction::Hovered => {
+                *border_color = BorderColor(MENU_BUTTON_BORDER_HOVERED);
+                *background_color = BackgroundColor(Color::srgba(0.1, 0.085, 0.075, 0.62));
+            }
+            Interaction::None => {
+                *border_color = BorderColor(Color::srgba(0.78, 0.72, 0.58, 0.24));
+                *background_color = BackgroundColor(Color::srgba(0.08, 0.07, 0.06, 0.7));
+            }
+        }
+    }
+
+    let clamped_scroll = ui_state.graph_scroll_offset.clamp(0.0, max_scroll);
+    for mut style in &mut graph_content {
+        style.left = Val::Px(-clamped_scroll);
+    }
+    let fill_percent = if max_scroll <= 0.0 {
+        100.0
+    } else {
+        ((clamped_scroll / max_scroll).clamp(0.0, 1.0) * 100.0).max(8.0)
+    };
+    for mut style in &mut graph_scroll_fill {
+        style.width = Val::Percent(fill_percent);
     }
 }
 
@@ -7333,7 +7496,7 @@ mod tests {
     #[test]
     fn unit_box_tooltip_contains_required_sections_for_infantry() {
         let data = GameData::load_from_dir(Path::new("assets/data")).expect("load data");
-        let tooltip = unit_box_tooltip(UnitKind::ChristianPeasantInfantry, &data);
+        let tooltip = unit_box_tooltip(UnitKind::ChristianPeasantInfantry, &data, Some(12.0));
         assert!(tooltip.contains("Christian Peasant Infantry"));
         assert!(tooltip.contains("Type:"));
         assert!(tooltip.contains("Description:"));
