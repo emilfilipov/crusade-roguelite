@@ -15,7 +15,10 @@ use crate::squad::RosterEconomy;
 const LEVEL_UP_OPTION_COUNT: usize = 5;
 const DEFAULT_UPGRADE_WEIGHT_EXPONENT: f32 = 2.0;
 const UPGRADE_VALUE_TIER_COUNT: u32 = 5;
-const UPGRADE_HIGH_TIER_DROP_OFF_MULTIPLIER: f32 = 1.35;
+const UPGRADE_HIGH_TIER_DROP_OFF_MULTIPLIER: f32 = 1.55;
+const UPGRADE_RARITY_BONUS_EFFECTIVENESS: f32 = 0.5;
+const ONE_TIME_OPTION_WEIGHT: f32 = 0.22;
+const NORMAL_OPTION_WEIGHT: f32 = 1.0;
 const MAX_UNIQUE_UPGRADES: usize = 5;
 const AUTHORITY_ENEMY_MORALE_DRAIN_SCALE: f32 = 10.8;
 const MAX_AUTHORITY_LOSS_RESISTANCE: f32 = 0.75;
@@ -27,6 +30,7 @@ const XP_GROWTH_PER_LEVEL: f32 = 1.061;
 const MOB_FURY_DAMAGE_BONUS: f32 = 0.18;
 const MOB_FURY_ATTACK_SPEED_BONUS: f32 = 0.18;
 const MOB_FURY_MOVE_SPEED_BONUS: f32 = 24.0;
+const MOB_FURY_LOSS_MITIGATION: f32 = 0.25;
 const MOB_JUSTICE_EXECUTE_THRESHOLD: f32 = 0.10;
 const MOB_MERCY_RESCUE_TIME_MULTIPLIER: f32 = 0.5;
 const UNIQUE_SLOT_TRADEOFF_KIND: &str = "unique_slot_tradeoff";
@@ -180,7 +184,8 @@ pub struct ConditionalUpgradeEffects {
     pub friendly_damage_multiplier: f32,
     pub friendly_attack_speed_multiplier: f32,
     pub friendly_move_speed_bonus: f32,
-    pub friendly_loss_immunity: bool,
+    pub friendly_morale_loss_multiplier: f32,
+    pub friendly_cohesion_loss_multiplier: f32,
     pub execute_below_health_ratio: f32,
     pub rescue_time_multiplier: f32,
 }
@@ -191,7 +196,8 @@ impl Default for ConditionalUpgradeEffects {
             friendly_damage_multiplier: 1.0,
             friendly_attack_speed_multiplier: 1.0,
             friendly_move_speed_bonus: 0.0,
-            friendly_loss_immunity: false,
+            friendly_morale_loss_multiplier: 1.0,
+            friendly_cohesion_loss_multiplier: 1.0,
             execute_below_health_ratio: 0.0,
             rescue_time_multiplier: 1.0,
         }
@@ -687,7 +693,7 @@ fn roll_upgrade_options(
     }
     let unique_cap_reached =
         one_time_tracker.acquired_ids.len() >= effective_max_unique_upgrades(one_time_tracker);
-    let mut candidate_indices: Vec<usize> = pool
+    let candidate_indices: Vec<usize> = pool
         .iter()
         .enumerate()
         .filter(|(_, upgrade)| {
@@ -710,7 +716,7 @@ fn roll_upgrade_options(
         return Vec::new();
     }
     let pick_count = count.min(candidate_indices.len());
-    let indices = draw_unique_indices(&mut candidate_indices, pick_count, rng);
+    let indices = draw_unique_indices_weighted(pool, &candidate_indices, pick_count, rng);
     indices
         .into_iter()
         .map(|idx| {
@@ -739,6 +745,52 @@ fn draw_unique_indices(
         candidate_indices.swap(i, j);
     }
     candidate_indices[..count].to_vec()
+}
+
+fn draw_unique_indices_weighted(
+    pool: &[UpgradeConfig],
+    candidate_indices: &[usize],
+    count: usize,
+    rng: &mut UpgradeRngState,
+) -> Vec<usize> {
+    let mut remaining = candidate_indices.to_vec();
+    let mut selected = Vec::with_capacity(count.min(remaining.len()));
+    while selected.len() < count && !remaining.is_empty() {
+        let total_weight: f32 = remaining
+            .iter()
+            .map(|idx| option_selection_weight(&pool[*idx]))
+            .sum();
+        if total_weight <= f32::EPSILON {
+            let fallback = draw_unique_indices(remaining.as_mut_slice(), 1, rng);
+            if let Some(pick) = fallback.first().copied() {
+                selected.push(pick);
+                remaining.retain(|idx| *idx != pick);
+            }
+            continue;
+        }
+
+        let mut roll = rng.next_f32() * total_weight;
+        let mut chosen = remaining[0];
+        for candidate in &remaining {
+            let weight = option_selection_weight(&pool[*candidate]);
+            if roll <= weight {
+                chosen = *candidate;
+                break;
+            }
+            roll -= weight;
+        }
+        selected.push(chosen);
+        remaining.retain(|idx| *idx != chosen);
+    }
+    selected
+}
+
+fn option_selection_weight(config: &UpgradeConfig) -> f32 {
+    if config.one_time {
+        ONE_TIME_OPTION_WEIGHT
+    } else {
+        NORMAL_OPTION_WEIGHT
+    }
 }
 
 fn skillbar_contains_upgrade(skillbar: &FormationSkillBar, upgrade: &UpgradeConfig) -> bool {
@@ -771,7 +823,9 @@ fn roll_upgrade_value(
         .unwrap_or(DEFAULT_UPGRADE_WEIGHT_EXPONENT)
         .max(1.01)
         * UPGRADE_HIGH_TIER_DROP_OFF_MULTIPLIER;
-    let exponent = (exponent / (1.0 + upgrade_rarity_bonus_percent.max(0.0))).max(1.01);
+    let rarity_bonus =
+        (upgrade_rarity_bonus_percent.max(0.0) * UPGRADE_RARITY_BONUS_EFFECTIVENESS).max(0.0);
+    let exponent = (exponent / (1.0 + rarity_bonus)).max(1.01);
     let available_tier_count = if mythical_rolls_enabled {
         UPGRADE_VALUE_TIER_COUNT
     } else {
@@ -945,7 +999,7 @@ pub fn upgrade_display_description(upgrade: &UpgradeConfig) -> String {
             "Enemies inside your active formation footprint take +{:.0}% damage.",
             upgrade.value
         ),
-        "mob_fury" => "If tier-0 share requirement is met, friendlies become immune to morale/cohesion loss and gain bonus damage, attack speed, and movement speed.".to_string(),
+        "mob_fury" => "If tier-0 share requirement is met, friendlies gain +25% morale/cohesion loss mitigation and bonus damage, attack speed, and movement speed.".to_string(),
         "mob_justice" => "If tier-0 share requirement is met, hits execute enemies below 10% HP.".to_string(),
         "mob_mercy" => "If tier-0 share requirement is met, rescue channel time is reduced by 50%.".to_string(),
         "unlock_formation" => match upgrade.formation_id.as_deref() {
@@ -1144,7 +1198,9 @@ fn conditional_effects_from_owned(
                 effects.friendly_damage_multiplier *= 1.0 + MOB_FURY_DAMAGE_BONUS;
                 effects.friendly_attack_speed_multiplier *= 1.0 + MOB_FURY_ATTACK_SPEED_BONUS;
                 effects.friendly_move_speed_bonus += MOB_FURY_MOVE_SPEED_BONUS;
-                effects.friendly_loss_immunity = true;
+                let mitigation_multiplier = 1.0 - MOB_FURY_LOSS_MITIGATION;
+                effects.friendly_morale_loss_multiplier *= mitigation_multiplier;
+                effects.friendly_cohesion_loss_multiplier *= mitigation_multiplier;
             }
             "mob_justice" => {
                 effects.execute_below_health_ratio = effects
@@ -1281,6 +1337,41 @@ mod tests {
         assert_eq!(picks.len(), 3);
         let ids: HashSet<String> = picks.iter().map(|picked| picked.id.clone()).collect();
         assert_eq!(ids.len(), 3);
+    }
+
+    #[test]
+    fn one_time_options_are_downweighted_in_draft_selection() {
+        let mut pool = Vec::new();
+        for idx in 0..8 {
+            let mut unique = upgrade("mob_fury", &format!("unique_{idx}"));
+            unique.one_time = true;
+            unique.min_value = None;
+            unique.max_value = None;
+            pool.push(unique);
+        }
+        for idx in 0..8 {
+            pool.push(upgrade("damage", &format!("normal_{idx}")));
+        }
+
+        let mut rng = UpgradeRngState {
+            state: 0x1234_5678_ABCD_EF01,
+        };
+        let mut one_time_seen = 0u32;
+        let mut total_seen = 0u32;
+        for _ in 0..1_000 {
+            let picks = roll_upgrade_options(
+                &pool,
+                &mut rng,
+                5,
+                0.0,
+                &OneTimeUpgradeTracker::default(),
+                &FormationSkillBar::default(),
+            );
+            total_seen += picks.len() as u32;
+            one_time_seen += picks.iter().filter(|entry| entry.one_time).count() as u32;
+        }
+        let ratio = one_time_seen as f32 / total_seen as f32;
+        assert!(ratio < 0.22, "one-time ratio too high: {ratio}");
     }
 
     #[test]
@@ -1846,14 +1937,16 @@ mod tests {
         ];
         let (active_effects, active_status) =
             super::conditional_effects_from_owned(&entries, 1.0, ActiveFormation::Square);
-        assert!(active_effects.friendly_loss_immunity);
+        assert!((active_effects.friendly_morale_loss_multiplier - 0.75).abs() < 0.001);
+        assert!((active_effects.friendly_cohesion_loss_multiplier - 0.75).abs() < 0.001);
         assert!((active_effects.friendly_damage_multiplier - 1.18).abs() < 0.001);
         assert_eq!(active_status.len(), 2);
         assert!(active_status.iter().all(|entry| entry.active));
 
         let (inactive_effects, inactive_status) =
             super::conditional_effects_from_owned(&entries, 0.2, ActiveFormation::Square);
-        assert!(!inactive_effects.friendly_loss_immunity);
+        assert!((inactive_effects.friendly_morale_loss_multiplier - 1.0).abs() < 0.001);
+        assert!((inactive_effects.friendly_cohesion_loss_multiplier - 1.0).abs() < 0.001);
         assert!((inactive_effects.friendly_damage_multiplier - 1.0).abs() < 0.001);
         assert!(inactive_status.iter().all(|entry| !entry.active));
     }
@@ -1906,7 +1999,8 @@ mod tests {
 
         let (effects, status) =
             super::conditional_effects_from_owned(&entries, 1.0, ActiveFormation::Square);
-        assert!(effects.friendly_loss_immunity);
+        assert!((effects.friendly_morale_loss_multiplier - 0.75).abs() < 0.001);
+        assert!((effects.friendly_cohesion_loss_multiplier - 0.75).abs() < 0.001);
         assert!((effects.friendly_damage_multiplier - 1.18).abs() < 0.001);
         assert!((effects.rescue_time_multiplier - 0.5).abs() < 0.001);
         assert_eq!(effects.execute_below_health_ratio, 0.0);

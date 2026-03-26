@@ -40,6 +40,7 @@ const COHESION_COLLAPSE_CASUALTY_RATIO: f32 = 0.10;
 const COHESION_COLLAPSE_RESET_VALUE: f32 = 70.0;
 const COHESION_COLLAPSE_GRACE_SECS: f32 = 6.0;
 const COHESION_DAMAGE_DEBUFF_MIN: f32 = 0.65;
+const HOSPITALIER_MAX_HP_REGEN_PER_SEC_RATIO: f32 = 0.03;
 
 #[derive(Resource, Clone, Copy, Debug, Default)]
 struct EnemyKillRewardCounter {
@@ -152,16 +153,21 @@ fn apply_morale_and_cohesion_events(
     let player_faction = selected_player_faction(setup_selection.as_deref());
     let faction_mods = data.factions.for_faction(player_faction);
     let banner_item_active = banner_item_bonuses_active(banner_state.as_deref());
-    let friendly_loss_immunity = conditional_effects
+    let conditional_morale_loss_multiplier = conditional_effects
         .as_deref()
-        .map(|effects| effects.friendly_loss_immunity)
-        .unwrap_or(false);
+        .map(|effects| effects.friendly_morale_loss_multiplier)
+        .unwrap_or(1.0)
+        .clamp(0.0, 1.0);
+    let conditional_cohesion_loss_multiplier = conditional_effects
+        .as_deref()
+        .map(|effects| effects.friendly_cohesion_loss_multiplier)
+        .unwrap_or(1.0)
+        .clamp(0.0, 1.0);
     let friendly_morale_only_immunity = equipment_effects
         .as_deref()
         .map(|effects| effects.morale_loss_immunity)
         .unwrap_or(false);
-    let (friendly_total_loss_immunity, friendly_morale_immunity) =
-        friendly_immunity_flags(friendly_loss_immunity, friendly_morale_only_immunity);
+    let friendly_morale_immunity = friendly_morale_only_immunity;
     let aura_context = commanders.get_single().ok().map(|transform| {
         (
             transform.translation.truncate(),
@@ -231,10 +237,11 @@ fn apply_morale_and_cohesion_events(
                 morale.current = (morale.current - morale_loss).clamp(0.0, morale.max);
             }
         }
-        if event.team == Team::Friendly && !friendly_total_loss_immunity {
+        if event.team == Team::Friendly {
             cohesion.value -= friendly_cohesion_loss_from_damage(event.amount)
                 * authority_loss_multiplier
                 * gear_cohesion_loss_multiplier
+                * conditional_cohesion_loss_multiplier
                 * faction_mods.friendly_cohesion_loss_multiplier;
         }
     }
@@ -271,11 +278,12 @@ fn apply_morale_and_cohesion_events(
                     .unwrap_or_default();
                 let gear_morale_loss_multiplier =
                     loss_multiplier_from_gear_resistance(armywide.morale_loss_resistance);
-                if !friendly_total_loss_immunity && !friendly_morale_immunity {
+                if !friendly_morale_immunity {
                     friendly_morale_loss +=
                         friendly_death_morale_loss(event.max_health, event.kind)
                             * authority_loss_multiplier
                             * gear_morale_loss_multiplier
+                            * conditional_morale_loss_multiplier
                             * faction_mods.friendly_morale_loss_multiplier;
                 }
                 enemy_morale_gain += ENEMY_MORALE_GAIN_ON_FRIENDLY_DEATH;
@@ -298,15 +306,6 @@ fn apply_morale_and_cohesion_events(
     }
 
     cohesion.value = cohesion.value.clamp(0.0, 100.0);
-}
-
-fn friendly_immunity_flags(
-    conditional_full_immunity: bool,
-    chant_morale_only_immunity: bool,
-) -> (bool, bool) {
-    let total = conditional_full_immunity;
-    let morale = conditional_full_immunity || chant_morale_only_immunity;
-    (total, morale)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -429,8 +428,10 @@ fn apply_hospitalier_aura_regen(
             continue;
         }
         in_aura_count = in_aura_count.saturating_add(1);
-        health.current =
-            (health.current + buffs.hospitalier_hp_regen_per_sec * dt).clamp(0.0, health.max);
+        let capped_hp_regen = buffs
+            .hospitalier_hp_regen_per_sec
+            .min(health.max * HOSPITALIER_MAX_HP_REGEN_PER_SEC_RATIO);
+        health.current = (health.current + capped_hp_regen * dt).clamp(0.0, health.max);
         morale.current = (morale.current
             + buffs.hospitalier_morale_regen_per_sec
                 * faction_mods.friendly_morale_gain_multiplier
@@ -501,13 +502,11 @@ fn apply_encirclement_morale_pressure(
     retinue: Query<&Transform, (With<FriendlyUnit>, Without<CommanderUnit>)>,
     mut friendly_morale: Query<&mut Morale, With<FriendlyUnit>>,
 ) {
-    if conditional_effects
+    let conditional_morale_loss_multiplier = conditional_effects
         .as_deref()
-        .map(|effects| effects.friendly_loss_immunity)
-        .unwrap_or(false)
-    {
-        return;
-    }
+        .map(|effects| effects.friendly_morale_loss_multiplier)
+        .unwrap_or(1.0)
+        .clamp(0.0, 1.0);
     let Ok(commander_transform) = commanders.get_single() else {
         return;
     };
@@ -539,6 +538,7 @@ fn apply_encirclement_morale_pressure(
     if pressure_ratio > 0.0 {
         morale_delta -= ENCIRCLEMENT_MORALE_DRAIN_PER_SEC_MAX
             * pressure_ratio
+            * conditional_morale_loss_multiplier
             * faction_mods.friendly_morale_loss_multiplier
             * dt;
     } else {
@@ -551,8 +551,10 @@ fn apply_encirclement_morale_pressure(
         .map(|state| state.is_dropped)
         .unwrap_or(false)
     {
-        morale_delta -=
-            BANNER_DROPPED_MORALE_DRAIN_PER_SEC * faction_mods.friendly_morale_loss_multiplier * dt;
+        morale_delta -= BANNER_DROPPED_MORALE_DRAIN_PER_SEC
+            * conditional_morale_loss_multiplier
+            * faction_mods.friendly_morale_loss_multiplier
+            * dt;
     }
     if morale_delta.abs() <= f32::EPSILON {
         return;
@@ -777,7 +779,7 @@ mod tests {
 
     use super::{
         EnemyKillRewardCounter, apply_morale_and_cohesion_events, cohesion_collapse_casualty_count,
-        friendly_immunity_flags, morale_movement_multiplier,
+        morale_movement_multiplier,
     };
     use crate::model::{
         FriendlyUnit, Morale, Team, Unit, UnitDamagedEvent, UnitDiedEvent, UnitKind,
@@ -870,15 +872,6 @@ mod tests {
     }
 
     #[test]
-    fn chant_immunity_only_blocks_morale_while_conditional_blocks_both() {
-        let chant_only = friendly_immunity_flags(false, true);
-        assert_eq!(chant_only, (false, true));
-
-        let conditional_only = friendly_immunity_flags(true, false);
-        assert_eq!(conditional_only, (true, true));
-    }
-
-    #[test]
     fn commander_aura_radius_includes_upgrade_bonus() {
         let data = GameData::load_from_dir(std::path::Path::new("assets/data")).expect("load data");
         let buffs = GlobalBuffs {
@@ -914,7 +907,7 @@ mod tests {
     }
 
     #[test]
-    fn fury_immunity_blocks_friendly_morale_and_cohesion_losses_from_damage_events() {
+    fn fury_mitigation_reduces_friendly_cohesion_losses_from_damage_events() {
         let mut app = App::new();
         app.add_event::<UnitDamagedEvent>();
         app.add_event::<UnitDiedEvent>();
@@ -923,7 +916,8 @@ mod tests {
         );
         app.insert_resource(GlobalBuffs::default());
         app.insert_resource(ConditionalUpgradeEffects {
-            friendly_loss_immunity: true,
+            friendly_morale_loss_multiplier: 0.75,
+            friendly_cohesion_loss_multiplier: 0.75,
             ..ConditionalUpgradeEffects::default()
         });
         app.insert_resource(Cohesion { value: 100.0 });
@@ -961,6 +955,7 @@ mod tests {
             .expect("morale");
         let cohesion = app.world().resource::<Cohesion>().value;
         assert!((morale.current - 100.0).abs() < 0.001);
-        assert!((cohesion - 100.0).abs() < 0.001);
+        let expected = 100.0 - (friendly_cohesion_loss_from_damage(25.0) * 0.75 * 0.88);
+        assert!((cohesion - expected).abs() < 0.01);
     }
 }

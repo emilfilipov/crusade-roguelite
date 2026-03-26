@@ -30,6 +30,7 @@ const DEFAULT_CRIT_DAMAGE_MULTIPLIER: f32 = 1.2;
 const MAX_CRIT_CHANCE: f32 = 0.95;
 const ARMOR_DIMINISHING_SCALE: f32 = 90.0;
 const MAX_ARMOR_REDUCTION_RATIO: f32 = 0.90;
+const DEATH_HEALTH_EPSILON: f32 = 0.01;
 
 #[derive(Clone, Copy, Debug)]
 struct CombatRngState {
@@ -878,7 +879,10 @@ fn apply_damage_events(
             if applied_damage <= 0.0 {
                 continue;
             }
-            health.current -= applied_damage;
+            health.current = (health.current - applied_damage).max(0.0);
+            if is_dead_health(health.current) {
+                health.current = 0.0;
+            }
             damaged_events.send(UnitDamagedEvent {
                 target: event.target,
                 team: unit.team,
@@ -902,7 +906,7 @@ fn resolve_deaths(
     dead_units: Query<(Entity, &Unit, &Health, &Transform)>,
 ) {
     for (entity, unit, health, transform) in &dead_units {
-        if health.current <= 0.0 {
+        if is_dead_health(health.current) {
             death_events.send(UnitDiedEvent {
                 team: unit.team,
                 kind: unit.kind,
@@ -921,6 +925,10 @@ fn resolve_deaths(
     }
 }
 
+fn is_dead_health(current_health: f32) -> bool {
+    current_health <= DEATH_HEALTH_EPSILON
+}
+
 #[allow(dead_code)]
 fn _satisfy_marker(_enemy: Option<EnemyUnit>) {}
 
@@ -933,8 +941,8 @@ mod tests {
         commander_level_combat_multiplier, compute_damage, critical_hit,
         effective_formation_offense_multiplier, enemy_target_allowed, friendly_critical_parameters,
         friendly_formation_context, friendly_outgoing_multiplier, inside_active_formation_bounds,
-        inside_formation_damage_multiplier, ranged_target_in_window, should_execute_target,
-        unit_is_non_damaging_support,
+        inside_formation_damage_multiplier, is_dead_health, ranged_target_in_window,
+        should_execute_target, unit_is_non_damaging_support,
     };
     use crate::formation::{ActiveFormation, FormationModifiers};
     use crate::model::{GlobalBuffs, Team, Unit, UnitKind};
@@ -965,6 +973,13 @@ mod tests {
     fn armor_cap_preserves_at_least_ten_percent_of_high_incoming_damage() {
         let damage = compute_damage(100.0, 100_000.0, 1.0);
         assert!((damage - 10.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn dead_health_uses_small_positive_epsilon() {
+        assert!(is_dead_health(0.0));
+        assert!(is_dead_health(0.009));
+        assert!(!is_dead_health(0.02));
     }
 
     #[test]
