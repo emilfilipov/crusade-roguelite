@@ -24,6 +24,7 @@ struct RescueSpawnRuntime {
     timer: Timer,
     sequence: u32,
     seed: u32,
+    rng_state: u64,
     pity: RescueSpawnPity,
 }
 
@@ -33,6 +34,7 @@ impl Default for RescueSpawnRuntime {
             timer: Timer::from_seconds(RESCUE_RESPAWN_INTERVAL_SECS, TimerMode::Repeating),
             sequence: 0,
             seed: 0xA1B2_C3D4,
+            rng_state: 0x71F0_9D52_CAF3_BA17,
             pity: RescueSpawnPity::default(),
         }
     }
@@ -121,6 +123,7 @@ fn spawn_rescuables_on_run_start(
         .map(|selection| selection.faction)
         .unwrap_or(PlayerFaction::Christian);
     spawn_runtime.seed = runtime_seed_from_time();
+    spawn_runtime.rng_state = rng_state_from_seed(spawn_runtime.seed);
     let count = data.rescue.spawn_count.max(1);
     for idx in 0..count {
         let seeded_sequence = idx.wrapping_add(spawn_runtime.seed);
@@ -131,7 +134,7 @@ fn spawn_rescuables_on_run_start(
             .note_spawn(recruit_kind, &data.rescue, faction);
         spawn_rescuable(
             &mut commands,
-            rescue_spawn_position(seeded_sequence, bounds.as_deref().copied()),
+            rescue_spawn_position(&mut spawn_runtime.rng_state, bounds.as_deref().copied()),
             recruit_kind,
             &art,
         );
@@ -166,7 +169,7 @@ fn spawn_rescuables_over_time(
         .map(|selection| selection.faction)
         .unwrap_or(PlayerFaction::Christian);
     let seeded_sequence = runtime.sequence.wrapping_add(runtime.seed);
-    let spawn_position = rescue_spawn_position(seeded_sequence, bounds.as_deref().copied());
+    let spawn_position = rescue_spawn_position(&mut runtime.rng_state, bounds.as_deref().copied());
     let recruit_kind =
         recruit_kind_for_sequence(seeded_sequence, &data.rescue, runtime.pity, faction);
     runtime.pity.note_spawn(recruit_kind, &data.rescue, faction);
@@ -367,7 +370,7 @@ fn rescue_pool_contains_kind(config: &RescueConfig, kind: RecruitUnitKind) -> bo
         .any(|entry| entry.as_recruit_unit_kind() == kind)
 }
 
-fn rescue_spawn_position(sequence: u32, bounds: Option<MapBounds>) -> Vec2 {
+fn rescue_spawn_position(rng_state: &mut u64, bounds: Option<MapBounds>) -> Vec2 {
     let (map_half_width, map_half_height) = bounds
         .map(|b| (b.half_width.max(1.0), b.half_height.max(1.0)))
         .unwrap_or((1000.0, 800.0));
@@ -375,16 +378,15 @@ fn rescue_spawn_position(sequence: u32, bounds: Option<MapBounds>) -> Vec2 {
     let central_half_height = (map_half_height * 0.45).max(140.0);
 
     for attempt in 0..8 {
-        let seed = rescue_hash_seed(sequence, attempt);
         let x = lerp(
             -central_half_width,
             central_half_width,
-            normalized_seed(seed),
+            next_random_f32(rng_state),
         );
         let y = lerp(
             -central_half_height,
             central_half_height,
-            normalized_seed(seed ^ 0x9E37_79B9),
+            next_random_f32(rng_state),
         );
         let candidate = Vec2::new(x, y);
         // Keep candidates generally central while avoiding exact center pileups.
@@ -408,8 +410,24 @@ fn rescue_hash_seed(sequence: u32, attempt: u32) -> u32 {
     value ^ (value >> 16)
 }
 
-fn normalized_seed(seed: u32) -> f32 {
-    seed as f32 / u32::MAX as f32
+fn rng_state_from_seed(seed: u32) -> u64 {
+    let mixed = (seed as u64) ^ 0x9E37_79B9_7F4A_7C15;
+    if mixed == 0 {
+        0x71F0_9D52_CAF3_BA17
+    } else {
+        mixed
+    }
+}
+
+fn next_random_u32(rng_state: &mut u64) -> u32 {
+    *rng_state = rng_state
+        .wrapping_mul(6_364_136_223_846_793_005)
+        .wrapping_add(1_442_695_040_888_963_407);
+    (*rng_state >> 32) as u32
+}
+
+fn next_random_f32(rng_state: &mut u64) -> f32 {
+    next_random_u32(rng_state) as f32 / u32::MAX as f32
 }
 
 fn lerp(min: f32, max: f32, t: f32) -> f32 {
@@ -481,8 +499,9 @@ mod tests {
             half_width: 1200.0,
             half_height: 1000.0,
         };
-        for sequence in 0..32 {
-            let point = rescue_spawn_position(sequence, Some(bounds));
+        let mut rng_state = 0x1234_5678_9ABC_DEF0;
+        for _ in 0..32 {
+            let point = rescue_spawn_position(&mut rng_state, Some(bounds));
             assert!(point.x.abs() <= bounds.half_width * 0.45 + 0.01);
             assert!(point.y.abs() <= bounds.half_height * 0.45 + 0.01);
         }

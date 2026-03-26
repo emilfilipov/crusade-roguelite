@@ -54,16 +54,14 @@ pub struct EquipmentChestDrop {
 #[derive(Resource, Clone, Debug)]
 struct DropSpawnRuntime {
     timer: Timer,
-    sequence: u32,
-    seed: u32,
+    rng_state: u64,
 }
 
 impl Default for DropSpawnRuntime {
     fn default() -> Self {
         Self {
             timer: Timer::from_seconds(2.5, TimerMode::Repeating),
-            sequence: 0,
-            seed: 0xD0C5_AA11,
+            rng_state: 0xD0C5_AA11_BA77_5EED,
         }
     }
 }
@@ -76,8 +74,7 @@ struct MagnetWaveRuntime {
 #[derive(Resource, Clone, Copy, Debug, Default)]
 struct ChestWaveRuntime {
     last_seen_wave: u32,
-    sequence: u32,
-    seed: u32,
+    rng_state: u64,
 }
 
 pub struct DropsPlugin;
@@ -139,17 +136,18 @@ fn spawn_exp_packs_on_run_start(
         commands.entity(entity).despawn_recursive();
     }
     chest_state.clear();
-    runtime.seed = runtime_seed_from_time();
-    chest_runtime.seed = runtime.seed ^ 0xA5A5_3C3C;
+    let runtime_seed = runtime_seed_from_time();
+    runtime.rng_state = rng_state_from_seed(runtime_seed);
+    chest_runtime.rng_state = rng_state_from_seed(runtime_seed ^ 0xA5A5_3C3C);
 
     let initial_count = data.drops.initial_spawn_count.max(1);
     let wave_number = current_wave_number(waves.as_deref());
     let commander_level = current_commander_level(progression.as_deref());
     let xp_value = scaled_pack_xp(data.drops.xp_per_pack, wave_number, commander_level);
     let center = commander_spawn_center(&commanders);
-    for sequence in 0..initial_count {
-        let seeded_sequence = sequence.wrapping_add(runtime.seed);
-        let position = drop_spawn_position(seeded_sequence, bounds.as_deref().copied(), center);
+    for _ in 0..initial_count {
+        let position =
+            drop_spawn_position(&mut runtime.rng_state, bounds.as_deref().copied(), center);
         spawn_exp_pack(
             &mut commands,
             position,
@@ -159,11 +157,9 @@ fn spawn_exp_packs_on_run_start(
         );
     }
 
-    runtime.sequence = initial_count;
     runtime.timer = Timer::from_seconds(data.drops.spawn_interval_secs, TimerMode::Repeating);
     magnet_runtime.last_seen_wave = 0;
     chest_runtime.last_seen_wave = 0;
-    chest_runtime.sequence = 0;
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -190,8 +186,7 @@ fn spawn_exp_packs_over_time(
     }
 
     let center = commander_spawn_center(&commanders);
-    let seeded_sequence = runtime.sequence.wrapping_add(runtime.seed);
-    let position = drop_spawn_position(seeded_sequence, bounds.as_deref().copied(), center);
+    let position = drop_spawn_position(&mut runtime.rng_state, bounds.as_deref().copied(), center);
     let wave_number = current_wave_number(waves.as_deref());
     let commander_level = current_commander_level(progression.as_deref());
     let xp_value = scaled_pack_xp(data.drops.xp_per_pack, wave_number, commander_level);
@@ -202,7 +197,6 @@ fn spawn_exp_packs_over_time(
         AMBIENT_PICKUP_DELAY_SECS,
         &art,
     );
-    runtime.sequence = runtime.sequence.saturating_add(1);
 }
 
 fn spawn_exp_packs_from_events(
@@ -292,9 +286,7 @@ fn update_wave_chest_drop(
     }
 
     let center = commander_spawn_center(&commanders);
-    let seeded_sequence = runtime.sequence.wrapping_add(runtime.seed);
-    let position = chest_spawn_position(seeded_sequence, bounds.as_deref().copied(), center);
-    runtime.sequence = runtime.sequence.saturating_add(1);
+    let position = chest_spawn_position(&mut runtime.rng_state, bounds.as_deref().copied(), center);
     spawn_equipment_chest(&mut commands, &art, current_wave, position);
 }
 
@@ -636,18 +628,21 @@ pub fn apply_xp_gain_multiplier(
     (base_xp * multiplier).max(0.0)
 }
 
-fn drop_spawn_position(sequence: u32, bounds: Option<MapBounds>, center: Vec2) -> Vec2 {
+fn drop_spawn_position(rng_state: &mut u64, bounds: Option<MapBounds>, center: Vec2) -> Vec2 {
     if let Some(map_bounds) = bounds {
         let spawn_half_width = map_bounds.half_width * 0.92;
         let spawn_half_height = map_bounds.half_height * 0.92;
         for attempt in 0..8 {
-            let seed = drop_hash_seed(sequence, attempt);
             let candidate = Vec2::new(
-                lerp(-spawn_half_width, spawn_half_width, normalized_seed(seed)),
+                lerp(
+                    -spawn_half_width,
+                    spawn_half_width,
+                    next_random_f32(rng_state),
+                ),
                 lerp(
                     -spawn_half_height,
                     spawn_half_height,
-                    normalized_seed(seed ^ 0x9E37_79B9),
+                    next_random_f32(rng_state),
                 ),
             );
             let keep = candidate.distance_squared(center) >= 92.0 * 92.0 || attempt == 7;
@@ -657,35 +652,37 @@ fn drop_spawn_position(sequence: u32, bounds: Option<MapBounds>, center: Vec2) -
         }
         return Vec2::ZERO;
     }
-    let seed = drop_hash_seed(sequence, 0xA5A5_5A5A);
-    let radius = lerp(120.0, 520.0, normalized_seed(seed));
-    let angle = normalized_seed(seed ^ 0xD1B5_4A35) * std::f32::consts::TAU;
+    let radius = lerp(120.0, 520.0, next_random_f32(rng_state));
+    let angle = next_random_f32(rng_state) * std::f32::consts::TAU;
     center + Vec2::new(radius * angle.cos(), radius * angle.sin())
 }
 
-fn drop_hash_seed(sequence: u32, attempt: u32) -> u32 {
-    let mut value = sequence
-        .wrapping_mul(1_103_515_245)
-        .wrapping_add(attempt.wrapping_mul(747_796_405))
-        .wrapping_add(0x9E37_79B9);
-    value ^= value >> 16;
-    value = value.wrapping_mul(0x85EB_CA6B);
-    value ^= value >> 13;
-    value = value.wrapping_mul(0xC2B2_AE35);
-    value ^ (value >> 16)
+fn rng_state_from_seed(seed: u32) -> u64 {
+    let mixed = (seed as u64) ^ 0x9E37_79B9_7F4A_7C15;
+    if mixed == 0 {
+        0xD0C5_AA11_BA77_5EED
+    } else {
+        mixed
+    }
 }
 
-fn normalized_seed(seed: u32) -> f32 {
-    seed as f32 / u32::MAX as f32
+fn next_random_u32(rng_state: &mut u64) -> u32 {
+    *rng_state = rng_state
+        .wrapping_mul(6_364_136_223_846_793_005)
+        .wrapping_add(1_442_695_040_888_963_407);
+    (*rng_state >> 32) as u32
+}
+
+fn next_random_f32(rng_state: &mut u64) -> f32 {
+    next_random_u32(rng_state) as f32 / u32::MAX as f32
 }
 
 fn lerp(min: f32, max: f32, t: f32) -> f32 {
     min + (max - min) * t
 }
 
-fn chest_spawn_position(sequence: u32, bounds: Option<MapBounds>, center: Vec2) -> Vec2 {
-    let mut position =
-        drop_spawn_position(sequence.saturating_mul(7).saturating_add(3), bounds, center);
+fn chest_spawn_position(rng_state: &mut u64, bounds: Option<MapBounds>, center: Vec2) -> Vec2 {
+    let mut position = drop_spawn_position(rng_state, bounds, center);
     if let Some(map_bounds) = bounds {
         position.x = position
             .x
@@ -764,8 +761,9 @@ mod tests {
         let mut max_x = f32::MIN;
         let mut min_y = f32::MAX;
         let mut max_y = f32::MIN;
-        for sequence in 0..48 {
-            let point = drop_spawn_position(sequence, Some(bounds), Vec2::ZERO);
+        let mut rng_state = 0x1234_5678_9ABC_DEF0;
+        for _ in 0..48 {
+            let point = drop_spawn_position(&mut rng_state, Some(bounds), Vec2::ZERO);
             assert!(point.x >= -bounds.half_width * 0.92 - 0.01);
             assert!(point.x <= bounds.half_width * 0.92 + 0.01);
             assert!(point.y >= -bounds.half_height * 0.92 - 0.01);

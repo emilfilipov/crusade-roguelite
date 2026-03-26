@@ -33,6 +33,7 @@ pub struct WaveRuntime {
     role_mix: HashMap<u32, EnemyRoleCounts>,
     pub spawn_sequence: u32,
     pub spawn_seed: u32,
+    pub spawn_rng_state: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -167,9 +168,11 @@ fn reset_waves_on_run_start(
         return;
     }
     for _ in start_events.read() {}
+    let seed = runtime_seed_from_time();
     *wave_runtime = WaveRuntime {
         current_wave: 1,
-        spawn_seed: runtime_seed_from_time(),
+        spawn_seed: seed,
+        spawn_rng_state: rng_state_from_seed(seed ^ 0x4A3C_11D7),
         ..WaveRuntime::default()
     };
 }
@@ -250,6 +253,7 @@ fn spawn_pending_enemy_batches(
         enemy_player_pressure_multiplier(commander_level, retinue_count);
     let current_time = wave_runtime.elapsed;
     let mut spawn_sequence = wave_runtime.spawn_sequence;
+    let mut spawn_rng_state = wave_runtime.spawn_rng_state;
     let mut pending_batches = std::mem::take(&mut wave_runtime.pending_batches);
     let mut role_mix = std::mem::take(&mut wave_runtime.role_mix);
     let mut remaining = Vec::with_capacity(pending_batches.len());
@@ -272,6 +276,7 @@ fn spawn_pending_enemy_batches(
             batch.stat_scale * player_pressure_multiplier,
             wave_runtime.spawn_seed,
             &mut spawn_sequence,
+            &mut spawn_rng_state,
             &mut role_mix,
         );
         batch.remaining = batch.remaining.saturating_sub(spawn_now);
@@ -281,6 +286,7 @@ fn spawn_pending_enemy_batches(
         }
     }
     wave_runtime.spawn_sequence = spawn_sequence;
+    wave_runtime.spawn_rng_state = spawn_rng_state;
     wave_runtime.pending_batches = remaining;
     wave_runtime.role_mix = role_mix;
 }
@@ -298,6 +304,7 @@ fn spawn_enemy_batch(
     stat_scale: f32,
     spawn_seed: u32,
     spawn_sequence: &mut u32,
+    spawn_rng_state: &mut u64,
     role_mix: &mut HashMap<u32, EnemyRoleCounts>,
 ) {
     let enemy_pool = data.enemies.opposing_enemy_pool(player_faction);
@@ -370,12 +377,7 @@ fn spawn_enemy_batch(
         let morale = (cfg.morale * faction_mods.enemy_morale_multiplier).max(1.0);
         let cohesion = (cfg.cohesion * faction_mods.enemy_cohesion_multiplier).max(1.0);
         let texture = enemy_texture_for_kind(art, enemy_kind);
-        let pos = random_spawn_position(
-            bounds,
-            commander_position,
-            wave_number ^ spawn_seed,
-            seq ^ spawn_seed.rotate_left(13),
-        );
+        let pos = random_spawn_position_from_rng(bounds, commander_position, spawn_rng_state);
         let mut entity = commands.spawn((
             Unit {
                 team: Team::Enemy,
@@ -677,6 +679,37 @@ pub fn random_spawn_position(
     fallback
 }
 
+fn random_spawn_position_from_rng(
+    bounds: MapBounds,
+    commander_position: Vec2,
+    rng_state: &mut u64,
+) -> Vec2 {
+    let min_distance_sq =
+        ENEMY_SPAWN_MIN_DISTANCE_FROM_COMMANDER * ENEMY_SPAWN_MIN_DISTANCE_FROM_COMMANDER;
+    let mut fallback = commander_position;
+    for attempt in 0..ENEMY_SPAWN_ATTEMPTS {
+        let candidate = Vec2::new(
+            lerp(
+                -bounds.half_width,
+                bounds.half_width,
+                next_random_f32(rng_state),
+            ),
+            lerp(
+                -bounds.half_height,
+                bounds.half_height,
+                next_random_f32(rng_state),
+            ),
+        );
+        fallback = candidate;
+        if candidate.distance_squared(commander_position) >= min_distance_sq
+            || attempt == ENEMY_SPAWN_ATTEMPTS - 1
+        {
+            return candidate;
+        }
+    }
+    fallback
+}
+
 fn hash_seed(wave_seed: u32, spawn_sequence: u32, attempt: u32) -> u32 {
     let mut value = wave_seed
         .wrapping_mul(1_103_515_245)
@@ -692,6 +725,26 @@ fn hash_seed(wave_seed: u32, spawn_sequence: u32, attempt: u32) -> u32 {
 
 fn normalized_seed(seed: u32) -> f32 {
     seed as f32 / u32::MAX as f32
+}
+
+fn rng_state_from_seed(seed: u32) -> u64 {
+    let mixed = (seed as u64) ^ 0x9E37_79B9_7F4A_7C15;
+    if mixed == 0 {
+        0x9D4C_6F82_11B5_A7D3
+    } else {
+        mixed
+    }
+}
+
+fn next_random_u32(rng_state: &mut u64) -> u32 {
+    *rng_state = rng_state
+        .wrapping_mul(6_364_136_223_846_793_005)
+        .wrapping_add(1_442_695_040_888_963_407);
+    (*rng_state >> 32) as u32
+}
+
+fn next_random_f32(rng_state: &mut u64) -> f32 {
+    next_random_u32(rng_state) as f32 / u32::MAX as f32
 }
 
 fn lerp(min: f32, max: f32, t: f32) -> f32 {
