@@ -1,7 +1,10 @@
 use bevy::prelude::*;
 
+use crate::banner::BannerState;
 use crate::combat::{compute_damage, should_execute_target};
-use crate::inventory::{EquipmentArmyEffects, InventoryState, gear_bonuses_for_unit};
+use crate::inventory::{
+    EquipmentArmyEffects, InventoryState, gear_bonuses_for_unit_with_banner_state,
+};
 use crate::model::{DamageEvent, GameState, GlobalBuffs, Health, Team, Unit};
 use crate::upgrades::ConditionalUpgradeEffects;
 
@@ -47,6 +50,7 @@ fn tick_projectiles(
 fn projectile_collisions(
     mut commands: Commands,
     mut damage_events: EventWriter<DamageEvent>,
+    banner_state: Option<Res<BannerState>>,
     buffs: Option<Res<GlobalBuffs>>,
     conditional_effects: Option<Res<ConditionalUpgradeEffects>>,
     inventory: Res<InventoryState>,
@@ -61,6 +65,10 @@ fn projectile_collisions(
         Option<&crate::model::Armor>,
     )>,
 ) {
+    let banner_item_active = !banner_state
+        .as_deref()
+        .map(|state| state.is_dropped)
+        .unwrap_or(false);
     for (projectile_entity, projectile_transform, projectile) in &projectiles {
         let projectile_pos = projectile_transform.translation.truncate();
         let mut hit = false;
@@ -80,10 +88,11 @@ fn projectile_collisions(
             if projectile_pos.distance(target_pos) <= projectile.radius {
                 let base_armor = target_armor.map(|value| value.0).unwrap_or(0.0);
                 let effective_armor = if target_unit.team == Team::Friendly {
-                    let gear_armor_bonus = gear_bonuses_for_unit(
+                    let gear_armor_bonus = gear_bonuses_for_unit_with_banner_state(
                         &inventory,
                         target_unit.kind,
                         target_tier.copied().map(|value| value.0),
+                        banner_item_active,
                     )
                     .armor_bonus;
                     let temporary_armor_bonus = equipment_effects

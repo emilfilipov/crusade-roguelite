@@ -1,14 +1,14 @@
 use bevy::prelude::*;
 
-use crate::model::{CommanderUnit, FriendlyUnit, GameState, StartRunEvent};
+use crate::model::{CommanderUnit, FriendlyUnit, GameState, Morale, StartRunEvent};
 use crate::morale::Cohesion;
 use crate::visuals::ArtAssets;
 
-const BANNER_DROP_COHESION_THRESHOLD: f32 = 20.0;
+const BANNER_DROP_MORALE_RATIO_THRESHOLD: f32 = 0.0;
 const BANNER_PICKUP_UNLOCK_SECS: f32 = 10.0;
 const BANNER_PICKUP_DURATION_SECS: f32 = 5.0;
 const BANNER_RECOVERY_RADIUS: f32 = 42.0;
-const BANNER_COHESION_RESTORE: f32 = 65.0;
+const BANNER_COHESION_RESTORE: f32 = 70.0;
 const BANNER_REDROP_GRACE_SECS: f32 = 10.0;
 const BANNER_DROPPED_SPEED_MULTIPLIER: f32 = 0.72;
 const BANNER_FOLLOW_Y_OFFSET: f32 = 18.0;
@@ -75,7 +75,7 @@ impl Plugin for BannerPlugin {
                 Update,
                 (
                     follow_commander_when_banner_up,
-                    drop_banner_on_low_cohesion,
+                    drop_banner_on_zero_morale,
                     tick_banner_recovery,
                     sync_banner_visual,
                     refresh_banner_speed_penalty,
@@ -148,9 +148,18 @@ fn follow_commander_when_banner_up(
     }
 }
 
-fn drop_banner_on_low_cohesion(cohesion: Res<Cohesion>, mut banner_state: ResMut<BannerState>) {
+fn drop_banner_on_zero_morale(
+    friendlies: Query<&Morale, With<FriendlyUnit>>,
+    mut banner_state: ResMut<BannerState>,
+) {
+    let friendly_count = friendlies.iter().len();
+    let average_morale_ratio = if friendly_count == 0 {
+        1.0
+    } else {
+        friendlies.iter().map(|morale| morale.ratio()).sum::<f32>() / friendly_count as f32
+    };
     if should_drop_banner(
-        cohesion.value,
+        average_morale_ratio,
         banner_state.is_dropped,
         banner_state.redrop_grace_remaining,
     ) {
@@ -236,8 +245,14 @@ fn refresh_banner_speed_penalty(
     };
 }
 
-pub fn should_drop_banner(cohesion: f32, is_dropped: bool, redrop_grace_remaining: f32) -> bool {
-    !is_dropped && redrop_grace_remaining <= 0.0 && cohesion < BANNER_DROP_COHESION_THRESHOLD
+pub fn should_drop_banner(
+    morale_ratio: f32,
+    is_dropped: bool,
+    redrop_grace_remaining: f32,
+) -> bool {
+    !is_dropped
+        && redrop_grace_remaining <= 0.0
+        && morale_ratio <= BANNER_DROP_MORALE_RATIO_THRESHOLD
 }
 
 pub fn banner_pickup_progress_ratio(state: &BannerState) -> Option<f32> {
@@ -256,11 +271,11 @@ mod tests {
     };
 
     #[test]
-    fn banner_drops_only_when_low_cohesion_and_not_graced() {
-        assert!(should_drop_banner(19.0, false, 0.0));
-        assert!(!should_drop_banner(25.0, false, 0.0));
-        assert!(!should_drop_banner(10.0, true, 0.0));
-        assert!(!should_drop_banner(10.0, false, 2.0));
+    fn banner_drops_only_when_morale_is_zero_and_not_graced() {
+        assert!(should_drop_banner(0.0, false, 0.0));
+        assert!(!should_drop_banner(0.1, false, 0.0));
+        assert!(!should_drop_banner(0.0, true, 0.0));
+        assert!(!should_drop_banner(0.0, false, 2.0));
     }
 
     #[test]

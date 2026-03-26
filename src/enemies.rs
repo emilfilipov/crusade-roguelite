@@ -15,6 +15,7 @@ use crate::model::{
     GameState, Health, MatchSetupSelection, Morale, MoveSpeed, PlayerFaction, StartRunEvent, Team,
     Unit, UnitCohesion, UnitKind,
 };
+use crate::morale::morale_movement_multiplier;
 use crate::squad::PriestSupportCaster;
 use crate::squad::RosterEconomy;
 use crate::upgrades::Progression;
@@ -715,6 +716,7 @@ fn enemy_chase_targets(
                 Entity,
                 &Unit,
                 &MoveSpeed,
+                Option<&Morale>,
                 &AttackProfile,
                 Option<&RangedAttackProfile>,
                 &mut EnemyMovementState,
@@ -764,6 +766,7 @@ fn enemy_chase_targets(
         enemy_entity,
         unit,
         move_speed,
+        morale,
         attack_profile,
         ranged_profile,
         mut movement_state,
@@ -829,10 +832,14 @@ fn enemy_chase_targets(
                 resume_distance,
             );
             if movement_state.moving && distance > 0.001 {
+                let morale_speed_multiplier = morale
+                    .copied()
+                    .map(|value| morale_movement_multiplier(value.ratio()))
+                    .unwrap_or(1.0);
                 let step_distance = chase_step_distance(
                     distance,
                     stop_distance,
-                    move_speed.0 * time.delta_seconds(),
+                    move_speed.0 * morale_speed_multiplier * time.delta_seconds(),
                 );
                 if step_distance <= 0.0 {
                     continue;

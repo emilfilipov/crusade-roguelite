@@ -167,15 +167,14 @@ pub fn build_archive_entries(data: &GameData) -> Vec<ArchiveEntry> {
         ArchiveEntry {
             category: ArchiveCategory::Stats,
             title: "Morale".to_string(),
-            description:
-                "Low morale reduces effectiveness. High morale keeps attack output stable."
-                    .to_string(),
+            description: "Low morale reduces movement speed (max 25% slow). At 0 average morale, the banner drops and banner-item bonuses are disabled until recovered."
+                .to_string(),
             icon: Some(UpgradeCardIcon::AuthorityAura),
         },
         ArchiveEntry {
             category: ArchiveCategory::Stats,
             title: "Cohesion".to_string(),
-            description: "Army cohesion drives global combat modifiers and banner failure risk."
+            description: "Cohesion affects damage output only when below 50%. If cohesion reaches 0, 10% of the retinue is lost, cohesion resets, and collapse enters a short grace period."
                 .to_string(),
             icon: Some(UpgradeCardIcon::FormationSquare),
         },

@@ -452,14 +452,15 @@ Roll fields:
 
 ## Key Gameplay Formulas
 
-### Morale Debuff (`src/combat.rs`)
-`morale_effect_multiplier(ratio)`:
+### Morale Movement Debuff (`src/morale.rs`, `src/squad.rs`, `src/enemies.rs`)
+`morale_movement_multiplier(ratio)`:
 - `ratio >= 0.5`: `1.0`
-- `< 0.5`: linearly scales down to `0.75` at `0.0`
+- `< 0.5`: linearly scales down to `0.75` at `0.0` (max 25% slow)
 
-Applied to:
-- outgoing damage
-- attack cooldown progression (effective attack speed)
+Applied to movement:
+- commander movement speed
+- enemy movement speed
+- squad movement follows commander motion (formation anchor behavior)
 
 ### Friendly Outgoing Multiplier Floor
 Friendly combined outgoing multiplier has lower clamp:
@@ -554,34 +555,40 @@ Friendly combined outgoing multiplier has lower clamp:
   - optional quantization by `value_step`.
 
 ### Cohesion Tier Table (`src/morale.rs`)
-- `>=80`: damage `1.08`, attack speed `1.08`, defense `1.05`
-- `60-79`: neutral `1.0`
-- `40-59`: damage/attack speed `0.9`, defense `0.93`
-- `20-39`: damage/attack speed `0.8`, defense `0.86`
-- `<20`: damage/attack speed `0.7`, defense `0.8`, `collapse_risk=true`
+- `>=50`: damage `1.0` (no debuff)
+- `<50`: damage scales linearly down to `0.65` at `0`
+- defense multiplier remains `1.0`
+- attack-speed multiplier remains `1.0`
+- `collapse_risk=true` only at `0`
 
 ### Cohesion Event Tuning
-- Friendly damage taken: cohesion and army morale loss scale with post-mitigation damage.
+- Friendly damage taken: cohesion loss scales with post-mitigation damage.
 - Enemy kill rewards (friendly morale/cohesion gains) trigger on every 3rd enemy death only.
-- Friendly death: larger cohesion/morale loss scaled by fallen unit max HP (commander death penalty multiplier).
+- Friendly death: morale loss scaled by fallen unit max HP (commander death penalty multiplier).
 - Authority aura mitigates in-range friendly morale/cohesion losses from damage and death events.
 - Hospitalier aura provides in-range passive regen:
   - HP regen (highest)
   - cohesion regen (medium)
   - morale regen (lowest)
-- Low-morale retinue pressure:
-  - if `>=50%` of retinue below 50% morale: cohesion drains at `3.0/s`
-  - else cohesion recovers at `0.25/s`
+- Morale pressure:
+  - morale drains by encirclement pressure (enemies inside formation footprint vs retinue size)
+  - morale also drains while banner is dropped
+  - morale passively recovers when not pressured
+- Cohesion collapse:
+  - at `0` cohesion, 10% of retinue is removed
+  - cohesion resets to `70`
+  - short collapse grace prevents immediate re-collapse chain
 
 ## Banner Loop (`src/banner.rs`)
-- Auto-drop trigger: cohesion `<20` (with anti-redrop grace check)
+- Auto-drop trigger: average friendly morale ratio `<= 0` (with anti-redrop grace check)
 - Dropped effect: `BannerMovementPenalty.friendly_speed_multiplier = 0.72`
+- While dropped, commander `Banner` item bonuses are disabled (item remains equipped; bonuses resume on recovery)
 - Banner follow render offset: banner is rendered with positive Y offset behind commander for visibility.
 - Pickup unlock delay: 10s after drop
 - Pickup channel: 5s while friendly unit is within recovery radius
 - Successful recovery:
   - banner returns to up state
-  - cohesion restored to `65`
+  - cohesion restored to `70`
   - redrop grace timer starts
 
 ### Banner Progress UI

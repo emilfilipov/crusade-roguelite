@@ -6649,6 +6649,7 @@ fn draw_commander_aura_footprint(
     mut gizmos: Gizmos,
     data: Res<GameData>,
     buffs: Res<crate::model::GlobalBuffs>,
+    banner_state: Option<Res<BannerState>>,
     inventory: Option<Res<InventoryState>>,
     setup_selection: Option<Res<MatchSetupSelection>>,
     commanders: Query<&Transform, With<CommanderUnit>>,
@@ -6663,8 +6664,18 @@ fn draw_commander_aura_footprint(
         .as_deref()
         .map(|selection| selection.faction)
         .unwrap_or(PlayerFaction::Christian);
-    let radius =
-        commander_aura_radius(&data, Some(&buffs), inventory.as_deref(), player_faction).max(1.0);
+    let banner_item_active = !banner_state
+        .as_deref()
+        .map(|state| state.is_dropped)
+        .unwrap_or(false);
+    let radius = commander_aura_radius(
+        &data,
+        Some(&buffs),
+        inventory.as_deref(),
+        player_faction,
+        banner_item_active,
+    )
+    .max(1.0);
     let center = commander_transform.translation.truncate();
     let edge_color = Color::srgba(0.62, 0.86, 1.0, 0.18);
     gizmos.circle_2d(center, radius, edge_color);

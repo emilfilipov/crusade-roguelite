@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use bevy::sprite::{ColorMaterial, MaterialMesh2dBundle, Mesh2dHandle};
 use bevy::{math::primitives::Circle, render::mesh::Mesh};
 
-use crate::banner::BannerMovementPenalty;
+use crate::banner::{BannerMovementPenalty, BannerState};
 use crate::combat::{RangedAttackCooldown, RangedAttackProfile};
 use crate::data::{FactionGameplayConfig, GameData, UnitStatsConfig};
 use crate::enemies::WaveRuntime;
@@ -10,7 +10,8 @@ use crate::formation::{
     ActiveFormation, FormationModifiers, active_formation_config, formation_contains_position,
 };
 use crate::inventory::{
-    InventoryState, gear_bonuses_for_unit, scaled_skill_cooldown, scaled_skill_duration,
+    InventoryState, gear_bonuses_for_unit_with_banner_state, scaled_skill_cooldown,
+    scaled_skill_duration,
 };
 use crate::map::{MapBounds, playable_bounds};
 use crate::model::{
@@ -19,6 +20,7 @@ use crate::model::{
     PlayerControlled, PlayerFaction, RecruitEvent, RecruitUnitKind, RescuableUnit, StartRunEvent,
     Team, Unit, UnitDiedEvent, UnitKind, UnitTier, level_cap_from_locked_budget,
 };
+use crate::morale::morale_movement_multiplier;
 use crate::upgrades::{ConditionalUpgradeEffects, Progression, SkillTimingBuffs};
 use crate::visuals::ArtAssets;
 
@@ -441,6 +443,7 @@ fn commander_movement(
     formation_mods: Res<FormationModifiers>,
     buffs: Option<Res<GlobalBuffs>>,
     conditional_effects: Option<Res<ConditionalUpgradeEffects>>,
+    banner_state: Option<Res<BannerState>>,
     keyboard: Option<Res<ButtonInput<KeyCode>>>,
     mut commander_motion: ResMut<CommanderMotionState>,
     bounds: Option<Res<MapBounds>>,
@@ -448,7 +451,13 @@ fn commander_movement(
     friendlies: Query<Entity, (With<FriendlyUnit>, Without<CommanderUnit>)>,
     enemies: Query<&Transform, (With<EnemyUnit>, Without<CommanderUnit>)>,
     mut commanders: Query<
-        (&Unit, Option<&UnitTier>, &MoveSpeed, &mut Transform),
+        (
+            &Unit,
+            Option<&UnitTier>,
+            &MoveSpeed,
+            &Morale,
+            &mut Transform,
+        ),
         (With<PlayerControlled>, With<CommanderUnit>),
     >,
 ) {
@@ -492,8 +501,12 @@ fn commander_movement(
             .as_deref()
             .map(|value| value.friendly_move_speed_bonus)
             .unwrap_or(0.0);
+    let banner_item_active = !banner_state
+        .as_deref()
+        .map(|state| state.is_dropped)
+        .unwrap_or(false);
 
-    for (unit, tier, move_speed, mut transform) in &mut commanders {
+    for (unit, tier, move_speed, morale, mut transform) in &mut commanders {
         let commander_position = transform.translation.truncate();
         let inside_enemy_count = enemies
             .iter()
@@ -511,10 +524,18 @@ fn commander_movement(
             movement_multiplier_from_inside_enemy_count(inside_enemy_count as u32);
         let gear = inventory
             .as_deref()
-            .map(|inv| gear_bonuses_for_unit(inv, unit.kind, tier.map(|value| value.0)))
+            .map(|inv| {
+                gear_bonuses_for_unit_with_banner_state(
+                    inv,
+                    unit.kind,
+                    tier.map(|value| value.0),
+                    banner_item_active,
+                )
+            })
             .unwrap_or_default();
         let effective_speed = (move_speed.0 + movement_bonus + gear.move_speed_bonus).max(1.0)
-            * formation_mods.move_speed_multiplier;
+            * formation_mods.move_speed_multiplier
+            * morale_movement_multiplier(morale.ratio());
         let delta = direction * effective_speed * speed_multiplier * time.delta_seconds();
         transform.translation.x += delta.x * formation_slowdown;
         transform.translation.y += delta.y * formation_slowdown;
@@ -829,9 +850,11 @@ fn apply_tier0_conversion_events(
 }
 
 #[allow(clippy::type_complexity)]
+#[allow(clippy::too_many_arguments)]
 fn run_priest_support_logic(
     mut commands: Commands,
     time: Res<Time>,
+    banner_state: Option<Res<BannerState>>,
     inventory: Option<Res<InventoryState>>,
     skill_timing: Option<Res<SkillTimingBuffs>>,
     mut priests: Query<(
@@ -844,6 +867,10 @@ fn run_priest_support_logic(
     mut blessings: Query<(Entity, &Unit, &mut PriestAttackSpeedBlessing), Without<RescuableUnit>>,
 ) {
     let dt = time.delta_seconds();
+    let banner_item_active = !banner_state
+        .as_deref()
+        .map(|state| state.is_dropped)
+        .unwrap_or(false);
     let skill_duration_multiplier = skill_timing
         .as_deref()
         .map(|value| value.duration_multiplier.max(1.0))
@@ -908,7 +935,12 @@ fn run_priest_support_logic(
             inventory
                 .as_deref()
                 .map(|inv| {
-                    gear_bonuses_for_unit(inv, priest_unit.kind, priest_tier.map(|value| value.0))
+                    gear_bonuses_for_unit_with_banner_state(
+                        inv,
+                        priest_unit.kind,
+                        priest_tier.map(|value| value.0),
+                        banner_item_active,
+                    )
                 })
                 .unwrap_or_default()
                 .cooldown_reduction_secs

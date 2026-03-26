@@ -3,6 +3,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use crate::banner::BannerState;
 use crate::model::{GameState, PlayerFaction, StartRunEvent, UnitKind};
 use crate::upgrades::{Progression, SkillTimingBuffs, commander_level_hp_bonus};
 
@@ -673,10 +674,14 @@ fn item_bonuses_for_role(item: &GearItemEntry, role: UnitCombatRole) -> UnitEqui
 fn setup_bonuses_for_role(
     setup: &UnitEquipmentSetup,
     role: UnitCombatRole,
+    banner_item_active: bool,
 ) -> UnitEquipmentBonuses {
     let mut bonuses = UnitEquipmentBonuses::zero();
     for slot in &setup.slots {
         if let Some(item) = slot.item.as_ref() {
+            if !banner_item_active && item.item_type == GearItemType::Banner {
+                continue;
+            }
             bonuses.merge_assign(item_bonuses_for_role(item, role));
         }
     }
@@ -687,10 +692,18 @@ pub fn commander_armywide_bonuses(
     inventory: &InventoryState,
     role: UnitCombatRole,
 ) -> UnitEquipmentBonuses {
+    commander_armywide_bonuses_with_banner_state(inventory, role, true)
+}
+
+pub fn commander_armywide_bonuses_with_banner_state(
+    inventory: &InventoryState,
+    role: UnitCombatRole,
+    banner_item_active: bool,
+) -> UnitEquipmentBonuses {
     let Some(commander_setup) = inventory.setup_for(EquipmentUnitType::Commander) else {
         return UnitEquipmentBonuses::zero();
     };
-    setup_bonuses_for_role(commander_setup, role)
+    setup_bonuses_for_role(commander_setup, role, banner_item_active)
 }
 
 pub fn gear_bonuses_for_unit(
@@ -698,17 +711,30 @@ pub fn gear_bonuses_for_unit(
     kind: UnitKind,
     tier: Option<u8>,
 ) -> UnitEquipmentBonuses {
+    gear_bonuses_for_unit_with_banner_state(inventory, kind, tier, true)
+}
+
+pub fn gear_bonuses_for_unit_with_banner_state(
+    inventory: &InventoryState,
+    kind: UnitKind,
+    tier: Option<u8>,
+    commander_banner_item_active: bool,
+) -> UnitEquipmentBonuses {
     let Some(unit_type) = equipment_unit_type_for_unit(kind, tier) else {
         return UnitEquipmentBonuses::zero();
     };
     let role = role_for_unit(kind);
     let mut bonuses = inventory
         .setup_for(unit_type)
-        .map(|setup| setup_bonuses_for_role(setup, role))
+        .map(|setup| setup_bonuses_for_role(setup, role, true))
         .unwrap_or_else(UnitEquipmentBonuses::zero);
 
     if kind == UnitKind::Commander || kind.is_friendly_recruit() {
-        let commander_bonuses = commander_armywide_bonuses(inventory, role);
+        let commander_bonuses = commander_armywide_bonuses_with_banner_state(
+            inventory,
+            role,
+            commander_banner_item_active,
+        );
         if unit_type != EquipmentUnitType::Commander {
             bonuses.merge_assign(commander_bonuses);
         }
@@ -1053,6 +1079,7 @@ fn extract_special_scalar(item: &GearItemEntry, stat_kind: GearStatKind) -> f32 
 
 fn update_army_equipment_effects(
     time: Res<Time>,
+    banner_state: Option<Res<BannerState>>,
     inventory: Res<InventoryState>,
     skill_timing: Option<Res<SkillTimingBuffs>>,
     mut effects: ResMut<EquipmentArmyEffects>,
@@ -1061,9 +1088,17 @@ fn update_army_equipment_effects(
         *effects = EquipmentArmyEffects::default();
         return;
     };
-    let cooldown_reduction = commander_armywide_bonuses(&inventory, UnitCombatRole::Commander)
-        .cooldown_reduction_secs
-        .max(0.0);
+    let banner_item_active = !banner_state
+        .as_deref()
+        .map(|state| state.is_dropped)
+        .unwrap_or(false);
+    let cooldown_reduction = commander_armywide_bonuses_with_banner_state(
+        &inventory,
+        UnitCombatRole::Commander,
+        banner_item_active,
+    )
+    .cooldown_reduction_secs
+    .max(0.0);
     let skill_duration_multiplier = skill_timing
         .as_deref()
         .map(|value| value.duration_multiplier.max(1.0))
@@ -1159,6 +1194,7 @@ pub fn scaled_skill_cooldown(
 
 #[allow(clippy::type_complexity)]
 fn apply_equipment_health_bonus(
+    banner_state: Option<Res<BannerState>>,
     inventory: Res<InventoryState>,
     progression: Option<Res<Progression>>,
     mut friendlies: Query<
@@ -1173,8 +1209,17 @@ fn apply_equipment_health_bonus(
 ) {
     let level = progression.as_ref().map(|value| value.level).unwrap_or(1);
     let level_hp_bonus = commander_level_hp_bonus(level);
+    let banner_item_active = !banner_state
+        .as_deref()
+        .map(|state| state.is_dropped)
+        .unwrap_or(false);
     for (unit, tier, base_max, mut health) in &mut friendlies {
-        let gear = gear_bonuses_for_unit(&inventory, unit.kind, tier.map(|value| value.0));
+        let gear = gear_bonuses_for_unit_with_banner_state(
+            &inventory,
+            unit.kind,
+            tier.map(|value| value.0),
+            banner_item_active,
+        );
         let expected_max = (base_max.0 + level_hp_bonus + gear.health_bonus).max(1.0);
         if (health.max - expected_max).abs() > 0.001 {
             let ratio = if health.max > 0.0 {
