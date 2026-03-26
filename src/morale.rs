@@ -12,7 +12,9 @@ use crate::model::{
     Morale, PlayerFaction, StartRunEvent, Team, UnitCohesion, UnitDamagedEvent, UnitDiedEvent,
     UnitKind, UnitTier,
 };
+use crate::rescue::spawn_rescuable_entity;
 use crate::upgrades::ConditionalUpgradeEffects;
+use crate::visuals::ArtAssets;
 
 const STARTING_COHESION: f32 = 100.0;
 const LOW_MORALE_THRESHOLD: f32 = 0.5;
@@ -564,10 +566,14 @@ fn apply_encirclement_morale_pressure(
 fn apply_cohesion_collapse(
     mut commands: Commands,
     time: Res<Time>,
+    art: Res<ArtAssets>,
     mut cohesion: ResMut<Cohesion>,
     mut collapse_state: ResMut<CohesionCollapseState>,
     commanders: Query<&Transform, With<CommanderUnit>>,
-    retinue: Query<(Entity, &Transform), (With<FriendlyUnit>, Without<CommanderUnit>)>,
+    retinue: Query<
+        (Entity, &Transform, &crate::model::Unit),
+        (With<FriendlyUnit>, Without<CommanderUnit>),
+    >,
 ) {
     collapse_state.grace_remaining =
         (collapse_state.grace_remaining - time.delta_seconds()).max(0.0);
@@ -579,21 +585,24 @@ fn apply_cohesion_collapse(
         .get_single()
         .map(|transform| transform.translation.truncate())
         .unwrap_or(Vec2::ZERO);
-    let mut candidates: Vec<(Entity, f32)> = retinue
+    let mut candidates: Vec<(Entity, Vec2, Option<crate::model::RecruitUnitKind>, f32)> = retinue
         .iter()
-        .map(|(entity, transform)| {
+        .map(|(entity, transform, unit)| {
+            let position = transform.translation.truncate();
             (
                 entity,
-                transform
-                    .translation
-                    .truncate()
-                    .distance_squared(commander_pos),
+                position,
+                unit.kind.as_recruit_unit_kind(),
+                position.distance_squared(commander_pos),
             )
         })
         .collect();
-    candidates.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    candidates.sort_by(|a, b| b.3.partial_cmp(&a.3).unwrap_or(std::cmp::Ordering::Equal));
     let casualties = cohesion_collapse_casualty_count(candidates.len());
-    for (entity, _) in candidates.into_iter().take(casualties) {
+    for (entity, position, recruit_kind, _) in candidates.into_iter().take(casualties) {
+        if let Some(recruit_kind) = recruit_kind {
+            spawn_rescuable_entity(&mut commands, position, recruit_kind, &art);
+        }
         commands.entity(entity).despawn_recursive();
     }
 

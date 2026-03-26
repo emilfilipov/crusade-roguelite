@@ -240,6 +240,18 @@ impl UnitKind {
             Self::ChristianPeasantPriest | Self::MuslimPeasantPriest
         )
     }
+
+    pub const fn as_recruit_unit_kind(self) -> Option<RecruitUnitKind> {
+        match self {
+            Self::ChristianPeasantInfantry => Some(RecruitUnitKind::ChristianPeasantInfantry),
+            Self::ChristianPeasantArcher => Some(RecruitUnitKind::ChristianPeasantArcher),
+            Self::ChristianPeasantPriest => Some(RecruitUnitKind::ChristianPeasantPriest),
+            Self::MuslimPeasantInfantry => Some(RecruitUnitKind::MuslimPeasantInfantry),
+            Self::MuslimPeasantArcher => Some(RecruitUnitKind::MuslimPeasantArcher),
+            Self::MuslimPeasantPriest => Some(RecruitUnitKind::MuslimPeasantPriest),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Component, Clone, Copy, Debug)]
@@ -475,4 +487,26 @@ pub const MAX_COMMANDER_LEVEL: u32 = 200;
 
 pub fn level_cap_from_locked_budget(locked_levels: u32) -> u32 {
     MAX_COMMANDER_LEVEL.saturating_sub(locked_levels)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{RecruitUnitKind, UnitKind};
+
+    #[test]
+    fn recruit_unit_kind_maps_from_friendly_unit_kind() {
+        assert_eq!(
+            UnitKind::ChristianPeasantInfantry.as_recruit_unit_kind(),
+            Some(RecruitUnitKind::ChristianPeasantInfantry)
+        );
+        assert_eq!(
+            UnitKind::MuslimPeasantArcher.as_recruit_unit_kind(),
+            Some(RecruitUnitKind::MuslimPeasantArcher)
+        );
+        assert_eq!(UnitKind::Commander.as_recruit_unit_kind(), None);
+        assert_eq!(
+            UnitKind::RescuableChristianPeasantPriest.as_recruit_unit_kind(),
+            None
+        );
+    }
 }

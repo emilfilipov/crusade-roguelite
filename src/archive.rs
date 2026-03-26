@@ -174,7 +174,7 @@ pub fn build_archive_entries(data: &GameData) -> Vec<ArchiveEntry> {
         ArchiveEntry {
             category: ArchiveCategory::Stats,
             title: "Cohesion".to_string(),
-            description: "Cohesion affects damage output only when below 50%. If cohesion reaches 0, 10% of the retinue is lost, cohesion resets, and collapse enters a short grace period."
+            description: "Cohesion affects damage output only when below 50%. If cohesion reaches 0, 10% of the retinue is dropped as rescuable units, cohesion resets, and collapse enters a short grace period."
                 .to_string(),
             icon: Some(UpgradeCardIcon::FormationSquare),
         },

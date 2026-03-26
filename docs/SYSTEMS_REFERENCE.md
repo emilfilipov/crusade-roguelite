@@ -575,7 +575,7 @@ Friendly combined outgoing multiplier has lower clamp:
   - morale also drains while banner is dropped
   - morale passively recovers when not pressured
 - Cohesion collapse:
-  - at `0` cohesion, 10% of retinue is removed
+  - at `0` cohesion, 10% of retinue is dropped as rescuable units
   - cohesion resets to `70`
   - short collapse grace prevents immediate re-collapse chain
 

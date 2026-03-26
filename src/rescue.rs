@@ -250,7 +250,7 @@ pub fn any_friendly_in_rescue_radius(
         .any(|position| position.distance_squared(rescuable_position) <= rescue_radius_sq)
 }
 
-fn spawn_rescuable(
+pub(crate) fn spawn_rescuable_entity(
     commands: &mut Commands,
     position: Vec2,
     recruit_kind: RecruitUnitKind,
@@ -308,6 +308,15 @@ fn spawn_rescuable(
             ..default()
         },
     ));
+}
+
+fn spawn_rescuable(
+    commands: &mut Commands,
+    position: Vec2,
+    recruit_kind: RecruitUnitKind,
+    art: &ArtAssets,
+) {
+    spawn_rescuable_entity(commands, position, recruit_kind, art);
 }
 
 fn recruit_kind_for_sequence(
