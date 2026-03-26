@@ -514,8 +514,8 @@ fn validate_enemy_stats(enemy: &EnemyStatsConfig, label: &str) -> Result<()> {
     if enemy.attack_cooldown_secs <= 0.0 {
         bail!("{label} attack_cooldown_secs must be > 0");
     }
-    if enemy.damage <= 0.0 {
-        bail!("{label} damage must be > 0");
+    if enemy.damage < 0.0 {
+        bail!("{label} damage must be >= 0");
     }
     if enemy.attack_range <= 0.0 {
         bail!("{label} attack_range must be > 0");
