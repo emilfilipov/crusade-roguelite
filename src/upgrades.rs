@@ -5,13 +5,14 @@ use bevy::prelude::*;
 
 use crate::data::{GameData, UpgradeConfig};
 use crate::formation::{ActiveFormation, FormationSkillBar};
+use crate::inventory::ItemRarityRollBonus;
 use crate::model::{
     BaseMaxHealth, FriendlyUnit, GainXpEvent, GameState, GlobalBuffs, Health, MAX_COMMANDER_LEVEL,
     StartRunEvent,
 };
 use crate::squad::RosterEconomy;
 
-const LEVEL_UP_OPTION_COUNT: usize = 3;
+const LEVEL_UP_OPTION_COUNT: usize = 5;
 const DEFAULT_UPGRADE_WEIGHT_EXPONENT: f32 = 2.0;
 const UPGRADE_VALUE_TIER_COUNT: u32 = 5;
 const UPGRADE_HIGH_TIER_DROP_OFF_MULTIPLIER: f32 = 1.35;
@@ -29,6 +30,7 @@ const MOB_FURY_MOVE_SPEED_BONUS: f32 = 24.0;
 const MOB_JUSTICE_EXECUTE_THRESHOLD: f32 = 0.10;
 const MOB_MERCY_RESCUE_TIME_MULTIPLIER: f32 = 0.5;
 const UNIQUE_SLOT_TRADEOFF_KIND: &str = "unique_slot_tradeoff";
+const MAX_SKILL_COOLDOWN_REDUCTION: f32 = 0.75;
 
 pub const fn max_unique_upgrades() -> usize {
     MAX_UNIQUE_UPGRADES
@@ -48,6 +50,10 @@ pub fn is_supported_upgrade_kind(kind: &str) -> bool {
             | "authority_aura"
             | "move_speed"
             | "hospitalier_aura"
+            | "item_rarity"
+            | "upgrade_rarity"
+            | "skill_duration"
+            | "cooldown_reduction"
             | "formation_breach"
             | "unlock_formation"
             | "mob_fury"
@@ -94,6 +100,26 @@ pub struct OneTimeUpgradeTracker {
     pub acquired_ids: HashSet<String>,
     pub extra_slots: usize,
     pub mythical_rolls_locked: bool,
+}
+
+#[derive(Resource, Clone, Copy, Debug, Default)]
+pub struct UpgradeRarityRollBonus {
+    pub percent: f32,
+}
+
+#[derive(Resource, Clone, Copy, Debug)]
+pub struct SkillTimingBuffs {
+    pub duration_multiplier: f32,
+    pub cooldown_reduction: f32,
+}
+
+impl Default for SkillTimingBuffs {
+    fn default() -> Self {
+        Self {
+            duration_multiplier: 1.0,
+            cooldown_reduction: 0.0,
+        }
+    }
 }
 
 #[derive(Resource, Clone, Debug, Default)]
@@ -190,6 +216,10 @@ pub enum UpgradeCardIcon {
     AuthorityAura,
     MoveSpeed,
     HospitalierAura,
+    ItemRarity,
+    UpgradeRarity,
+    SkillDuration,
+    CooldownReduction,
     FormationSquare,
     FormationDiamond,
     MobFury,
@@ -279,6 +309,8 @@ impl Plugin for UpgradePlugin {
             .init_resource::<ProgressionLockFeedback>()
             .init_resource::<UpgradeDraft>()
             .init_resource::<OneTimeUpgradeTracker>()
+            .init_resource::<UpgradeRarityRollBonus>()
+            .init_resource::<SkillTimingBuffs>()
             .init_resource::<SkillBookLog>()
             .init_resource::<ConditionalUpgradeOwnership>()
             .init_resource::<ConditionalUpgradeStatus>()
@@ -324,6 +356,9 @@ fn reset_progress_on_run_start(
     mut conditional_effects: ResMut<ConditionalUpgradeEffects>,
     mut passive_runtime: ResMut<LevelPassiveRuntime>,
     mut buffs: ResMut<GlobalBuffs>,
+    mut item_rarity_bonus: ResMut<ItemRarityRollBonus>,
+    mut upgrade_rarity_bonus: ResMut<UpgradeRarityRollBonus>,
+    mut skill_timing: ResMut<SkillTimingBuffs>,
     mut rng: ResMut<UpgradeRngState>,
 ) {
     if start_events.is_empty() {
@@ -340,6 +375,9 @@ fn reset_progress_on_run_start(
     *conditional_effects = ConditionalUpgradeEffects::default();
     *passive_runtime = LevelPassiveRuntime::default();
     *buffs = GlobalBuffs::default();
+    *item_rarity_bonus = ItemRarityRollBonus::default();
+    *upgrade_rarity_bonus = UpgradeRarityRollBonus::default();
+    *skill_timing = SkillTimingBuffs::default();
     rng.reseed_from_time();
 }
 
@@ -355,6 +393,7 @@ fn open_draft_on_level_up(
     mut lock_feedback: ResMut<ProgressionLockFeedback>,
     mut draft: ResMut<UpgradeDraft>,
     one_time_tracker: Res<OneTimeUpgradeTracker>,
+    upgrade_rarity_bonus: Res<UpgradeRarityRollBonus>,
     skillbar: Res<FormationSkillBar>,
     roster_economy: Option<Res<RosterEconomy>>,
     data: Res<GameData>,
@@ -394,6 +433,7 @@ fn open_draft_on_level_up(
             &data.upgrades.upgrades,
             &mut rng,
             LEVEL_UP_OPTION_COUNT,
+            upgrade_rarity_bonus.percent,
             &one_time_tracker,
             &skillbar,
         );
@@ -470,6 +510,10 @@ fn queue_upgrade_selection_from_keyboard(
         selected_idx = Some(1);
     } else if keys.just_pressed(KeyCode::Digit3) {
         selected_idx = Some(2);
+    } else if keys.just_pressed(KeyCode::Digit4) {
+        selected_idx = Some(3);
+    } else if keys.just_pressed(KeyCode::Digit5) {
+        selected_idx = Some(4);
     }
     if let Some(option_index) = selected_idx {
         selection_events.send(SelectUpgradeEvent { option_index });
@@ -484,6 +528,9 @@ fn resolve_upgrade_selection(
     mut skill_book: ResMut<SkillBookLog>,
     mut conditional_ownership: ResMut<ConditionalUpgradeOwnership>,
     mut one_time_tracker: ResMut<OneTimeUpgradeTracker>,
+    mut item_rarity_bonus: ResMut<ItemRarityRollBonus>,
+    mut upgrade_rarity_bonus: ResMut<UpgradeRarityRollBonus>,
+    mut skill_timing: ResMut<SkillTimingBuffs>,
     mut skillbar: ResMut<FormationSkillBar>,
     mut next_state: ResMut<NextState<GameState>>,
 ) {
@@ -499,6 +546,9 @@ fn resolve_upgrade_selection(
     apply_upgrade(
         &picked,
         &mut buffs,
+        &mut item_rarity_bonus,
+        &mut upgrade_rarity_bonus,
+        &mut skill_timing,
         &mut conditional_ownership,
         &mut skillbar,
     );
@@ -589,6 +639,22 @@ pub fn skill_book_entry_cumulative_description(entry: &SkillBookEntry) -> String
             "Total army movement speed bonus: +{:.0}.",
             entry.total_value.max(0.0)
         ),
+        "item_rarity" => format!(
+            "Total item rarity roll bonus: +{:.0}%.",
+            entry.total_value.max(0.0) * 100.0
+        ),
+        "upgrade_rarity" => format!(
+            "Total level-up rarity roll bonus: +{:.0}%.",
+            entry.total_value.max(0.0) * 100.0
+        ),
+        "skill_duration" => format!(
+            "Total skill duration bonus: +{:.0}%.",
+            entry.total_value.max(0.0) * 100.0
+        ),
+        "cooldown_reduction" => format!(
+            "Total skill cooldown reduction: +{:.0}%.",
+            entry.total_value.max(0.0) * 100.0
+        ),
         "hospitalier_aura" => format!(
             "Aura regen totals: +{:.1} HP/s, +{:.2} cohesion/s, +{:.2} morale/s for friendlies in aura.",
             entry.total_value.max(0.0),
@@ -612,6 +678,7 @@ fn roll_upgrade_options(
     pool: &[UpgradeConfig],
     rng: &mut UpgradeRngState,
     count: usize,
+    upgrade_rarity_bonus_percent: f32,
     one_time_tracker: &OneTimeUpgradeTracker,
     skillbar: &FormationSkillBar,
 ) -> Vec<UpgradeConfig> {
@@ -648,8 +715,12 @@ fn roll_upgrade_options(
         .into_iter()
         .map(|idx| {
             let mut rolled = pool[idx].clone();
-            rolled.value =
-                roll_upgrade_value(&rolled, rng, !one_time_tracker.mythical_rolls_locked);
+            rolled.value = roll_upgrade_value(
+                &rolled,
+                rng,
+                !one_time_tracker.mythical_rolls_locked,
+                upgrade_rarity_bonus_percent,
+            );
             rolled
         })
         .collect()
@@ -687,6 +758,7 @@ fn roll_upgrade_value(
     config: &UpgradeConfig,
     rng: &mut UpgradeRngState,
     mythical_rolls_enabled: bool,
+    upgrade_rarity_bonus_percent: f32,
 ) -> f32 {
     let min_value = config.min_value.unwrap_or(config.value);
     let max_value = config.max_value.unwrap_or(min_value);
@@ -699,6 +771,7 @@ fn roll_upgrade_value(
         .unwrap_or(DEFAULT_UPGRADE_WEIGHT_EXPONENT)
         .max(1.01)
         * UPGRADE_HIGH_TIER_DROP_OFF_MULTIPLIER;
+    let exponent = (exponent / (1.0 + upgrade_rarity_bonus_percent.max(0.0))).max(1.01);
     let available_tier_count = if mythical_rolls_enabled {
         UPGRADE_VALUE_TIER_COUNT
     } else {
@@ -766,6 +839,10 @@ pub fn upgrade_card_icon(upgrade: &UpgradeConfig) -> UpgradeCardIcon {
         "authority_aura" => UpgradeCardIcon::AuthorityAura,
         "move_speed" => UpgradeCardIcon::MoveSpeed,
         "hospitalier_aura" => UpgradeCardIcon::HospitalierAura,
+        "item_rarity" => UpgradeCardIcon::ItemRarity,
+        "upgrade_rarity" => UpgradeCardIcon::UpgradeRarity,
+        "skill_duration" => UpgradeCardIcon::SkillDuration,
+        "cooldown_reduction" => UpgradeCardIcon::CooldownReduction,
         "unique_slot_tradeoff" => UpgradeCardIcon::AuthorityAura,
         "formation_breach" => UpgradeCardIcon::FormationSquare,
         "mob_fury" => UpgradeCardIcon::MobFury,
@@ -792,6 +869,10 @@ pub fn upgrade_display_title(upgrade: &UpgradeConfig) -> &'static str {
         "authority_aura" => "Authority Aura",
         "move_speed" => "Forced March",
         "hospitalier_aura" => "Hospitalier Aura",
+        "item_rarity" => "Master Quartermaster",
+        "upgrade_rarity" => "Tactical Insight",
+        "skill_duration" => "Enduring Cadence",
+        "cooldown_reduction" => "Swift Drills",
         "unique_slot_tradeoff" => "War Council Edict",
         "formation_breach" => "Into the Wolf's Dev",
         "mob_fury" => "Mob's Fury",
@@ -834,6 +915,22 @@ pub fn upgrade_display_description(upgrade: &UpgradeConfig) -> String {
             upgrade.value * AUTHORITY_ENEMY_MORALE_DRAIN_SCALE
         ),
         "move_speed" => format!("Increase army movement speed by +{:.0}.", upgrade.value),
+        "item_rarity" => format!(
+            "Increase equipment item rarity roll bonus by +{:.0}%.",
+            upgrade.value * 100.0
+        ),
+        "upgrade_rarity" => format!(
+            "Increase level-up rarity roll bonus by +{:.0}%.",
+            upgrade.value * 100.0
+        ),
+        "skill_duration" => format!(
+            "Increase duration of cooldown-based skills by +{:.0}%.",
+            upgrade.value * 100.0
+        ),
+        "cooldown_reduction" => format!(
+            "Reduce cooldown of cooldown-based skills by {:.0}%.",
+            upgrade.value * 100.0
+        ),
         "hospitalier_aura" => format!(
             "Friendlies in aura regen +{:.1} HP/s, +{:.2} cohesion/s, +{:.2} morale/s.",
             upgrade.value,
@@ -863,6 +960,9 @@ pub fn upgrade_display_description(upgrade: &UpgradeConfig) -> String {
 fn apply_upgrade(
     upgrade: &UpgradeConfig,
     buffs: &mut GlobalBuffs,
+    item_rarity_bonus: &mut ItemRarityRollBonus,
+    upgrade_rarity_bonus: &mut UpgradeRarityRollBonus,
+    skill_timing: &mut SkillTimingBuffs,
     conditional_owned: &mut ConditionalUpgradeOwnership,
     skillbar: &mut FormationSkillBar,
 ) {
@@ -900,6 +1000,20 @@ fn apply_upgrade(
         }
         "move_speed" => {
             buffs.move_speed_bonus += upgrade.value;
+        }
+        "item_rarity" => {
+            item_rarity_bonus.percent = (item_rarity_bonus.percent + upgrade.value).max(0.0);
+        }
+        "upgrade_rarity" => {
+            upgrade_rarity_bonus.percent = (upgrade_rarity_bonus.percent + upgrade.value).max(0.0);
+        }
+        "skill_duration" => {
+            skill_timing.duration_multiplier =
+                (skill_timing.duration_multiplier + upgrade.value).max(1.0);
+        }
+        "cooldown_reduction" => {
+            skill_timing.cooldown_reduction = (skill_timing.cooldown_reduction + upgrade.value)
+                .clamp(0.0, MAX_SKILL_COOLDOWN_REDUCTION);
         }
         "hospitalier_aura" => {
             buffs.hospitalier_hp_regen_per_sec += upgrade.value;
@@ -1104,12 +1218,14 @@ mod tests {
     use crate::formation::{
         ActiveFormation, FormationSkillBar, SKILL_BAR_CAPACITY, SkillBarSkill, SkillBarSkillKind,
     };
+    use crate::inventory::ItemRarityRollBonus;
     use crate::model::GlobalBuffs;
     use crate::upgrades::{
-        OneTimeUpgradeTracker, SkillBookLog, UpgradeCardIcon, UpgradeRngState, UpgradeValueTier,
-        commander_level_hp_bonus, progression_lock_reason, roll_upgrade_options,
-        roll_upgrade_value, upgrade_card_icon, upgrade_display_description, upgrade_display_title,
-        upgrade_value_tier, xp_required_for_level,
+        OneTimeUpgradeTracker, SkillBookLog, SkillTimingBuffs, UpgradeCardIcon,
+        UpgradeRarityRollBonus, UpgradeRngState, UpgradeValueTier, commander_level_hp_bonus,
+        progression_lock_reason, roll_upgrade_options, roll_upgrade_value, upgrade_card_icon,
+        upgrade_display_description, upgrade_display_title, upgrade_value_tier,
+        xp_required_for_level,
     };
 
     fn upgrade(kind: &str, id: &str) -> UpgradeConfig {
@@ -1131,6 +1247,18 @@ mod tests {
         }
     }
 
+    fn empty_upgrade_bonus_state() -> (
+        ItemRarityRollBonus,
+        UpgradeRarityRollBonus,
+        SkillTimingBuffs,
+    ) {
+        (
+            ItemRarityRollBonus::default(),
+            UpgradeRarityRollBonus::default(),
+            SkillTimingBuffs::default(),
+        )
+    }
+
     #[test]
     fn rolls_three_unique_options() {
         let pool = vec![
@@ -1146,6 +1274,7 @@ mod tests {
             &pool,
             &mut rng,
             3,
+            0.0,
             &OneTimeUpgradeTracker::default(),
             &FormationSkillBar::default(),
         );
@@ -1161,7 +1290,7 @@ mod tests {
             state: 0xCAFE_BABE_0123_4567,
         };
         for _ in 0..50 {
-            let value = roll_upgrade_value(&upgrade, &mut rng, true);
+            let value = roll_upgrade_value(&upgrade, &mut rng, true, 0.0);
             assert!((1.0..=4.0).contains(&value));
         }
     }
@@ -1178,7 +1307,7 @@ mod tests {
 
         let mut distinct_scaled = HashSet::new();
         for _ in 0..300 {
-            let value = roll_upgrade_value(&upgrade, &mut rng, true);
+            let value = roll_upgrade_value(&upgrade, &mut rng, true, 0.0);
             distinct_scaled.insert((value * 1000.0).round() as i32);
         }
         assert!(distinct_scaled.len() <= super::UPGRADE_VALUE_TIER_COUNT as usize);
@@ -1208,7 +1337,7 @@ mod tests {
         };
 
         for _ in 0..20_000 {
-            let value = roll_upgrade_value(&upgrade, &mut rng, true);
+            let value = roll_upgrade_value(&upgrade, &mut rng, true, 0.0);
             upgrade.value = value;
             match upgrade_value_tier(&upgrade) {
                 UpgradeValueTier::Common => counts[0] += 1,
@@ -1278,8 +1407,14 @@ mod tests {
         let mut rng = UpgradeRngState {
             state: 0xBEEF_1234_9876_1111,
         };
-        let picks =
-            roll_upgrade_options(&pool, &mut rng, 3, &tracker, &FormationSkillBar::default());
+        let picks = roll_upgrade_options(
+            &pool,
+            &mut rng,
+            3,
+            0.0,
+            &tracker,
+            &FormationSkillBar::default(),
+        );
         assert!(picks.is_empty());
     }
 
@@ -1306,8 +1441,14 @@ mod tests {
         let mut rng = UpgradeRngState {
             state: 0xBEEF_CAFE_1020_3040,
         };
-        let picks =
-            roll_upgrade_options(&pool, &mut rng, 3, &tracker, &FormationSkillBar::default());
+        let picks = roll_upgrade_options(
+            &pool,
+            &mut rng,
+            3,
+            0.0,
+            &tracker,
+            &FormationSkillBar::default(),
+        );
 
         assert!(!picks.iter().any(|upgrade| upgrade.one_time));
         assert!(picks.iter().any(|upgrade| upgrade.id == "normal_damage"));
@@ -1351,8 +1492,14 @@ mod tests {
         let mut rng = UpgradeRngState {
             state: 0xA11C_E55E_1234_5678,
         };
-        let picks =
-            roll_upgrade_options(&pool, &mut rng, 3, &tracker, &FormationSkillBar::default());
+        let picks = roll_upgrade_options(
+            &pool,
+            &mut rng,
+            3,
+            0.0,
+            &tracker,
+            &FormationSkillBar::default(),
+        );
         assert!(picks.iter().any(|upgrade| upgrade.one_time));
 
         let mut weighted = upgrade("damage", "weighted");
@@ -1363,7 +1510,7 @@ mod tests {
             state: 0xFEDC_BA98_7654_3210,
         };
         for _ in 0..1_000 {
-            let value = roll_upgrade_value(&weighted, &mut weighted_rng, false);
+            let value = roll_upgrade_value(&weighted, &mut weighted_rng, false, 0.0);
             weighted.value = value;
             assert_ne!(upgrade_value_tier(&weighted), UpgradeValueTier::Mythical);
         }
@@ -1410,6 +1557,7 @@ mod tests {
             &pool,
             &mut rng,
             3,
+            0.0,
             &OneTimeUpgradeTracker::default(),
             &full_skillbar,
         );
@@ -1432,6 +1580,7 @@ mod tests {
     #[test]
     fn formation_breach_upgrade_enables_inside_formation_damage_bonus() {
         let mut buffs = GlobalBuffs::default();
+        let (mut item_rarity, mut upgrade_rarity, mut skill_timing) = empty_upgrade_bonus_state();
         let mut conditional = super::ConditionalUpgradeOwnership::default();
         let mut skillbar = FormationSkillBar::default();
         let upgrade = UpgradeConfig {
@@ -1451,13 +1600,22 @@ mod tests {
             requirement_map_tag: None,
         };
 
-        super::apply_upgrade(&upgrade, &mut buffs, &mut conditional, &mut skillbar);
+        super::apply_upgrade(
+            &upgrade,
+            &mut buffs,
+            &mut item_rarity,
+            &mut upgrade_rarity,
+            &mut skill_timing,
+            &mut conditional,
+            &mut skillbar,
+        );
         assert!((buffs.inside_formation_damage_multiplier - 1.2).abs() < 0.001);
     }
 
     #[test]
     fn fast_learner_upgrade_stacks_xp_gain_multiplier() {
         let mut buffs = GlobalBuffs::default();
+        let (mut item_rarity, mut upgrade_rarity, mut skill_timing) = empty_upgrade_bonus_state();
         let mut conditional = super::ConditionalUpgradeOwnership::default();
         let mut skillbar = FormationSkillBar::default();
         let upgrade = UpgradeConfig {
@@ -1476,27 +1634,133 @@ mod tests {
             requirement_active_formation: None,
             requirement_map_tag: None,
         };
-        super::apply_upgrade(&upgrade, &mut buffs, &mut conditional, &mut skillbar);
-        super::apply_upgrade(&upgrade, &mut buffs, &mut conditional, &mut skillbar);
+        super::apply_upgrade(
+            &upgrade,
+            &mut buffs,
+            &mut item_rarity,
+            &mut upgrade_rarity,
+            &mut skill_timing,
+            &mut conditional,
+            &mut skillbar,
+        );
+        super::apply_upgrade(
+            &upgrade,
+            &mut buffs,
+            &mut item_rarity,
+            &mut upgrade_rarity,
+            &mut skill_timing,
+            &mut conditional,
+            &mut skillbar,
+        );
         assert!((buffs.xp_gain_multiplier - 1.16).abs() < 0.001);
+    }
+
+    #[test]
+    fn item_and_upgrade_rarity_upgrades_update_roll_bonus_resources() {
+        let mut buffs = GlobalBuffs::default();
+        let mut conditional = super::ConditionalUpgradeOwnership::default();
+        let mut skillbar = FormationSkillBar::default();
+        let (mut item_rarity, mut upgrade_rarity, mut skill_timing) = empty_upgrade_bonus_state();
+
+        let mut item_upgrade = upgrade("item_rarity", "item_rarity_up");
+        item_upgrade.value = 0.08;
+        super::apply_upgrade(
+            &item_upgrade,
+            &mut buffs,
+            &mut item_rarity,
+            &mut upgrade_rarity,
+            &mut skill_timing,
+            &mut conditional,
+            &mut skillbar,
+        );
+        assert!((item_rarity.percent - 0.08).abs() < 0.001);
+
+        let mut upgrade_upgrade = upgrade("upgrade_rarity", "upgrade_rarity_up");
+        upgrade_upgrade.value = 0.09;
+        super::apply_upgrade(
+            &upgrade_upgrade,
+            &mut buffs,
+            &mut item_rarity,
+            &mut upgrade_rarity,
+            &mut skill_timing,
+            &mut conditional,
+            &mut skillbar,
+        );
+        assert!((upgrade_rarity.percent - 0.09).abs() < 0.001);
+    }
+
+    #[test]
+    fn upgrade_rarity_bonus_shifts_weighted_roll_upward() {
+        let mut cfg = upgrade("damage", "rarity_shift");
+        cfg.min_value = Some(10.0);
+        cfg.max_value = Some(30.0);
+        cfg.value_step = None;
+        cfg.weight_exponent = Some(2.2);
+
+        let mut baseline_rng = UpgradeRngState {
+            state: 0x89AB_CDEF_0123_4567,
+        };
+        let mut boosted_rng = UpgradeRngState {
+            state: 0x89AB_CDEF_0123_4567,
+        };
+        let mut baseline_sum = 0.0;
+        let mut boosted_sum = 0.0;
+        for _ in 0..10_000 {
+            baseline_sum += roll_upgrade_value(&cfg, &mut baseline_rng, true, 0.0);
+            boosted_sum += roll_upgrade_value(&cfg, &mut boosted_rng, true, 0.20);
+        }
+        assert!(boosted_sum > baseline_sum);
     }
 
     #[test]
     fn crit_upgrades_apply_to_global_buffs_with_expected_bounds() {
         let mut buffs = GlobalBuffs::default();
+        let (mut item_rarity, mut upgrade_rarity, mut skill_timing) = empty_upgrade_bonus_state();
         let mut conditional = super::ConditionalUpgradeOwnership::default();
         let mut skillbar = FormationSkillBar::default();
 
         let mut crit_chance = upgrade("crit_chance", "crit_chance_up");
         crit_chance.value = 0.60;
-        super::apply_upgrade(&crit_chance, &mut buffs, &mut conditional, &mut skillbar);
-        super::apply_upgrade(&crit_chance, &mut buffs, &mut conditional, &mut skillbar);
+        super::apply_upgrade(
+            &crit_chance,
+            &mut buffs,
+            &mut item_rarity,
+            &mut upgrade_rarity,
+            &mut skill_timing,
+            &mut conditional,
+            &mut skillbar,
+        );
+        super::apply_upgrade(
+            &crit_chance,
+            &mut buffs,
+            &mut item_rarity,
+            &mut upgrade_rarity,
+            &mut skill_timing,
+            &mut conditional,
+            &mut skillbar,
+        );
         assert!((buffs.crit_chance_bonus - 0.95).abs() < 0.001);
 
         let mut crit_damage = upgrade("crit_damage", "crit_damage_up");
         crit_damage.value = 0.20;
-        super::apply_upgrade(&crit_damage, &mut buffs, &mut conditional, &mut skillbar);
-        super::apply_upgrade(&crit_damage, &mut buffs, &mut conditional, &mut skillbar);
+        super::apply_upgrade(
+            &crit_damage,
+            &mut buffs,
+            &mut item_rarity,
+            &mut upgrade_rarity,
+            &mut skill_timing,
+            &mut conditional,
+            &mut skillbar,
+        );
+        super::apply_upgrade(
+            &crit_damage,
+            &mut buffs,
+            &mut item_rarity,
+            &mut upgrade_rarity,
+            &mut skill_timing,
+            &mut conditional,
+            &mut skillbar,
+        );
         assert!((buffs.crit_damage_multiplier - 1.60).abs() < 0.001);
     }
 

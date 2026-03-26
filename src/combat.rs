@@ -113,20 +113,24 @@ fn tick_attack_timers(
             .map(|value| morale_effect_multiplier(value.ratio()))
             .unwrap_or(1.0);
         let priest_scale = priest_attack_speed_multiplier(priest_blessing);
-        let gear_speed_scale = if unit.team == Team::Friendly {
+        let (upgrade_attack_speed_bonus, gear_attack_speed_bonus) = if unit.team == Team::Friendly {
             let gear = gear_bonuses_for_unit(&inventory, unit.kind, tier.map(|value| value.0));
-            (1.0 + gear.attack_speed_multiplier).max(0.1)
+            let upgrade_bonus = global_buffs
+                .as_ref()
+                .map(|buff| buff.attack_speed_multiplier - 1.0)
+                .unwrap_or(0.0);
+            (upgrade_bonus, gear.attack_speed_multiplier)
         } else {
-            1.0
+            (0.0, 0.0)
         };
 
         let speed_scale = if unit.team == Team::Friendly {
             let mut value = cohesion_mods.attack_speed_multiplier * morale_scale * level_multiplier;
-            if let Some(buff) = &global_buffs {
-                value *= buff.attack_speed_multiplier;
-            }
             value *= priest_scale;
-            value *= gear_speed_scale;
+            value *= combined_percentage_multiplier(
+                upgrade_attack_speed_bonus + gear_attack_speed_bonus,
+                0.1,
+            );
             if let Some(conditional) = &conditional_effects {
                 value *= conditional.friendly_attack_speed_multiplier;
             }
@@ -236,10 +240,14 @@ fn emit_ranged_projectile_attacks(
                 attacker_tier.copied().map(|tier| tier.0),
             );
             attack_speed *= cohesion_mods.attack_speed_multiplier * level_multiplier;
-            if let Some(buff) = &global_buffs {
-                attack_speed *= buff.attack_speed_multiplier;
-            }
-            attack_speed *= (1.0 + gear.attack_speed_multiplier).max(0.1);
+            let upgrade_attack_speed_bonus = global_buffs
+                .as_ref()
+                .map(|buff| buff.attack_speed_multiplier - 1.0)
+                .unwrap_or(0.0);
+            attack_speed *= combined_percentage_multiplier(
+                upgrade_attack_speed_bonus + gear.attack_speed_multiplier,
+                0.1,
+            );
             attack_speed = attack_speed.max(MIN_FRIENDLY_COMBAT_MULTIPLIER);
         }
 
@@ -307,10 +315,7 @@ fn emit_ranged_projectile_attacks(
                     commander_motion.as_deref(),
                 ),
                 cohesion_mods.damage_multiplier,
-                global_buffs
-                    .as_ref()
-                    .map(|buff| buff.damage_multiplier)
-                    .unwrap_or(1.0),
+                1.0,
                 level_multiplier,
                 morale_multiplier,
             );
@@ -339,8 +344,19 @@ fn emit_ranged_projectile_attacks(
         } else {
             0.0
         };
-        let mut projectile_damage = ((ranged_profile.damage * (1.0 + ranged_bonus_mult)).max(0.0)
-            * outgoing_multiplier)
+        let upgrade_damage_bonus = if attacker_team == Team::Friendly {
+            global_buffs
+                .as_ref()
+                .map(|buff| buff.damage_multiplier - 1.0)
+                .unwrap_or(0.0)
+        } else {
+            0.0
+        };
+        let mut projectile_damage = (apply_percent_increase_to_base_plus_additive(
+            ranged_profile.damage,
+            0.0,
+            upgrade_damage_bonus + ranged_bonus_mult,
+        ) * outgoing_multiplier)
             .max(1.0);
         let mut projectile_is_critical = false;
         if attacker_team == Team::Friendly {
@@ -571,10 +587,7 @@ fn emit_damage_events(
                         commander_motion.as_deref(),
                     ),
                     cohesion_mods.damage_multiplier,
-                    global_buffs
-                        .as_ref()
-                        .map(|buff| buff.damage_multiplier)
-                        .unwrap_or(1.0),
+                    1.0,
                     level_multiplier,
                     morale_multiplier,
                 );
@@ -605,8 +618,19 @@ fn emit_damage_events(
             } else {
                 0.0
             };
-            let mut outgoing_damage =
-                (attack_profile.damage * (1.0 + melee_bonus_mult)).max(0.0) * outgoing_multiplier;
+            let upgrade_damage_bonus = if attacker_unit.team == Team::Friendly {
+                global_buffs
+                    .as_ref()
+                    .map(|buff| buff.damage_multiplier - 1.0)
+                    .unwrap_or(0.0)
+            } else {
+                0.0
+            };
+            let mut outgoing_damage = apply_percent_increase_to_base_plus_additive(
+                attack_profile.damage,
+                0.0,
+                upgrade_damage_bonus + melee_bonus_mult,
+            ) * outgoing_multiplier;
             let mut is_critical = false;
             if attacker_unit.team == Team::Friendly {
                 let (crit_chance, crit_multiplier) =
@@ -711,6 +735,19 @@ pub fn compute_damage(base_damage: f32, armor: f32, outgoing_multiplier: f32) ->
     let scaled_damage = (base_damage * outgoing_multiplier).max(0.0);
     let reduction_ratio = armor_reduction_ratio(armor);
     (scaled_damage * (1.0 - reduction_ratio)).max(1.0)
+}
+
+pub fn apply_percent_increase_to_base_plus_additive(
+    base_stat: f32,
+    additive_bonus: f32,
+    percent_bonus: f32,
+) -> f32 {
+    let base_plus_additive = (base_stat + additive_bonus).max(0.0);
+    (base_plus_additive * (1.0 + percent_bonus)).max(0.0)
+}
+
+fn combined_percentage_multiplier(total_percent_bonus: f32, min_multiplier: f32) -> f32 {
+    (1.0 + total_percent_bonus).max(min_multiplier)
 }
 
 pub fn armor_reduction_ratio(armor: f32) -> f32 {

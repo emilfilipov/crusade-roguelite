@@ -9,7 +9,9 @@ use crate::enemies::WaveRuntime;
 use crate::formation::{
     ActiveFormation, FormationModifiers, active_formation_config, formation_contains_position,
 };
-use crate::inventory::{InventoryState, gear_bonuses_for_unit};
+use crate::inventory::{
+    InventoryState, gear_bonuses_for_unit, scaled_skill_cooldown, scaled_skill_duration,
+};
 use crate::map::{MapBounds, playable_bounds};
 use crate::model::{
     Armor, AttackCooldown, AttackProfile, BaseMaxHealth, ColliderRadius, CommanderUnit, EnemyUnit,
@@ -17,7 +19,7 @@ use crate::model::{
     PlayerControlled, PlayerFaction, RecruitEvent, RecruitUnitKind, RescuableUnit, StartRunEvent,
     Team, Unit, UnitDiedEvent, UnitKind, UnitTier, level_cap_from_locked_budget,
 };
-use crate::upgrades::{ConditionalUpgradeEffects, Progression};
+use crate::upgrades::{ConditionalUpgradeEffects, Progression, SkillTimingBuffs};
 use crate::visuals::ArtAssets;
 
 const ENEMY_INSIDE_FORMATION_SLOWDOWN_PER_UNIT: f32 = 0.04;
@@ -831,6 +833,7 @@ fn run_priest_support_logic(
     mut commands: Commands,
     time: Res<Time>,
     inventory: Option<Res<InventoryState>>,
+    skill_timing: Option<Res<SkillTimingBuffs>>,
     mut priests: Query<(
         &Unit,
         Option<&UnitTier>,
@@ -841,6 +844,14 @@ fn run_priest_support_logic(
     mut blessings: Query<(Entity, &Unit, &mut PriestAttackSpeedBlessing), Without<RescuableUnit>>,
 ) {
     let dt = time.delta_seconds();
+    let skill_duration_multiplier = skill_timing
+        .as_deref()
+        .map(|value| value.duration_multiplier.max(1.0))
+        .unwrap_or(1.0);
+    let cooldown_reduction_percent = skill_timing
+        .as_deref()
+        .map(|value| value.cooldown_reduction)
+        .unwrap_or(0.0);
     for (entity, unit, mut blessing) in &mut blessings {
         if unit.team == Team::Neutral {
             commands
@@ -886,7 +897,10 @@ fn run_priest_support_logic(
             }
             if position.distance_squared(priest_position) <= range_sq {
                 commands.entity(*entity).insert(PriestAttackSpeedBlessing {
-                    remaining_secs: refresh_priest_blessing_remaining(0.0),
+                    remaining_secs: refresh_priest_blessing_remaining(
+                        0.0,
+                        skill_duration_multiplier,
+                    ),
                 });
             }
         }
@@ -902,7 +916,12 @@ fn run_priest_support_logic(
         } else {
             0.0
         };
-        caster.cooldown = (PRIEST_BLESSING_COOLDOWN_SECS - cooldown_reduction).max(4.0);
+        caster.cooldown = scaled_skill_cooldown(
+            PRIEST_BLESSING_COOLDOWN_SECS,
+            cooldown_reduction,
+            cooldown_reduction_percent,
+            4.0,
+        );
     }
 }
 
@@ -1003,8 +1022,8 @@ pub fn priest_should_cast(cooldown_after_tick: f32) -> bool {
     cooldown_after_tick <= 0.0
 }
 
-pub fn refresh_priest_blessing_remaining(_current_remaining: f32) -> f32 {
-    PRIEST_BLESSING_DURATION_SECS
+pub fn refresh_priest_blessing_remaining(_current_remaining: f32, duration_multiplier: f32) -> f32 {
+    scaled_skill_duration(PRIEST_BLESSING_DURATION_SECS, duration_multiplier)
 }
 
 #[allow(clippy::type_complexity)]
@@ -1838,8 +1857,8 @@ mod tests {
 
     #[test]
     fn priest_refresh_resets_blessing_duration_instead_of_stacking() {
-        let first_apply = refresh_priest_blessing_remaining(0.0);
-        let overlap_refresh = refresh_priest_blessing_remaining(5.0);
+        let first_apply = refresh_priest_blessing_remaining(0.0, 1.0);
+        let overlap_refresh = refresh_priest_blessing_remaining(5.0, 1.0);
         assert!((first_apply - 10.0).abs() < 0.001);
         assert!((overlap_refresh - 10.0).abs() < 0.001);
     }

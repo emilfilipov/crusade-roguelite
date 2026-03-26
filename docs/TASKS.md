@@ -103,6 +103,91 @@
 - Documentation Updates Required:
   - `docs/SYSTEMS_REFERENCE.md`
 
+### CRU-063 - Upgrade Epic: Rarity + Skill Timing Upgrade Types
+- Status: `DONE`
+- Type: `Gameplay`
+- Priority: `P0`
+- Depends on: `<none>`
+- Goal: Add new repeatable upgrades for item rarity, upgrade rarity, skill duration, and cooldown reduction with weighted values.
+- Context:
+  - Needed to expand long-run progression depth and unify new EPIC upgrade scope.
+  - Runtime systems touched: `upgrades.rs`, `inventory.rs`, `squad.rs`, `assets/data/upgrades.json`.
+- Implementation:
+  1. Added `item_rarity`, `upgrade_rarity`, `skill_duration`, and `cooldown_reduction` upgrade kinds.
+  2. Added runtime resources for upgrade-rarity and skill-timing state.
+  3. Wired application logic and cumulative Skill Book descriptions.
+- Unit Tests Required:
+  - Resource update tests for rarity upgrades.
+  - Distribution-shift test for upgrade-rarity weighted rolls.
+- Acceptance Criteria:
+  - New upgrades appear in drafts and apply immediately when selected.
+  - Skill/cooldown-affecting upgrades impact priest/drum/chant runtime behavior.
+- Documentation Updates Required:
+  - `docs/SYSTEMS_REFERENCE.md`
+
+### CRU-064 - Level-Up Draft Expansion (5 Choices + Keyboard 1..5)
+- Status: `DONE`
+- Type: `UI`
+- Priority: `P0`
+- Depends on: `CRU-063`
+- Goal: Increase mandatory level-up choice count from 3 to 5 and support direct keyboard selection for all cards.
+- Context:
+  - Player requested larger tactical draft each level.
+  - Runtime systems touched: `upgrades.rs`, `ui.rs`.
+- Implementation:
+  1. Increased draft option count constant to 5.
+  2. Added keyboard bindings `Digit4` and `Digit5`.
+  3. Updated level-up overlay card rendering to show all generated options.
+- Unit Tests Required:
+  - Existing draft tests retained, selection systems covered by runtime integration tests.
+- Acceptance Criteria:
+  - Level-up overlay consistently renders 5 cards when available.
+  - Keyboard `1..5` and mouse clicks both resolve selection.
+- Documentation Updates Required:
+  - `docs/SYSTEMS_REFERENCE.md`
+
+### CRU-065 - Percentage Upgrade Math Normalization
+- Status: `DONE`
+- Type: `Core`
+- Priority: `P0`
+- Depends on: `CRU-063`
+- Goal: Normalize percentage upgrade math to apply from base + additive inputs and avoid inconsistent compounding paths.
+- Context:
+  - Combat scaling needed consistency for stacked percentage sources.
+  - Runtime systems touched: `combat.rs`, `inventory.rs`, `squad.rs`.
+- Implementation:
+  1. Added helper math for `base + additive` then `%` application.
+  2. Combined friendly damage/attack-speed percent sources additively before multiplier application.
+  3. Applied the same approach to cooldown and duration scaling for skill systems.
+- Unit Tests Required:
+  - Existing combat tests + new rarity/timing tests validated no regression.
+- Acceptance Criteria:
+  - Percentage buffs stack additively in their source bucket.
+  - Absolute buffs remain additive and feed into percentage stage.
+- Documentation Updates Required:
+  - `docs/SYSTEMS_REFERENCE.md`
+
+### CRU-066 - Item Rarity Upgrade Wiring To Chest Rolls
+- Status: `DONE`
+- Type: `Gameplay`
+- Priority: `P1`
+- Depends on: `CRU-063`
+- Goal: Ensure item-rarity upgrades directly affect chest item rarity generation.
+- Context:
+  - `ItemRarityRollBonus` existed but was not being updated from upgrade picks.
+  - Runtime systems touched: `upgrades.rs`, `drops.rs`.
+- Implementation:
+  1. Upgrade application now mutates `ItemRarityRollBonus`.
+  2. Run-start reset now clears rarity bonus state for clean runs.
+  3. Chest roll path continues consuming the shared rarity bonus resource.
+- Unit Tests Required:
+  - Added explicit test that item-rarity upgrade updates resource values.
+- Acceptance Criteria:
+  - Picking `item_rarity` upgrades increases high-tier chest roll incidence.
+  - New runs reset rarity bonus state to default.
+- Documentation Updates Required:
+  - `docs/SYSTEMS_REFERENCE.md`
+
 ---
 
 ## Task Card Template

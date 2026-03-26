@@ -1577,7 +1577,7 @@ fn spawn_level_up_menu(
                     ..default()
                 })
                 .with_children(|cards| {
-                    for (index, upgrade) in draft.options.iter().take(3).enumerate() {
+                    for (index, upgrade) in draft.options.iter().enumerate() {
                         spawn_level_up_card(
                             cards,
                             index,
@@ -1783,6 +1783,10 @@ fn upgrade_icon_for(icon_kind: UpgradeCardIcon, art: &crate::visuals::ArtAssets)
         UpgradeCardIcon::AuthorityAura => art.upgrade_authority_icon.clone(),
         UpgradeCardIcon::MoveSpeed => art.upgrade_move_speed_icon.clone(),
         UpgradeCardIcon::HospitalierAura => art.upgrade_hospitalier_icon.clone(),
+        UpgradeCardIcon::ItemRarity => art.chest_drop_closed.clone(),
+        UpgradeCardIcon::UpgradeRarity => art.upgrade_crit_chance_icon.clone(),
+        UpgradeCardIcon::SkillDuration => art.upgrade_hospitalier_icon.clone(),
+        UpgradeCardIcon::CooldownReduction => art.upgrade_attack_speed_icon.clone(),
         UpgradeCardIcon::FormationSquare => art.formation_square_icon.clone(),
         UpgradeCardIcon::FormationDiamond => art.formation_diamond_icon.clone(),
         UpgradeCardIcon::MobFury => art.upgrade_damage_icon.clone(),

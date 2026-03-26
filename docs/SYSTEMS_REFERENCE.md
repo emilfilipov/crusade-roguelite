@@ -150,7 +150,7 @@ Use this for entity/component/system lookup without scanning all source files.
   - slight defense penalty.
 - Diamond slot assignment now uses explicit ring + clockwise ordering around commander for clearer unit arrangement.
 - Draft filtering now removes skillbar-bound cards when skillbar is full.
-- Replaced the level-up pool with weighted random 3-option drafts from repeatable upgrades plus one-time skill unlocks.
+- Replaced the level-up pool with weighted random 5-option drafts from repeatable upgrades plus one-time skill unlocks.
 - Upgrade values now roll via weighted min/max sampling (higher values are rarer).
 - Activated commander aura mechanics:
   - Authority aura: in-range friendly morale/cohesion-loss resistance + enemy morale drain.
@@ -159,13 +159,13 @@ Use this for entity/component/system lookup without scanning all source files.
 - Added XP pack minimap markers (yellow blips).
 - Added commander movement slowdown from enemy pressure inside formation bounds (capped at 50% minimum speed multiplier).
 - Pause menu button label now reads `Main Menu`.
-- Added mandatory `LevelUp` state with 3-card draft overlay (image + description) and no skip path.
+- Added mandatory `LevelUp` state with 5-card draft overlay (image + description) and no skip path.
 - Level-up weighted upgrades now roll into fixed 5-tier value buckets:
   - `Common`, `Uncommon`, `Rare`, `Epic`, `Mythical`
   - one-time upgrades (`formations`, `mob_*`) are classified as `Unique`
 - Level-up card visuals now use tier-based border + glow colors:
   - `Common` = white/gray, `Uncommon` = blue, `Rare` = green,
-    `Epic` = purple, `Mythical` = orange, `Unique` = brown.
+    `Epic` = purple, `Mythical` = orange, `Unique` = red.
 - Raised banner follow offset so it renders visibly behind/above the commander during movement.
 - Dropped banner now uses the standard upright banner sprite for stronger in-world readability.
 - Minimap now shows dropped-banner position and rescuable-retinue positions.
@@ -176,6 +176,11 @@ Use this for entity/component/system lookup without scanning all source files.
 - Added repeatable level-up cards:
   - `Killer Instinct` (`crit_chance`)
   - `Deadly Precision` (`crit_damage`)
+- Added repeatable level-up cards:
+  - `Master Quartermaster` (`item_rarity`) -> boosts equipment roll rarity.
+  - `Tactical Insight` (`upgrade_rarity`) -> boosts upgrade value-roll rarity.
+  - `Enduring Cadence` (`skill_duration`) -> boosts active-skill duration.
+  - `Swift Drills` (`cooldown_reduction`) -> reduces active-skill cooldowns.
 - Stats modal now shows `Crit Chance` and `Crit Damage` bonus rows.
 - Skill Book cumulative descriptions now include crit chance and crit damage totals.
 - Removed decorative floor foliage overlay; battlefield floor now renders as pure sand tiles only.
@@ -541,9 +546,10 @@ Friendly combined outgoing multiplier has lower clamp:
   - alive enemy count is `0`
 
 ### Upgrade Roll Formula (`src/upgrades.rs`)
-- Draft picks `3` unique upgrades from the configured pool.
+- Draft picks `5` unique upgrades from the configured pool.
 - Rolled value uses:
-  - `roll = random(0..1)^weight_exponent`
+  - `roll = random(0..1)^effective_weight_exponent`
+  - `effective_weight_exponent = weight_exponent / (1 + upgrade_rarity_bonus_percent)`
   - `value = min + (max - min) * roll`
   - optional quantization by `value_step`.
 
@@ -702,7 +708,7 @@ Friendly combined outgoing multiplier has lower clamp:
 - settings screen with FPS selector
 - global UI scale sync from live window resolution (`UiScale`) for resolution-mode resilience
 - pause overlay buttons (`Resume`, `Restart`, `Main Menu`)
-- level-up overlay (3 mandatory upgrade cards, icon + description, no skip)
+- level-up overlay (5 mandatory upgrade cards, icon + description, no skip)
 - game-over overlay buttons (`Restart`, `Main Menu`)
 - top HUD (left column: wave/time, center: level/xp/rescue bars)
 - progress strips (rescue + banner pickup)
@@ -756,11 +762,16 @@ Friendly combined outgoing multiplier has lower clamp:
 
 ### `upgrades.rs`
 - XP thresholds and explicit level-up draft flow (`InRun -> LevelUp -> InRun`)
-- 3-option upgrade draft cards (keyboard `1..3` and mouse click selection)
+- 5-option upgrade draft cards (keyboard `1..5` and mouse click selection)
 - weighted random min/max upgrade value rolls
+- upgrade-rarity roll bonus (`upgrade_rarity`) shifts draft value distributions toward higher tiers
 - additive stacked upgrade effects
 - repeatable `fast_learner` upgrade adds to `GlobalBuffs.xp_gain_multiplier`
 - repeatable crit upgrades (`crit_chance`, `crit_damage`) wired into `GlobalBuffs`
+- repeatable item-rarity upgrade (`item_rarity`) feeds equipment chest roll weighting
+- shared skill timing buffs:
+  - `skill_duration` increases duration of cooldown-based skills
+  - `cooldown_reduction` reduces cooldown of cooldown-based skills
 - passive commander level scaling
 - level-up full-heal sync for friendlies
 - generic conditional-upgrade ownership + typed requirement parsing/evaluation

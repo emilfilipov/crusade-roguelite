@@ -43,6 +43,38 @@
       "one_time": true
     },
     {
+      "id": "item_rarity_up",
+      "kind": "item_rarity",
+      "min_value": 0.05,
+      "max_value": 0.10,
+      "value_step": 0.01,
+      "weight_exponent": 2.2
+    },
+    {
+      "id": "upgrade_rarity_up",
+      "kind": "upgrade_rarity",
+      "min_value": 0.05,
+      "max_value": 0.10,
+      "value_step": 0.01,
+      "weight_exponent": 2.2
+    },
+    {
+      "id": "skill_duration_up",
+      "kind": "skill_duration",
+      "min_value": 0.05,
+      "max_value": 0.10,
+      "value_step": 0.01,
+      "weight_exponent": 2.1
+    },
+    {
+      "id": "cooldown_reduction_up",
+      "kind": "cooldown_reduction",
+      "min_value": 0.05,
+      "max_value": 0.10,
+      "value_step": 0.01,
+      "weight_exponent": 2.1
+    },
+    {
       "id": "war_council_edict",
       "kind": "unique_slot_tradeoff",
       "value": 2.0,

@@ -4,7 +4,7 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::model::{GameState, PlayerFaction, StartRunEvent, UnitKind};
-use crate::upgrades::{Progression, commander_level_hp_bonus};
+use crate::upgrades::{Progression, SkillTimingBuffs, commander_level_hp_bonus};
 
 pub const BACKPACK_ROWS: usize = 5;
 pub const BACKPACK_COLS: usize = 6;
@@ -1054,6 +1054,7 @@ fn extract_special_scalar(item: &GearItemEntry, stat_kind: GearStatKind) -> f32 
 fn update_army_equipment_effects(
     time: Res<Time>,
     inventory: Res<InventoryState>,
+    skill_timing: Option<Res<SkillTimingBuffs>>,
     mut effects: ResMut<EquipmentArmyEffects>,
 ) {
     let Some(commander_setup) = inventory.setup_for(EquipmentUnitType::Commander) else {
@@ -1063,6 +1064,14 @@ fn update_army_equipment_effects(
     let cooldown_reduction = commander_armywide_bonuses(&inventory, UnitCombatRole::Commander)
         .cooldown_reduction_secs
         .max(0.0);
+    let skill_duration_multiplier = skill_timing
+        .as_deref()
+        .map(|value| value.duration_multiplier.max(1.0))
+        .unwrap_or(1.0);
+    let upgrade_cooldown_reduction = skill_timing
+        .as_deref()
+        .map(|value| value.cooldown_reduction.clamp(0.0, 0.9))
+        .unwrap_or(0.0);
 
     let mut drum_power = 0.0;
     let mut has_drum = false;
@@ -1089,9 +1098,14 @@ fn update_army_equipment_effects(
         if effects.drum_active_secs <= 0.0 {
             effects.drum_cooldown_secs = (effects.drum_cooldown_secs - dt).max(0.0);
             if effects.drum_cooldown_secs <= 0.0 {
-                effects.drum_active_secs = DRUM_EFFECT_DURATION_SECS;
-                effects.drum_cooldown_secs = (DRUM_BASE_COOLDOWN_SECS - cooldown_reduction)
-                    .max(MIN_ARMY_SKILL_COOLDOWN_SECS);
+                effects.drum_active_secs =
+                    scaled_skill_duration(DRUM_EFFECT_DURATION_SECS, skill_duration_multiplier);
+                effects.drum_cooldown_secs = scaled_skill_cooldown(
+                    DRUM_BASE_COOLDOWN_SECS,
+                    cooldown_reduction,
+                    upgrade_cooldown_reduction,
+                    MIN_ARMY_SKILL_COOLDOWN_SECS,
+                );
             }
         }
     } else {
@@ -1104,9 +1118,14 @@ fn update_army_equipment_effects(
         if effects.chant_active_secs <= 0.0 {
             effects.chant_cooldown_secs = (effects.chant_cooldown_secs - dt).max(0.0);
             if effects.chant_cooldown_secs <= 0.0 {
-                effects.chant_active_secs = CHANT_EFFECT_DURATION_SECS;
-                effects.chant_cooldown_secs = (CHANT_BASE_COOLDOWN_SECS - cooldown_reduction)
-                    .max(MIN_ARMY_SKILL_COOLDOWN_SECS);
+                effects.chant_active_secs =
+                    scaled_skill_duration(CHANT_EFFECT_DURATION_SECS, skill_duration_multiplier);
+                effects.chant_cooldown_secs = scaled_skill_cooldown(
+                    CHANT_BASE_COOLDOWN_SECS,
+                    cooldown_reduction,
+                    upgrade_cooldown_reduction,
+                    MIN_ARMY_SKILL_COOLDOWN_SECS,
+                );
             }
         }
     } else {
@@ -1120,6 +1139,22 @@ fn update_army_equipment_effects(
         0.0
     };
     effects.morale_loss_immunity = effects.chant_active_secs > 0.0;
+}
+
+pub fn scaled_skill_duration(base_duration: f32, duration_multiplier: f32) -> f32 {
+    (base_duration.max(0.0) * duration_multiplier.max(1.0)).max(0.0)
+}
+
+pub fn scaled_skill_cooldown(
+    base_cooldown: f32,
+    additive_reduction_secs: f32,
+    percentage_reduction: f32,
+    min_cooldown: f32,
+) -> f32 {
+    let base_plus_additive =
+        (base_cooldown.max(0.0) - additive_reduction_secs.max(0.0)).max(min_cooldown);
+    let percent = percentage_reduction.clamp(0.0, 0.9);
+    (base_plus_additive * (1.0 - percent)).max(min_cooldown)
 }
 
 #[allow(clippy::type_complexity)]
