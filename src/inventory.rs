@@ -1,9 +1,8 @@
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::banner::BannerState;
+use crate::random::runtime_entropy_seed_u64;
 use crate::model::{GameState, PlayerFaction, StartRunEvent, UnitKind};
 use crate::upgrades::{Progression, SkillTimingBuffs, commander_level_hp_bonus};
 
@@ -289,14 +288,7 @@ impl Default for InventoryRngState {
 
 impl InventoryRngState {
     fn reseed_from_time(&mut self) {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|duration| duration.as_nanos() as u64)
-            .unwrap_or(0xFACE_FEED_AA55_11AA);
-        self.state = nanos ^ 0x9E37_79B9_7F4A_7C15;
-        if self.state == 0 {
-            self.state = 0xBADC_0FFE_FEED_F00D;
-        }
+        self.state = runtime_entropy_seed_u64();
     }
 
     fn next_u32(&mut self) -> u32 {

@@ -8,7 +8,7 @@ use crate::ai::{
 use crate::combat::{RangedAttackCooldown, RangedAttackProfile};
 use crate::data::{EnemyStatsConfig, GameData, WavesConfigFile};
 use crate::formation::{ActiveFormation, active_formation_config, formation_contains_position};
-use crate::map::MapBounds;
+use crate::map::{MapBounds, playable_bounds};
 use crate::model::{
     Armor, AttackCooldown, AttackProfile, ColliderRadius, CommanderUnit, EnemyUnit, FriendlyUnit,
     GameState, Health, MatchSetupSelection, Morale, MoveSpeed, PlayerFaction, StartRunEvent, Team,
@@ -1233,7 +1233,7 @@ mod tests {
     };
     use crate::formation::{ActiveFormation, formation_contains_position};
     use crate::map::MapBounds;
-    use crate::random::runtime_entropy_seed_u32;
+
 
     #[test]
     fn chooses_nearest_target() {

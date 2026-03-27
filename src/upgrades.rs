@@ -9,6 +9,7 @@ use crate::model::{
     BaseMaxHealth, FriendlyUnit, GainXpEvent, GameState, GlobalBuffs, Health, MAX_COMMANDER_LEVEL,
     StartRunEvent,
 };
+use crate::random::runtime_entropy_seed_u64;
 use crate::squad::RosterEconomy;
 
 const LEVEL_UP_OPTION_COUNT: usize = 5;
