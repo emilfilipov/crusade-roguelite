@@ -8,7 +8,6 @@
     "attack_range": 30.0,
     "move_speed": 118.0,
     "morale": 90.0,
-    "cohesion": 80.0,
     "collision_radius": 18.0
   },
   "enemy_christian_peasant_archer": {
@@ -25,7 +24,6 @@
     "ranged_projectile_max_distance": 520.0,
     "move_speed": 120.0,
     "morale": 88.0,
-    "cohesion": 78.0,
     "collision_radius": 18.0
   },
   "enemy_christian_peasant_priest": {
@@ -37,7 +35,6 @@
     "attack_range": 30.0,
     "move_speed": 116.0,
     "morale": 96.0,
-    "cohesion": 84.0,
     "collision_radius": 18.0
   },
   "enemy_muslim_peasant_infantry": {
@@ -49,7 +46,6 @@
     "attack_range": 30.0,
     "move_speed": 118.0,
     "morale": 90.0,
-    "cohesion": 80.0,
     "collision_radius": 18.0
   },
   "enemy_muslim_peasant_archer": {
@@ -66,7 +62,6 @@
     "ranged_projectile_max_distance": 520.0,
     "move_speed": 120.0,
     "morale": 88.0,
-    "cohesion": 78.0,
     "collision_radius": 18.0
   },
   "enemy_muslim_peasant_priest": {
@@ -78,7 +73,6 @@
     "attack_range": 30.0,
     "move_speed": 116.0,
     "morale": 96.0,
-    "cohesion": 84.0,
     "collision_radius": 18.0
   }
 }

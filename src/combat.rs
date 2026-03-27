@@ -10,9 +10,10 @@ use crate::inventory::{
 };
 use crate::model::{
     AttackCooldown, AttackProfile, DamageEvent, DamageTextEvent, EnemyUnit, GameState, GlobalBuffs,
-    Health, SpawnExpPackEvent, Team, Unit, UnitDamagedEvent, UnitDiedEvent, UnitKind, UnitTier,
+    Health, Morale, SpawnExpPackEvent, Team, Unit, UnitDamagedEvent, UnitDiedEvent, UnitKind,
+    UnitTier,
 };
-use crate::morale::CohesionCombatModifiers;
+use crate::morale::{morale_armor_multiplier, morale_damage_multiplier};
 use crate::projectiles::Projectile;
 use crate::squad::{
     CommanderMotionState, PriestAttackSpeedBlessing, priest_attack_speed_multiplier,
@@ -21,6 +22,7 @@ use crate::upgrades::{ConditionalUpgradeEffects, Progression};
 use crate::visuals::ArtAssets;
 
 pub const MIN_FRIENDLY_COMBAT_MULTIPLIER: f32 = 0.55;
+
 const ENEMY_DROP_PICKUP_DELAY_SECS: f32 = 0.9;
 const FORMATION_BOUNDS_PADDING_SLOTS: f32 = 0.35;
 const RANGED_PROJECTILE_HIT_RADIUS: f32 = 10.0;
@@ -160,7 +162,6 @@ fn emit_ranged_projectile_attacks(
     banner_state: Option<Res<BannerState>>,
     active_formation: Res<ActiveFormation>,
     formation_mods: Res<FormationModifiers>,
-    cohesion_mods: Res<CohesionCombatModifiers>,
     progression: Option<Res<Progression>>,
     global_buffs: Option<Res<GlobalBuffs>>,
     conditional_effects: Option<Res<ConditionalUpgradeEffects>>,
@@ -172,6 +173,7 @@ fn emit_ranged_projectile_attacks(
         &Unit,
         Option<&UnitTier>,
         Option<&PriestAttackSpeedBlessing>,
+        Option<&Morale>,
         &Transform,
         &AttackProfile,
         &RangedAttackProfile,
@@ -220,6 +222,7 @@ fn emit_ranged_projectile_attacks(
         commander_unit,
         attacker_tier,
         priest_blessing,
+        attacker_morale,
         commander_transform,
         melee_profile,
         ranged_profile,
@@ -314,13 +317,16 @@ fn emit_ranged_projectile_attacks(
         }
         let direction_normalized = direction.normalize();
 
+        let morale_damage_multiplier = attacker_morale
+            .copied()
+            .map(|value| morale_damage_multiplier_from_ratio(value.ratio()))
+            .unwrap_or(1.0);
         let outgoing_multiplier = if attacker_team == Team::Friendly {
             let base_multiplier = friendly_outgoing_multiplier(
                 effective_formation_offense_multiplier(
                     &formation_mods,
                     commander_motion.as_deref(),
                 ),
-                cohesion_mods.damage_multiplier,
                 1.0,
                 level_multiplier,
             );
@@ -338,8 +344,9 @@ fn emit_ranged_projectile_attacks(
                     .as_deref()
                     .map(|effects| effects.friendly_damage_multiplier)
                     .unwrap_or(1.0)
+                * morale_damage_multiplier
         } else {
-            1.0
+            morale_damage_multiplier
         };
         let ranged_bonus_mult = if attacker_team == Team::Friendly {
             friendly_gear
@@ -423,7 +430,6 @@ fn emit_damage_events(
     banner_state: Option<Res<BannerState>>,
     active_formation: Res<ActiveFormation>,
     formation_mods: Res<FormationModifiers>,
-    cohesion_mods: Res<CohesionCombatModifiers>,
     progression: Option<Res<Progression>>,
     global_buffs: Option<Res<GlobalBuffs>>,
     conditional_effects: Option<Res<ConditionalUpgradeEffects>>,
@@ -435,6 +441,7 @@ fn emit_damage_events(
         Entity,
         &Unit,
         Option<&UnitTier>,
+        Option<&Morale>,
         &Transform,
         &AttackProfile,
         &mut AttackCooldown,
@@ -446,6 +453,7 @@ fn emit_damage_events(
         &Health,
         Option<&UnitTier>,
         Option<&crate::model::Armor>,
+        Option<&Morale>,
     )>,
 ) {
     let banner_item_active = !banner_state
@@ -458,40 +466,49 @@ fn emit_damage_events(
         .unwrap_or(1.0);
     let target_snapshot: Vec<(Entity, Unit, Vec2, f32, f32, f32)> = targets
         .iter()
-        .map(|(entity, unit, transform, health, tier, armor)| {
-            let base_armor = armor.map(|value| value.0).unwrap_or(0.0);
-            let effective_armor = if unit.team == Team::Friendly {
-                let gear_armor_bonus = gear_bonuses_for_unit_with_banner_state(
-                    &inventory,
-                    unit.kind,
-                    tier.copied().map(|value| value.0),
-                    banner_item_active,
-                )
-                .armor_bonus;
-                let temporary_armor_bonus = equipment_effects
-                    .as_deref()
-                    .map(|effects| effects.temporary_armor_bonus)
-                    .unwrap_or(0.0);
-                let armor_with_buffs = base_armor
-                    + gear_armor_bonus
-                    + temporary_armor_bonus
-                    + global_buffs
-                        .as_ref()
-                        .map(|buff| buff.armor_bonus)
+        .map(
+            |(entity, unit, transform, health, tier, armor, target_morale)| {
+                let base_armor = armor.map(|value| value.0).unwrap_or(0.0);
+                let morale_defense_multiplier = target_morale
+                    .copied()
+                    .map(|value| morale_armor_multiplier(value.ratio()))
+                    .unwrap_or(1.0);
+                let effective_armor = if unit.team == Team::Friendly {
+                    let gear_armor_bonus = gear_bonuses_for_unit_with_banner_state(
+                        &inventory,
+                        unit.kind,
+                        tier.copied().map(|value| value.0),
+                        banner_item_active,
+                    )
+                    .armor_bonus;
+                    let temporary_armor_bonus = equipment_effects
+                        .as_deref()
+                        .map(|effects| effects.temporary_armor_bonus)
                         .unwrap_or(0.0);
-                (armor_with_buffs.max(0.0) * formation_mods.defense_multiplier).max(0.0)
-            } else {
-                base_armor
-            };
-            (
-                entity,
-                *unit,
-                transform.translation.truncate(),
-                health.current,
-                health.max,
-                effective_armor,
-            )
-        })
+                    let armor_with_buffs = base_armor
+                        + gear_armor_bonus
+                        + temporary_armor_bonus
+                        + global_buffs
+                            .as_ref()
+                            .map(|buff| buff.armor_bonus)
+                            .unwrap_or(0.0);
+                    (armor_with_buffs.max(0.0)
+                        * formation_mods.defense_multiplier
+                        * morale_defense_multiplier)
+                        .max(0.0)
+                } else {
+                    (base_armor.max(0.0) * morale_defense_multiplier).max(0.0)
+                };
+                (
+                    entity,
+                    *unit,
+                    transform.translation.truncate(),
+                    health.current,
+                    health.max,
+                    effective_armor,
+                )
+            },
+        )
         .collect();
     let formation_targets: Vec<(Entity, Unit, Vec2, f32, f32)> = target_snapshot
         .iter()
@@ -508,8 +525,15 @@ fn emit_damage_events(
         .map(|buff| buff.inside_formation_damage_multiplier)
         .unwrap_or(1.0);
 
-    for (_, attacker_unit, attacker_tier, attacker_transform, attack_profile, mut attack_cd) in
-        &mut attackers
+    for (
+        _,
+        attacker_unit,
+        attacker_tier,
+        attacker_morale,
+        attacker_transform,
+        attack_profile,
+        mut attack_cd,
+    ) in &mut attackers
     {
         if !attack_cd.0.finished() {
             continue;
@@ -576,13 +600,16 @@ fn emit_damage_events(
         )) = closest_target
         {
             attack_cd.0.reset();
+            let morale_damage_multiplier = attacker_morale
+                .copied()
+                .map(|value| morale_damage_multiplier_from_ratio(value.ratio()))
+                .unwrap_or(1.0);
             let outgoing_multiplier = if attacker_unit.team == Team::Friendly {
                 let base = friendly_outgoing_multiplier(
                     effective_formation_offense_multiplier(
                         &formation_mods,
                         commander_motion.as_deref(),
                     ),
-                    cohesion_mods.damage_multiplier,
                     1.0,
                     level_multiplier,
                 );
@@ -599,8 +626,9 @@ fn emit_damage_events(
                         .as_deref()
                         .map(|effects| effects.friendly_damage_multiplier)
                         .unwrap_or(1.0)
+                    * morale_damage_multiplier
             } else {
-                1.0
+                morale_damage_multiplier
             };
 
             let melee_bonus_mult = if attacker_unit.team == Team::Friendly {
@@ -691,14 +719,10 @@ pub fn commander_level_combat_multiplier(level: u32) -> f32 {
 
 pub fn friendly_outgoing_multiplier(
     formation_offense: f32,
-    cohesion_damage_multiplier: f32,
     global_damage_multiplier: f32,
     commander_level_multiplier: f32,
 ) -> f32 {
-    (formation_offense
-        * cohesion_damage_multiplier
-        * global_damage_multiplier
-        * commander_level_multiplier)
+    (formation_offense * global_damage_multiplier * commander_level_multiplier)
         .max(MIN_FRIENDLY_COMBAT_MULTIPLIER)
 }
 
@@ -721,6 +745,10 @@ pub fn compute_damage(base_damage: f32, armor: f32, outgoing_multiplier: f32) ->
     let scaled_damage = (base_damage * outgoing_multiplier).max(0.0);
     let reduction_ratio = armor_reduction_ratio(armor);
     (scaled_damage * (1.0 - reduction_ratio)).max(1.0)
+}
+
+fn morale_damage_multiplier_from_ratio(morale_ratio: f32) -> f32 {
+    morale_damage_multiplier(morale_ratio)
 }
 
 pub fn apply_percent_increase_to_base_plus_additive(
@@ -984,7 +1012,7 @@ mod tests {
 
     #[test]
     fn friendly_multiplier_has_floor() {
-        let multiplier = friendly_outgoing_multiplier(0.6, 0.7, 0.8, 0.9);
+        let multiplier = friendly_outgoing_multiplier(0.6, 0.8, 0.9);
         assert!((multiplier - 0.55).abs() < 0.0001);
     }
 

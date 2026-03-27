@@ -83,7 +83,6 @@ pub struct EnemyStatsConfig {
     pub ranged_projectile_max_distance: f32,
     pub move_speed: f32,
     pub morale: f32,
-    pub cohesion: f32,
     #[serde(default = "default_enemy_collision_radius")]
     pub collision_radius: f32,
 }
@@ -290,10 +289,6 @@ pub struct FactionGameplayConfig {
     pub friendly_morale_gain_multiplier: f32,
     #[serde(default = "default_multiplier")]
     pub friendly_morale_loss_multiplier: f32,
-    #[serde(default = "default_multiplier")]
-    pub friendly_cohesion_gain_multiplier: f32,
-    #[serde(default = "default_multiplier")]
-    pub friendly_cohesion_loss_multiplier: f32,
     #[serde(default)]
     pub commander_aura_radius_bonus: f32,
     #[serde(default = "default_multiplier")]
@@ -302,8 +297,6 @@ pub struct FactionGameplayConfig {
     pub rescue_time_multiplier: f32,
     #[serde(default = "default_multiplier")]
     pub authority_enemy_morale_drain_multiplier: f32,
-    #[serde(default)]
-    pub authority_enemy_cohesion_drain_per_sec: f32,
     #[serde(default = "default_multiplier")]
     pub enemy_health_multiplier: f32,
     #[serde(default = "default_multiplier")]
@@ -314,8 +307,6 @@ pub struct FactionGameplayConfig {
     pub enemy_move_speed_multiplier: f32,
     #[serde(default = "default_multiplier")]
     pub enemy_morale_multiplier: f32,
-    #[serde(default = "default_multiplier")]
-    pub enemy_cohesion_multiplier: f32,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -526,9 +517,7 @@ fn validate_enemy_stats(enemy: &EnemyStatsConfig, label: &str) -> Result<()> {
     if enemy.morale <= 0.0 {
         bail!("{label} morale must be > 0");
     }
-    if enemy.cohesion <= 0.0 {
-        bail!("{label} cohesion must be > 0");
-    }
+
     if enemy.collision_radius <= 0.0 {
         bail!("{label} collision_radius must be > 0");
     }
@@ -806,14 +795,7 @@ fn validate_faction_profile(label: &str, profile: &FactionGameplayConfig) -> Res
         &format!("{label}.friendly_morale_loss_multiplier"),
         profile.friendly_morale_loss_multiplier,
     )?;
-    validate_multiplier_field(
-        &format!("{label}.friendly_cohesion_gain_multiplier"),
-        profile.friendly_cohesion_gain_multiplier,
-    )?;
-    validate_multiplier_field(
-        &format!("{label}.friendly_cohesion_loss_multiplier"),
-        profile.friendly_cohesion_loss_multiplier,
-    )?;
+
     validate_multiplier_field(
         &format!("{label}.xp_gain_multiplier"),
         profile.xp_gain_multiplier,
@@ -846,13 +828,7 @@ fn validate_faction_profile(label: &str, profile: &FactionGameplayConfig) -> Res
         &format!("{label}.enemy_morale_multiplier"),
         profile.enemy_morale_multiplier,
     )?;
-    validate_multiplier_field(
-        &format!("{label}.enemy_cohesion_multiplier"),
-        profile.enemy_cohesion_multiplier,
-    )?;
-    if profile.authority_enemy_cohesion_drain_per_sec < 0.0 {
-        bail!("{label}.authority_enemy_cohesion_drain_per_sec must be >= 0");
-    }
+
     Ok(())
 }
 
@@ -902,12 +878,12 @@ mod tests {
             dir,
             "enemies.json",
             r#"{
-              "enemy_christian_peasant_infantry":{"id":"ec_i","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0,"cohesion":70.0},
-              "enemy_christian_peasant_archer":{"id":"ec_a","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0,"cohesion":70.0},
-              "enemy_christian_peasant_priest":{"id":"ec_p","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0,"cohesion":70.0},
-              "enemy_muslim_peasant_infantry":{"id":"em_i","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0,"cohesion":70.0},
-              "enemy_muslim_peasant_archer":{"id":"em_a","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0,"cohesion":70.0},
-              "enemy_muslim_peasant_priest":{"id":"em_p","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0,"cohesion":70.0}
+              "enemy_christian_peasant_infantry":{"id":"ec_i","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0},
+              "enemy_christian_peasant_archer":{"id":"ec_a","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0},
+              "enemy_christian_peasant_priest":{"id":"ec_p","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0},
+              "enemy_muslim_peasant_infantry":{"id":"em_i","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0},
+              "enemy_muslim_peasant_archer":{"id":"em_a","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0},
+              "enemy_muslim_peasant_priest":{"id":"em_p","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0}
             }"#,
         );
         write_config(
@@ -970,19 +946,15 @@ mod tests {
                 "friendly_morale_multiplier":1.0,
                 "friendly_morale_gain_multiplier":1.0,
                 "friendly_morale_loss_multiplier":1.0,
-                "friendly_cohesion_gain_multiplier":1.0,
-                "friendly_cohesion_loss_multiplier":1.0,
                 "commander_aura_radius_bonus":0.0,
                 "xp_gain_multiplier":1.0,
                 "rescue_time_multiplier":1.0,
                 "authority_enemy_morale_drain_multiplier":1.0,
-                "authority_enemy_cohesion_drain_per_sec":0.0,
                 "enemy_health_multiplier":1.0,
                 "enemy_damage_multiplier":1.0,
                 "enemy_attack_speed_multiplier":1.0,
                 "enemy_move_speed_multiplier":1.0,
-                "enemy_morale_multiplier":1.0,
-                "enemy_cohesion_multiplier":1.0
+                "enemy_morale_multiplier":1.0
               },
               "muslim":{
                 "friendly_health_multiplier":1.0,
@@ -993,19 +965,15 @@ mod tests {
                 "friendly_morale_multiplier":1.0,
                 "friendly_morale_gain_multiplier":1.0,
                 "friendly_morale_loss_multiplier":1.0,
-                "friendly_cohesion_gain_multiplier":1.0,
-                "friendly_cohesion_loss_multiplier":1.0,
                 "commander_aura_radius_bonus":0.0,
                 "xp_gain_multiplier":1.0,
                 "rescue_time_multiplier":1.0,
                 "authority_enemy_morale_drain_multiplier":1.0,
-                "authority_enemy_cohesion_drain_per_sec":0.0,
                 "enemy_health_multiplier":1.0,
                 "enemy_damage_multiplier":1.0,
                 "enemy_attack_speed_multiplier":1.0,
                 "enemy_move_speed_multiplier":1.0,
-                "enemy_morale_multiplier":1.0,
-                "enemy_cohesion_multiplier":1.0
+                "enemy_morale_multiplier":1.0
               }
             }"#,
         );
@@ -1041,27 +1009,6 @@ mod tests {
 
         let err = GameData::load_from_dir(tmp.path()).expect_err("expected invalid config");
         assert!(err.to_string().contains("attack_cooldown_secs"));
-    }
-
-    #[test]
-    fn rejects_enemy_cohesion_below_or_equal_zero() {
-        let tmp = TempDir::new().expect("tmp");
-        write_valid_set(tmp.path());
-        write_config(
-            tmp.path(),
-            "enemies.json",
-            r#"{
-              "enemy_christian_peasant_infantry":{"id":"ec_i","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0,"cohesion":0.0},
-              "enemy_christian_peasant_archer":{"id":"ec_a","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0,"cohesion":70.0},
-              "enemy_christian_peasant_priest":{"id":"ec_p","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0,"cohesion":70.0},
-              "enemy_muslim_peasant_infantry":{"id":"em_i","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0,"cohesion":70.0},
-              "enemy_muslim_peasant_archer":{"id":"em_a","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0,"cohesion":70.0},
-              "enemy_muslim_peasant_priest":{"id":"em_p","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0,"cohesion":70.0}
-            }"#,
-        );
-
-        let err = GameData::load_from_dir(tmp.path()).expect_err("expected invalid enemy cohesion");
-        assert!(err.to_string().contains("cohesion"));
     }
 
     #[test]

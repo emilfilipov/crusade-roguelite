@@ -190,6 +190,38 @@
 
 ---
 
+### CRU-067 - Single-Morale Unification + Threshold Toast Notifications
+- Status: `DONE`
+- Type: `Gameplay`
+- Priority: `P0`
+- Depends on: `<none>`
+- Goal: Replace dual morale/cohesion gameplay with a single morale system and add on-screen threshold crossing notifications.
+- Context:
+  - Current dual-stat model adds cognitive and balancing complexity while overlapping in function.
+  - Design direction is one morale axis with gradual bracket scaling, collapse behavior at 0, and clear player feedback.
+  - Notifications must appear in-run, for both rising and falling threshold crossings, and stay visible for a short duration below pickup progress bars.
+  - Files expected: `src/morale.rs`, `src/combat.rs`, `src/projectiles.rs`, `src/enemies.rs`, `src/ui.rs`, `src/archive.rs`, `src/data.rs`, `assets/data/enemies.json`, `assets/data/factions.json`, `docs/SYSTEMS_REFERENCE.md`.
+- Implementation:
+  1. Remove active cohesion gameplay dependency and unify combat/movement/regen/collapse behavior under morale-only formulas with gradual scaling from `51..100` and penalties in `<50`.
+  2. Keep collapse-style retinue loss at 0 morale with delayed reset timing and update enemy integration so morale brackets apply consistently to both sides.
+  3. Add morale threshold eventing and HUD toast rendering for upward/downward crossings (recommended thresholds: 25/50/80/100), including timing, replacement behavior, and placement below pickup progress bars.
+  4. Clean schema/runtime paths that currently require cohesion-only fields/components while maintaining valid data loading and preserving gameplay stability.
+- Unit Tests Required:
+  - Bracket interpolation tests for morale bonus/penalty scaling and movement behavior.
+  - Threshold crossing tests for both rising and falling transitions (including multi-threshold jumps).
+  - Collapse/reset timing tests for morale reaching 0 and delayed restore.
+  - Regression tests for combat multiplier and armor path correctness after cohesion removal.
+- Acceptance Criteria:
+  - In-run HUD uses morale as the single discipline meter (no active cohesion meter).
+  - Gameplay effects previously split across morale/cohesion are represented through morale-only brackets and behave smoothly.
+  - Threshold toasts appear for both increase and decrease crossings, remain visible for a few seconds, and render below pickup progress bars.
+  - Full quality loop passes on Windows target per global rules.
+- Documentation Updates Required:
+  - `docs/SYSTEMS_REFERENCE.md`
+  - `docs/SYSTEM_SCOPE_MAP.md` (only if scope gate changes)
+
+---
+
 ## Task Card Template
 ### CRU-XXX - <Title>
 - Status: `TODO`

@@ -13,7 +13,7 @@ use crate::map::{MapBounds, playable_bounds};
 use crate::model::{
     Armor, AttackCooldown, AttackProfile, ColliderRadius, CommanderUnit, EnemyUnit, FriendlyUnit,
     GameState, Health, MatchSetupSelection, Morale, MoveSpeed, PlayerFaction, StartRunEvent, Team,
-    Unit, UnitCohesion, UnitKind,
+    Unit, UnitKind,
 };
 use crate::morale::morale_movement_multiplier;
 use crate::squad::PriestSupportCaster;
@@ -375,7 +375,6 @@ fn spawn_enemy_batch(
         let move_speed =
             enemy_move_speed(cfg.move_speed * faction_mods.enemy_move_speed_multiplier);
         let morale = (cfg.morale * faction_mods.enemy_morale_multiplier).max(1.0);
-        let cohesion = (cfg.cohesion * faction_mods.enemy_cohesion_multiplier).max(1.0);
         let texture = enemy_texture_for_kind(art, enemy_kind);
         let pos = random_spawn_position_from_rng(bounds, commander_position, spawn_rng_state);
         let mut entity = commands.spawn((
@@ -397,7 +396,6 @@ fn spawn_enemy_batch(
             },
             Health::new(hp),
             Morale::new(morale),
-            UnitCohesion::new(cohesion),
             Armor(armor),
             AttackProfile {
                 damage,

@@ -24,7 +24,10 @@ use crate::model::{
     RunModalRequestEvent, RunModalScreen, RunModalState, RunSession, StartRunEvent, Team, Unit,
     UnitKind,
 };
-use crate::morale::{Cohesion, average_morale_ratio, commander_aura_radius};
+use crate::morale::{
+    MoraleThresholdCrossedEvent, average_morale_ratio, commander_aura_radius,
+    morale_threshold_message,
+};
 use crate::rescue::{RescueProgress, effective_rescue_duration};
 use crate::settings::AppSettings;
 use crate::squad::{
@@ -42,7 +45,6 @@ use crate::visuals::ArtAssets;
 
 #[derive(Resource, Clone, Debug)]
 pub struct HudSnapshot {
-    pub cohesion: f32,
     pub banner_dropped: bool,
     pub squad_size: usize,
     pub retinue_count: usize,
@@ -61,7 +63,6 @@ pub struct HudSnapshot {
 impl Default for HudSnapshot {
     fn default() -> Self {
         Self {
-            cohesion: 100.0,
             banner_dropped: false,
             squad_size: 1,
             retinue_count: 0,
@@ -230,7 +231,22 @@ struct RescueProgressBarsRoot;
 struct MoraleBarFill;
 
 #[derive(Component, Clone, Copy, Debug)]
-struct CohesionBarFill;
+struct MoraleToastText;
+
+#[derive(Resource, Clone, Debug)]
+struct MoraleToastRuntime {
+    text: String,
+    remaining_secs: f32,
+}
+
+impl Default for MoraleToastRuntime {
+    fn default() -> Self {
+        Self {
+            text: String::new(),
+            remaining_secs: 0.0,
+        }
+    }
+}
 
 #[derive(Component, Clone, Copy, Debug)]
 struct MinimapDotsRoot;
@@ -535,6 +551,7 @@ pub struct UiPlugin;
 impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<HudSnapshot>()
+            .init_resource::<MoraleToastRuntime>()
             .init_resource::<MinimapRefreshRuntime>()
             .init_resource::<UnitUpgradeUiState>()
             .init_resource::<InventorySlotSelection>()
@@ -640,6 +657,8 @@ impl Plugin for UiPlugin {
                 Update,
                 (
                     update_in_run_hud,
+                    consume_morale_threshold_events,
+                    update_morale_threshold_toast,
                     update_rescue_progress_hud,
                     update_skill_bar_hud,
                 )
@@ -2015,13 +2034,25 @@ fn spawn_in_run_hud(
                     MoraleBarFill,
                     Color::srgb(0.83, 0.63, 0.27),
                 );
-                spawn_vertical_meter(
-                    bottom_left,
-                    "COHESION",
-                    CohesionBarFill,
-                    Color::srgb(0.38, 0.69, 0.9),
-                );
             });
+
+            root.spawn((
+                MoraleToastText,
+                TextBundle::from_section(
+                    "",
+                    TextStyle {
+                        font_size: 22.0,
+                        color: HUD_TEXT_COLOR,
+                        ..default()
+                    },
+                )
+                .with_style(Style {
+                    position_type: PositionType::Absolute,
+                    top: Val::Px(128.0),
+                    left: Val::Px(420.0),
+                    ..default()
+                }),
+            ));
 
             spawn_utility_bar(root, &art);
             spawn_minimap(root);
@@ -6475,7 +6506,6 @@ fn sync_responsive_ui_scale(
 
 #[allow(clippy::too_many_arguments)]
 fn refresh_hud_snapshot(
-    cohesion: Res<Cohesion>,
     banner_state: Res<BannerState>,
     roster: Res<SquadRoster>,
     roster_economy: Res<RosterEconomy>,
@@ -6489,7 +6519,6 @@ fn refresh_hud_snapshot(
 ) {
     let morale_ratios: Vec<f32> = friendlies.iter().map(|morale| morale.ratio()).collect();
     *hud = HudSnapshot {
-        cohesion: cohesion.value,
         banner_dropped: banner_state.is_dropped,
         squad_size: roster.friendly_count,
         retinue_count: roster_economy.total_retinue_count as usize,
@@ -6519,7 +6548,6 @@ fn update_in_run_hud(
     mut bar_styles: ParamSet<(
         Query<&mut Style, With<XpBarFill>>,
         Query<&mut Style, With<MoraleBarFill>>,
-        Query<&mut Style, With<CohesionBarFill>>,
     )>,
 ) {
     if let Ok(mut text) = texts.p0().get_single_mut() {
@@ -6552,8 +6580,31 @@ fn update_in_run_hud(
     if let Ok(mut style) = bar_styles.p1().get_single_mut() {
         style.height = Val::Percent(hud.average_morale_ratio.clamp(0.0, 1.0) * 100.0);
     }
-    if let Ok(mut style) = bar_styles.p2().get_single_mut() {
-        style.height = Val::Percent((hud.cohesion / 100.0).clamp(0.0, 1.0) * 100.0);
+}
+
+fn consume_morale_threshold_events(
+    mut events: EventReader<MoraleThresholdCrossedEvent>,
+    mut toast: ResMut<MoraleToastRuntime>,
+) {
+    for event in events.read() {
+        toast.text = morale_threshold_message(event.threshold_ratio, event.direction);
+        toast.remaining_secs = 2.8;
+    }
+}
+
+fn update_morale_threshold_toast(
+    time: Res<Time>,
+    mut toast: ResMut<MoraleToastRuntime>,
+    mut text_query: Query<&mut Text, With<MoraleToastText>>,
+) {
+    toast.remaining_secs = (toast.remaining_secs - time.delta_seconds()).max(0.0);
+    let visible = toast.remaining_secs > 0.0;
+    if let Ok(mut text) = text_query.get_single_mut() {
+        text.sections[0].value = if visible {
+            toast.text.clone()
+        } else {
+            String::new()
+        };
     }
 }
 
@@ -7250,7 +7301,6 @@ mod tests {
     #[test]
     fn snapshot_holds_expected_values() {
         let snapshot = HudSnapshot {
-            cohesion: 70.0,
             banner_dropped: true,
             squad_size: 5,
             retinue_count: 4,

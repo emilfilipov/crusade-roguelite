@@ -1,16 +1,15 @@
 use bevy::prelude::*;
 
 use crate::model::{CommanderUnit, FriendlyUnit, GameState, Morale, StartRunEvent};
-use crate::morale::Cohesion;
+
 use crate::visuals::ArtAssets;
 
 const BANNER_DROP_MORALE_RATIO_THRESHOLD: f32 = 0.0;
 const BANNER_PICKUP_UNLOCK_SECS: f32 = 10.0;
 const BANNER_PICKUP_DURATION_SECS: f32 = 5.0;
 const BANNER_RECOVERY_RADIUS: f32 = 42.0;
-const BANNER_COHESION_RESTORE: f32 = 70.0;
+
 const BANNER_REDROP_GRACE_SECS: f32 = 10.0;
-const BANNER_DROPPED_SPEED_MULTIPLIER: f32 = 0.72;
 const BANNER_FOLLOW_Y_OFFSET: f32 = 18.0;
 const BANNER_FOLLOW_Z: f32 = 9.0;
 const BANNER_DROPPED_Z: f32 = 3.0;
@@ -173,7 +172,6 @@ fn drop_banner_on_zero_morale(
 #[allow(clippy::type_complexity)]
 fn tick_banner_recovery(
     time: Res<Time>,
-    mut cohesion: ResMut<Cohesion>,
     mut banner_state: ResMut<BannerState>,
     friendlies: Query<&Transform, With<FriendlyUnit>>,
 ) {
@@ -214,7 +212,6 @@ fn tick_banner_recovery(
         banner_state.pickup_progress = 0.0;
         banner_state.pickup_unlock_remaining = 0.0;
         banner_state.redrop_grace_remaining = BANNER_REDROP_GRACE_SECS;
-        cohesion.value = BANNER_COHESION_RESTORE;
     }
 }
 
@@ -235,14 +232,10 @@ fn sync_banner_visual(
 }
 
 fn refresh_banner_speed_penalty(
-    banner_state: Res<BannerState>,
+    _banner_state: Res<BannerState>,
     mut movement_penalty: ResMut<BannerMovementPenalty>,
 ) {
-    movement_penalty.friendly_speed_multiplier = if banner_state.is_dropped {
-        BANNER_DROPPED_SPEED_MULTIPLIER
-    } else {
-        1.0
-    };
+    movement_penalty.friendly_speed_multiplier = 1.0;
 }
 
 pub fn should_drop_banner(

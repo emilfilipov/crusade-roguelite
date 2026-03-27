@@ -8,19 +8,15 @@
     "friendly_morale_multiplier": 1.08,
     "friendly_morale_gain_multiplier": 1.06,
     "friendly_morale_loss_multiplier": 0.9,
-    "friendly_cohesion_gain_multiplier": 1.06,
-    "friendly_cohesion_loss_multiplier": 0.88,
-    "commander_aura_radius_bonus": 16.0,
+    "commander_aura_radius_bonus": 0.0,
     "xp_gain_multiplier": 1.0,
     "rescue_time_multiplier": 1.0,
     "authority_enemy_morale_drain_multiplier": 1.0,
-    "authority_enemy_cohesion_drain_per_sec": 0.08,
     "enemy_health_multiplier": 1.08,
     "enemy_damage_multiplier": 1.02,
     "enemy_attack_speed_multiplier": 0.96,
     "enemy_move_speed_multiplier": 0.92,
-    "enemy_morale_multiplier": 1.1,
-    "enemy_cohesion_multiplier": 1.1
+    "enemy_morale_multiplier": 1.1
   },
   "muslim": {
     "friendly_health_multiplier": 0.95,
@@ -31,18 +27,14 @@
     "friendly_morale_multiplier": 0.95,
     "friendly_morale_gain_multiplier": 0.98,
     "friendly_morale_loss_multiplier": 1.08,
-    "friendly_cohesion_gain_multiplier": 0.98,
-    "friendly_cohesion_loss_multiplier": 1.08,
-    "commander_aura_radius_bonus": -8.0,
+    "commander_aura_radius_bonus": 0.0,
     "xp_gain_multiplier": 1.0,
     "rescue_time_multiplier": 0.95,
     "authority_enemy_morale_drain_multiplier": 1.18,
-    "authority_enemy_cohesion_drain_per_sec": 0.12,
     "enemy_health_multiplier": 0.92,
     "enemy_damage_multiplier": 1.08,
     "enemy_attack_speed_multiplier": 1.08,
     "enemy_move_speed_multiplier": 1.1,
-    "enemy_morale_multiplier": 0.94,
-    "enemy_cohesion_multiplier": 0.9
+    "enemy_morale_multiplier": 0.94
   }
 }

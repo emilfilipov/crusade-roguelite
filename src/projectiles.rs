@@ -5,7 +5,7 @@ use crate::combat::{compute_damage, should_execute_target};
 use crate::inventory::{
     EquipmentArmyEffects, InventoryState, gear_bonuses_for_unit_with_banner_state,
 };
-use crate::model::{DamageEvent, GameState, GlobalBuffs, Health, Team, Unit};
+use crate::model::{DamageEvent, GameState, GlobalBuffs, Health, Morale, Team, Unit};
 use crate::upgrades::ConditionalUpgradeEffects;
 
 #[derive(Component, Clone, Copy, Debug)]
@@ -17,6 +17,9 @@ pub struct Projectile {
     pub source_team: Team,
     pub is_critical: bool,
 }
+
+const BRACKET_LOW_THRESHOLD: f32 = 0.5;
+const LOW_MORALE_ARMOR_DEBUFF_MAX_RATIO: f32 = 0.12;
 
 pub struct ProjectilePlugin;
 
@@ -52,6 +55,7 @@ fn projectile_collisions(
     mut damage_events: EventWriter<DamageEvent>,
     banner_state: Option<Res<BannerState>>,
     buffs: Option<Res<GlobalBuffs>>,
+
     conditional_effects: Option<Res<ConditionalUpgradeEffects>>,
     inventory: Res<InventoryState>,
     equipment_effects: Option<Res<EquipmentArmyEffects>>,
@@ -63,6 +67,7 @@ fn projectile_collisions(
         &Health,
         Option<&crate::model::UnitTier>,
         Option<&crate::model::Armor>,
+        Option<&Morale>,
     )>,
 ) {
     let banner_item_active = !banner_state
@@ -79,6 +84,7 @@ fn projectile_collisions(
             target_health,
             target_tier,
             target_armor,
+            target_morale,
         ) in &targets
         {
             if target_unit.team == projectile.source_team || target_health.current <= 0.0 {
@@ -87,6 +93,11 @@ fn projectile_collisions(
             let target_pos = target_transform.translation.truncate();
             if projectile_pos.distance(target_pos) <= projectile.radius {
                 let base_armor = target_armor.map(|value| value.0).unwrap_or(0.0);
+                let morale_armor_multiplier = target_morale
+                    .copied()
+                    .map(|value| morale_armor_multiplier_from_ratio(value.ratio()))
+                    .unwrap_or(1.0);
+
                 let effective_armor = if target_unit.team == Team::Friendly {
                     let gear_armor_bonus = gear_bonuses_for_unit_with_banner_state(
                         &inventory,
@@ -99,12 +110,13 @@ fn projectile_collisions(
                         .as_deref()
                         .map(|effects| effects.temporary_armor_bonus)
                         .unwrap_or(0.0);
-                    base_armor
+                    (base_armor
                         + gear_armor_bonus
                         + temporary_armor_bonus
-                        + buffs.as_ref().map(|value| value.armor_bonus).unwrap_or(0.0)
+                        + buffs.as_ref().map(|value| value.armor_bonus).unwrap_or(0.0))
+                        * morale_armor_multiplier
                 } else {
-                    base_armor
+                    base_armor * morale_armor_multiplier
                 };
                 let execute_threshold = conditional_effects
                     .as_deref()
@@ -137,6 +149,15 @@ fn projectile_collisions(
             commands.entity(projectile_entity).despawn_recursive();
         }
     }
+}
+
+fn morale_armor_multiplier_from_ratio(morale_ratio: f32) -> f32 {
+    if morale_ratio >= BRACKET_LOW_THRESHOLD {
+        return 1.0;
+    }
+    let normalized =
+        ((BRACKET_LOW_THRESHOLD - morale_ratio) / BRACKET_LOW_THRESHOLD).clamp(0.0, 1.0);
+    1.0 - normalized * LOW_MORALE_ARMOR_DEBUFF_MAX_RATIO
 }
 
 #[cfg(test)]
