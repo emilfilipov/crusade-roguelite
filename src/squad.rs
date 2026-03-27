@@ -1626,7 +1626,7 @@ mod tests {
 
         let economy_after_recruit = app.world().resource::<RosterEconomy>();
         assert_eq!(economy_after_recruit.locked_levels, 0);
-        assert_eq!(economy_after_recruit.allowed_max_level, 200);
+        assert_eq!(economy_after_recruit.allowed_max_level, 100);
 
         let archer_entity = {
             let world = app.world_mut();
@@ -1646,7 +1646,7 @@ mod tests {
 
         let economy_after_death = app.world().resource::<RosterEconomy>();
         assert_eq!(economy_after_death.locked_levels, 0);
-        assert_eq!(economy_after_death.allowed_max_level, 200);
+        assert_eq!(economy_after_death.allowed_max_level, 100);
     }
 
     #[test]
@@ -1663,7 +1663,7 @@ mod tests {
         app.insert_resource(FormationModifiers::default());
         app.insert_resource(Progression {
             xp: 0.0,
-            level: 200,
+            level: 100,
             next_level_xp: f32::INFINITY,
         });
         app.add_plugins(SquadPlugin);

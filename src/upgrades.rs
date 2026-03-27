@@ -1,5 +1,4 @@
 use std::collections::HashSet;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use bevy::prelude::*;
 
@@ -281,16 +280,7 @@ impl Default for UpgradeRngState {
 
 impl UpgradeRngState {
     fn reseed_from_time(&mut self) {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|duration| duration.as_nanos() as u64)
-            .unwrap_or(0xBADC_0FFEE_u64);
-        let mixed = nanos ^ 0x9E37_79B9_7F4A_7C15_u64;
-        self.state = if mixed == 0 {
-            0xC57A_5EED_5EED_u64
-        } else {
-            mixed
-        };
+        self.state = runtime_entropy_seed_u64();
     }
 
     fn next_u32(&mut self) -> u32 {
@@ -1867,7 +1857,7 @@ mod tests {
     #[test]
     fn xp_requirements_use_uniform_per_level_growth() {
         let early_ratio = xp_required_for_level(11) / xp_required_for_level(10);
-        let late_ratio = xp_required_for_level(121) / xp_required_for_level(120);
+        let late_ratio = xp_required_for_level(91) / xp_required_for_level(90);
         assert!((early_ratio - super::XP_GROWTH_PER_LEVEL).abs() < 0.0001);
         assert!((late_ratio - super::XP_GROWTH_PER_LEVEL).abs() < 0.0001);
     }
@@ -1880,13 +1870,13 @@ mod tests {
 
     #[test]
     fn progression_lock_reason_engages_and_clears_with_budget() {
-        let locked = progression_lock_reason(199, 199);
+        let locked = progression_lock_reason(99, 99);
         assert!(locked.is_some());
 
-        let unlocked = progression_lock_reason(120, 199);
+        let unlocked = progression_lock_reason(80, 99);
         assert!(unlocked.is_none());
 
-        let hard_cap_only = progression_lock_reason(200, 200);
+        let hard_cap_only = progression_lock_reason(100, 100);
         assert!(hard_cap_only.is_none());
     }
 

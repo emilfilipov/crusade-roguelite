@@ -67,7 +67,7 @@ impl Default for HudSnapshot {
             squad_size: 1,
             retinue_count: 0,
             level: 1,
-            allowed_max_level: 200,
+            allowed_max_level: 100,
             xp: 0.0,
             next_level_xp: 30.0,
             wave_index: 0,
@@ -339,6 +339,9 @@ struct ScrollViewport {
 struct ScrollContent {
     offset: f32,
 }
+
+#[derive(Component, Clone, Copy, Debug)]
+struct ScrollbarThumb;
 
 #[derive(Resource, Clone, Debug)]
 struct UnitUpgradeUiState {
@@ -688,7 +691,11 @@ impl Plugin for UiPlugin {
             )
             .add_systems(
                 Update,
-                handle_scroll_views.run_if(resource_exists::<Events<MouseWheel>>),
+                (
+                    handle_scroll_views.run_if(resource_exists::<Events<MouseWheel>>),
+                    update_scroll_view_scrollbars,
+                )
+                    .run_if(in_state(GameState::InRun)),
             );
     }
 }
@@ -3135,6 +3142,23 @@ fn spawn_scrollable_panel(
                     },
                 ))
                 .with_children(content_builder);
+
+            viewport.spawn((
+                ScrollbarThumb,
+                NodeBundle {
+                    style: Style {
+                        position_type: PositionType::Absolute,
+                        right: Val::Px(2.0),
+                        top: Val::Px(2.0),
+                        width: Val::Px(6.0),
+                        height: Val::Px(24.0),
+                        ..default()
+                    },
+                    background_color: BackgroundColor(Color::srgba(0.9, 0.85, 0.7, 0.65)),
+                    border_color: BorderColor(Color::srgba(0.15, 0.12, 0.09, 0.8)),
+                    ..default()
+                },
+            ));
         });
 }
 
@@ -6331,9 +6355,55 @@ fn attempt_inventory_transfer(
     }
 }
 
+fn update_scroll_view_scrollbars(
+    viewport_query: Query<(Entity, &Node, &ScrollViewport)>,
+    content_query: Query<(&Parent, &Node, &ScrollContent), With<ScrollContent>>,
+    mut thumb_query: Query<(&Parent, &mut Style), With<ScrollbarThumb>>,
+) {
+    for (thumb_parent, mut thumb_style) in &mut thumb_query {
+        let viewport_entity = thumb_parent.get();
+        let Ok((_, viewport_node, viewport)) = viewport_query.get(viewport_entity) else {
+            continue;
+        };
+        let Some((_, content_node, content)) = content_query
+            .iter()
+            .find(|(parent, _, _)| parent.get() == viewport_entity)
+        else {
+            continue;
+        };
+
+        let viewport_height = if viewport_node.size().y > 1.0 {
+            viewport_node.size().y
+        } else {
+            viewport.max_height
+        };
+        let content_height = content_node.size().y.max(0.0);
+
+        if viewport_height <= 0.0 || content_height <= 0.0 || content_height <= viewport_height {
+            thumb_style.top = Val::Px(2.0);
+            thumb_style.height = Val::Px((viewport_height - 4.0).max(12.0));
+            continue;
+        }
+
+        let track_height = (viewport_height - 4.0).max(1.0);
+        let visible_ratio = (viewport_height / content_height).clamp(0.05, 1.0);
+        let thumb_height = (track_height * visible_ratio).clamp(12.0, track_height);
+
+        let max_negative_offset = (content_height - viewport_height).max(0.0);
+        let progress = (-content.offset / max_negative_offset).clamp(0.0, 1.0);
+        let travel = (track_height - thumb_height).max(0.0);
+        let thumb_top = 2.0 + travel * progress;
+
+        thumb_style.top = Val::Px(thumb_top);
+        thumb_style.height = Val::Px(thumb_height);
+    }
+}
+
 fn handle_scroll_views(
     mut wheel_events: EventReader<MouseWheel>,
     viewport_query: Query<(Entity, &Node, &ScrollViewport, Option<&Interaction>)>,
+    interaction_query: Query<(Entity, &Interaction)>,
+    parent_query: Query<&Parent>,
     mut content_query: Query<(&Parent, &Node, &mut Style, &mut ScrollContent), With<ScrollContent>>,
 ) {
     let wheel_delta = wheel_events.read().map(|event| event.y).sum::<f32>() * 28.0;
@@ -6341,7 +6411,7 @@ fn handle_scroll_views(
         return;
     }
 
-    let hovered_viewports: std::collections::HashSet<Entity> = viewport_query
+    let mut hovered_viewports: std::collections::HashSet<Entity> = viewport_query
         .iter()
         .filter_map(|(entity, _, _, interaction)| {
             let is_hovered = interaction
@@ -6351,6 +6421,22 @@ fn handle_scroll_views(
             is_hovered.then_some(entity)
         })
         .collect();
+
+    for (entity, interaction) in &interaction_query {
+        if !scroll_viewport_is_hovered(*interaction) {
+            continue;
+        }
+        let mut current = entity;
+        while let Ok(parent) = parent_query.get(current) {
+            let parent_entity = parent.get();
+            if viewport_query.get(parent_entity).is_ok() {
+                hovered_viewports.insert(parent_entity);
+                break;
+            }
+            current = parent_entity;
+        }
+    }
+
     if hovered_viewports.is_empty() {
         return;
     }

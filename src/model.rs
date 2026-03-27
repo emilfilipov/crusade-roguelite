@@ -483,7 +483,7 @@ pub struct RunModalRequestEvent {
     pub action: RunModalAction,
 }
 
-pub const MAX_COMMANDER_LEVEL: u32 = 200;
+pub const MAX_COMMANDER_LEVEL: u32 = 100;
 
 pub fn level_cap_from_locked_budget(locked_levels: u32) -> u32 {
     MAX_COMMANDER_LEVEL.saturating_sub(locked_levels)

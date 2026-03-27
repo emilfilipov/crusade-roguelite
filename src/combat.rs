@@ -33,6 +33,7 @@ const MAX_CRIT_CHANCE: f32 = 0.95;
 const ARMOR_DIMINISHING_SCALE: f32 = 90.0;
 const MAX_ARMOR_REDUCTION_RATIO: f32 = 0.90;
 const DEATH_HEALTH_EPSILON: f32 = 0.01;
+const PEASANT_INFANTRY_BLOCK_CHANCE: f32 = 0.15;
 
 #[derive(Clone, Copy, Debug)]
 struct CombatRngState {
@@ -892,17 +893,36 @@ pub fn inside_active_formation_bounds(
     )
 }
 
+fn is_peasant_infantry_kind(kind: UnitKind) -> bool {
+    matches!(
+        kind,
+        UnitKind::ChristianPeasantInfantry
+            | UnitKind::MuslimPeasantInfantry
+            | UnitKind::RescuableChristianPeasantInfantry
+            | UnitKind::RescuableMuslimPeasantInfantry
+    )
+}
+
+fn roll_full_block(kind: UnitKind, rng: &mut CombatRngState) -> bool {
+    is_peasant_infantry_kind(kind) && rng.next_f32() < PEASANT_INFANTRY_BLOCK_CHANCE
+}
+
 fn apply_damage_events(
     mut damage_events: EventReader<DamageEvent>,
     mut damage_text_events: EventWriter<DamageTextEvent>,
     mut damaged_events: EventWriter<UnitDamagedEvent>,
     mut health_query: Query<(&mut Health, &Unit, &Transform)>,
+    mut block_rng: Local<CombatRngState>,
 ) {
     for event in damage_events.read() {
         if event.amount <= 0.0 {
             continue;
         }
         if let Ok((mut health, unit, transform)) = health_query.get_mut(event.target) {
+            if roll_full_block(unit.kind, &mut block_rng) {
+                continue;
+            }
+
             let applied_damage = event.amount.min(health.current.max(0.0));
             if applied_damage <= 0.0 {
                 continue;

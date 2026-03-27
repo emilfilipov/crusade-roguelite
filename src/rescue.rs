@@ -1,5 +1,4 @@
 use bevy::prelude::*;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::data::{GameData, RescueConfig};
 use crate::map::MapBounds;
@@ -7,6 +6,7 @@ use crate::model::{
     FriendlyUnit, GameState, MatchSetupSelection, PlayerFaction, RecruitArchetype, RecruitEvent,
     RecruitUnitKind, RescuableUnit, StartRunEvent, Team, Unit,
 };
+use crate::random::runtime_entropy_seed_u32;
 use crate::upgrades::ConditionalUpgradeEffects;
 use crate::visuals::ArtAssets;
 
@@ -178,12 +178,7 @@ fn spawn_rescuables_over_time(
 }
 
 fn runtime_seed_from_time() -> u32 {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos() as u64)
-        .unwrap_or(0x7AA5_51EED);
-    let mixed = nanos ^ nanos.rotate_left(17) ^ 0x9E37_79B9_7F4A_7C15;
-    (mixed as u32) ^ ((mixed >> 32) as u32)
+    runtime_entropy_seed_u32()
 }
 
 #[allow(clippy::too_many_arguments)]

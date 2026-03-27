@@ -1,6 +1,5 @@
 use bevy::prelude::*;
 use std::collections::HashMap;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::ai::{
     chase_step_distance, chase_target_positions, choose_nearest, choose_support_follow_target,
@@ -9,13 +8,14 @@ use crate::ai::{
 use crate::combat::{RangedAttackCooldown, RangedAttackProfile};
 use crate::data::{EnemyStatsConfig, GameData, WavesConfigFile};
 use crate::formation::{ActiveFormation, active_formation_config, formation_contains_position};
-use crate::map::{MapBounds, playable_bounds};
+use crate::map::MapBounds;
 use crate::model::{
     Armor, AttackCooldown, AttackProfile, ColliderRadius, CommanderUnit, EnemyUnit, FriendlyUnit,
     GameState, Health, MatchSetupSelection, Morale, MoveSpeed, PlayerFaction, StartRunEvent, Team,
     Unit, UnitKind,
 };
 use crate::morale::morale_movement_multiplier;
+use crate::random::runtime_entropy_seed_u32;
 use crate::squad::PriestSupportCaster;
 use crate::squad::RosterEconomy;
 use crate::upgrades::Progression;
@@ -115,7 +115,7 @@ const RESUME_FACTOR: f32 = 0.98;
 const ENEMY_INSIDE_FORMATION_PADDING_SLOTS: f32 = 0.35;
 const ENEMY_FORMATION_REPEL_MARGIN_SLOTS: f32 = 0.12;
 const WAVE_UNITS_MULTIPLIER: f32 = 2.0;
-const MAX_ENEMIES_PER_WAVE: f32 = 1000.0;
+const MAX_ENEMIES_PER_WAVE: f32 = 200.0;
 const POST_SCRIPTED_WAVE_COUNT_GROWTH: f32 = 1.18;
 const WAVE_STAT_GROWTH_PER_WAVE: f32 = 0.102;
 const WAVE_BATCH_SIZE: u32 = 7;
@@ -750,12 +750,7 @@ fn lerp(min: f32, max: f32, t: f32) -> f32 {
 }
 
 fn runtime_seed_from_time() -> u32 {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos() as u64)
-        .unwrap_or(0xBADC_0FFE_1234_5678);
-    let mixed = nanos ^ nanos.rotate_left(11) ^ 0x517C_C1B7_2722_0A95;
-    (mixed as u32) ^ ((mixed >> 32) as u32)
+    runtime_entropy_seed_u32()
 }
 
 #[allow(clippy::type_complexity)]
@@ -1238,6 +1233,7 @@ mod tests {
     };
     use crate::formation::{ActiveFormation, formation_contains_position};
     use crate::map::MapBounds;
+    use crate::random::runtime_entropy_seed_u32;
 
     #[test]
     fn chooses_nearest_target() {
@@ -1326,7 +1322,7 @@ mod tests {
     }
 
     #[test]
-    fn units_per_second_is_capped_to_thousand_enemies_per_wave() {
+    fn units_per_second_is_capped_to_two_hundred_enemies_per_wave() {
         let config = WavesConfigFile {
             waves: vec![WaveConfig {
                 time_secs: 0.0,
@@ -1334,7 +1330,7 @@ mod tests {
             }],
         };
         let rate = units_per_second_for_wave(&config, 1);
-        assert!((rate - (1000.0 / 30.0)).abs() < 0.001);
+        assert!((rate - (200.0 / 30.0)).abs() < 0.001);
     }
 
     #[test]

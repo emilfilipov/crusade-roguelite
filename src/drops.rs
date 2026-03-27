@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use std::time::{SystemTime, UNIX_EPOCH};
+use crate::random::runtime_entropy_seed_u32;
 
 use crate::data::GameData;
 use crate::enemies::WaveRuntime;
@@ -594,12 +594,7 @@ fn current_commander_level(progression: Option<&Progression>) -> u32 {
 }
 
 fn runtime_seed_from_time() -> u32 {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos() as u64)
-        .unwrap_or(0xDEAD_BEEF_CAFE_BABE);
-    let mixed = nanos ^ nanos.rotate_left(19) ^ 0xA076_1D64_78BD_642F;
-    (mixed as u32) ^ ((mixed >> 32) as u32)
+    runtime_entropy_seed_u32()
 }
 
 fn commander_spawn_center(commanders: &Query<&Transform, With<CommanderUnit>>) -> Vec2 {

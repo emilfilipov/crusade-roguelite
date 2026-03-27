@@ -105,12 +105,12 @@ impl GearRarity {
 
     pub const fn scalar(self) -> f32 {
         match self {
-            Self::Common => 0.05,
-            Self::Uncommon => 0.10,
-            Self::Rare => 0.18,
-            Self::Epic => 0.34,
-            Self::Mythical => 0.52,
-            Self::Unique => 0.75,
+            Self::Common => 0.06,
+            Self::Uncommon => 0.12,
+            Self::Rare => 0.216,
+            Self::Epic => 0.408,
+            Self::Mythical => 0.624,
+            Self::Unique => 0.90,
         }
     }
 }
@@ -706,6 +706,29 @@ pub fn commander_armywide_bonuses_with_banner_state(
     setup_bonuses_for_role(commander_setup, role, banner_item_active)
 }
 
+fn armywide_move_speed_bonus(
+    inventory: &InventoryState,
+    banner_item_active: bool,
+) -> f32 {
+    let mut total = 0.0;
+    for setup in &inventory.setups {
+        for slot in &setup.slots {
+            let Some(item) = slot.item.as_ref() else {
+                continue;
+            };
+            if !banner_item_active && item.item_type == GearItemType::Banner {
+                continue;
+            }
+            for stat in &item.stats {
+                if stat.kind == GearStatKind::MoveSpeedFlat {
+                    total += stat.value;
+                }
+            }
+        }
+    }
+    total
+}
+
 pub fn gear_bonuses_for_unit(
     inventory: &InventoryState,
     kind: UnitKind,
@@ -738,6 +761,8 @@ pub fn gear_bonuses_for_unit_with_banner_state(
         if unit_type != EquipmentUnitType::Commander {
             bonuses.merge_assign(commander_bonuses);
         }
+
+        bonuses.move_speed_bonus = armywide_move_speed_bonus(inventory, commander_banner_item_active);
     }
 
     bonuses
@@ -1468,5 +1493,41 @@ mod tests {
 
         let support_bonuses = commander_armywide_bonuses(&inventory, UnitCombatRole::Support);
         assert!(support_bonuses.cooldown_reduction_secs > 0.0);
+    }
+
+    #[test]
+    fn rarity_scalars_are_boosted_by_twenty_percent() {
+        assert!((GearRarity::Common.scalar() - 0.06).abs() < 0.0001);
+        assert!((GearRarity::Uncommon.scalar() - 0.12).abs() < 0.0001);
+        assert!((GearRarity::Rare.scalar() - 0.216).abs() < 0.0001);
+        assert!((GearRarity::Epic.scalar() - 0.408).abs() < 0.0001);
+        assert!((GearRarity::Mythical.scalar() - 0.624).abs() < 0.0001);
+        assert!((GearRarity::Unique.scalar() - 0.90).abs() < 0.0001);
+    }
+
+    #[test]
+    fn move_speed_from_any_tier_item_applies_armywide() {
+        let mut inventory = InventoryState::default();
+        let mut chest = EquipmentChestState::default();
+        chest.ensure_capacity();
+
+        let tier5_armor_speed = make_test_item(GearItemType::Armor, GearStatKind::MoveSpeedFlat, 10.0);
+        place_item_into_slot(
+            &mut inventory,
+            &mut chest,
+            InventorySlotRef::Equipment {
+                unit_type: EquipmentUnitType::Tier5,
+                slot_index: 2,
+            },
+            tier5_armor_speed,
+        )
+        .expect("equip tier5 armor speed");
+
+        let tier0_bonuses =
+            gear_bonuses_for_unit(&inventory, UnitKind::ChristianPeasantInfantry, Some(0));
+        let commander_bonuses = gear_bonuses_for_unit(&inventory, UnitKind::Commander, Some(0));
+
+        assert!((tier0_bonuses.move_speed_bonus - 10.0).abs() < 0.0001);
+        assert!((commander_bonuses.move_speed_bonus - 10.0).abs() < 0.0001);
     }
 }

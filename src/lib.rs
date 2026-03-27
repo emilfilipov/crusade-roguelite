@@ -14,6 +14,7 @@ pub mod model;
 pub mod morale;
 pub mod performance;
 pub mod projectiles;
+pub mod random;
 pub mod rescue;
 pub mod settings;
 pub mod squad;
