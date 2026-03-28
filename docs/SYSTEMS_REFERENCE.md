@@ -4,36 +4,84 @@
 Single-file technical reference for current MVP runtime behavior.
 Use this for entity/component/system lookup without scanning all source files.
 
-## Latest Update (2026-03-26)
-- Reworked in-run `Unit Upgrade (U)` modal into a tier-column graph scaffold:
+## Latest Update (2026-03-28)
+- Added `assets/data/roster_tuning.json` and wired it into `GameData`:
+  - tier-2 unit stats are now data-driven per tier-2 unit kind,
+  - tracker/scout autonomous behavior timings and multipliers are data-driven,
+  - fanatic life-leech ratio is data-driven.
+- Completed tier-2 branch runtime:
+  - tracker timed hound-strike behavior and scout out-of-formation raid behavior are live,
+  - fanatic branch now has hard `ArmorLockedZero` behavior (no armor from gear/upgrade layers in damage resolution),
+  - fanatic life-leech on melee hit uses applied damage and branch-configured leech ratio.
+- Unit Upgrade graph now exposes tier-2 promotion options in the tier-2 column for owned tier-1 sources.
+- Completed tier-3 branch runtime for both factions:
+  - tier-2 branches now continue into tier-3 (`experienced shield infantry`, `shielded spearman`, `knight`, `bannerman`, `elite bowman`, `armored crossbowman`, `pathfinder`, `mounted scout`, `cardinal`, `flagellant`),
+  - tracker/scout branch actives carry forward (`Pathfinder` keeps hound strikes, `Mounted Scout` keeps raid behavior),
+  - fanatic branch traits carry forward (`Flagellant` keeps armor-lock-at-zero + life-leech behavior).
+- Completed tier-4 branch runtime for both factions:
+  - tier-3 branches now continue into tier-4 (`elite shield infantry`, `halberdier`, `heavy knight`, `elite bannerman`, `longbowman`, `elite crossbowman`, `houndmaster`, `shock cavalry`, `elite cardinal`, `elite flagellant`),
+  - tracker/scout branch actives carry forward (`Houndmaster` keeps hound strikes, `Shock Cavalry` keeps raid behavior),
+  - fanatic branch traits carry forward (`Elite Flagellant` keeps armor-lock-at-zero + life-leech behavior).
+- Synced wave runtime docs to current code:
+  - 30s wave windows, `MAX_WAVES=100`,
+  - spawn-rate clamp now uses `MAX_ENEMIES_PER_WAVE=200`,
+  - stat growth slope is `+0.102` per wave step,
+  - queued batch emission uses `batch_size = clamp(7 + wave/4, 7, 22)` and
+    `batch_interval = clamp(0.7 - wave*0.01, 0.24, 0.7)`.
+- Synced morale runtime docs to the single-active-morale implementation:
+  - high-morale bracket grants gradual damage/armor/regen bonuses,
+  - low-morale bracket applies armor penalty and escape-speed bonus,
+  - collapse triggers at average morale `<= 0` with delayed reset and retinue loss.
+- Fixed morale runtime integration gaps:
+  - collapse trigger now uses the true average friendly morale ratio (so zero-morale collapse can fire),
+  - authority/hospitalier aura effects now apply directly to live morale drain/regen paths,
+  - commander banner morale stats now affect morale flow while active and are removed when the banner drops.
+- Synced gold economy + deterministic wave-level docs to current values:
+  - no XP thresholds; level rewards are queued from `WaveCompletedEvent`,
+  - each completed wave grants `+1` level reward, and wave `98` grants `+2` (reaches level 100 at wave 98 completion),
+  - drop gold scaling remains `base * (1 + 0.06*(wave-1)) * (1 + 0.03*(level-1))`,
+  - roster level budget cap uses `MAX_COMMANDER_LEVEL=100` (`100 - locked_levels`, saturating).
+- Reworked in-run `Unit Upgrade (U)` modal into a tier-column graph:
   - columns `Tier 0..Tier 5` with thin borders and row-wise straight connectors from tier-0 to tier-1,
   - tier-0 nodes are active source units,
-  - tier-1+ and `Hero` nodes are scaffolded/inactive placeholders.
+  - tier-1 nodes are now active promotion targets,
+  - tier-2 nodes are now active branch targets for owned tier-1 source kinds,
+  - tier-3 nodes are now active continuation targets for owned tier-2 branch kinds,
+  - tier-4 nodes are now active continuation targets for owned tier-3 branch kinds,
+  - tier-5 and `Hero` nodes remain scaffolded/inactive placeholders.
 - Updated unit-upgrade node labeling:
   - unit boxes now render unit name only (no tier/count text inside the node).
 - Added per-tier0 swap controls as row actions:
   - each tier-0 source row has a target selector (`dropdown-like` cycle control),
   - each row has a `Swap 1` action wired to `ConvertTierZeroUnitsEvent`,
-  - row status includes source/target counts, target-option count, affordability, and XP cost.
+  - row status includes source/target counts, target-option count, affordability, and gold cost.
 - Added `Unit Upgrade` hover tooltip overlay:
   - hovering unit nodes now shows `Name`, `Type`, `Description`, `Stats`, and `Abilities`,
   - scaffold nodes provide explicit placeholder metadata and tier-rule guidance.
-- Simplified UI-side promotion runtime in `U`:
-  - promotion actions remain scaffolded in the graph presentation,
-  - inactive tier nodes explicitly communicate future upgrade-rule contract (`matching lower tier + locked-level cost`).
+- Enabled Tier-1 promotion runtime in `U`:
+  - each tier-0 source row now has one active tier-1 promotion target (`+1` promotion action),
+  - promotion buttons are gated by boss-tier unlock state, source count, treasury, and level-budget affordability,
+  - tier-2 branch buttons are now rendered in the tier-2 column for owned tier-1 kinds.
+- Tier-1 roster branch contract (implemented):
+  - `Christian Peasant Infantry -> Christian Men-at-Arms`,
+  - `Christian Peasant Archer -> Christian Bowman`,
+  - `Christian Peasant Priest -> Christian Devoted`,
+  - `Muslim Peasant Infantry -> Muslim Men-at-Arms`,
+  - `Muslim Peasant Archer -> Muslim Bowman`,
+  - `Muslim Peasant Priest -> Muslim Devoted`.
 - Added unit tests for new unit-upgrade logic:
   - swap-target fallback and cycling behavior,
   - unit-tooltip contract coverage for required sections.
 - Added data-driven faction gameplay edge config in `assets/data/factions.json`:
   - per-faction friendly modifiers (HP, damage, attack speed, move speed, armor bonus, morale baseline),
-  - per-faction morale/cohesion flow modifiers (gain/loss scaling),
-  - per-faction XP gain multiplier and rescue-time multiplier,
-  - per-faction authority-aura enemy drain modifiers (morale multiplier + optional cohesion drain),
-  - per-faction enemy-side modifiers applied when that faction is spawned as enemies (HP/damage/attack speed/move speed/morale/cohesion).
+  - per-faction morale flow modifiers (gain/loss scaling),
+  - per-faction gold gain multiplier and rescue-time multiplier,
+  - per-faction authority-aura enemy morale-drain multiplier tuning,
+  - per-faction enemy-side modifiers applied when that faction is spawned as enemies (HP/damage/attack speed/move speed/morale).
 - Commander aura radius now resolves by selected faction commander profile + faction aura bonus (instead of maxing Christian/Muslim commander aura radius).
 - Friendly unit spawn/promotion stat setup now consumes faction modifiers, so faction identity applies consistently to commander and retinue.
 - Enemy spawn stat setup now consumes the spawned enemy faction's modifiers, enabling asymmetric Christian vs Muslim enemy behavior tuning.
-- XP consumption and rescue-channel duration now include selected-faction multipliers.
+- Gold pickup gain and rescue-channel duration now include selected-faction multipliers.
 - Added dual-faction runtime scaffold:
   - playable factions: `Christian` and `Muslim`,
   - selected faction controls commander + rescue recruit pool,
@@ -47,10 +95,9 @@ Use this for entity/component/system lookup without scanning all source files.
 - Floating critical-hit damage text now renders as magenta, slightly larger text, and appends `!` (example: `75!`).
 - Stats modal table now reports aggregated stat bonuses by stat name (for example `Health`, `Damage`, `Morale Regen/s`, `Morale Loss Resist`) instead of effect-source row names.
 - Collision pause artifact fix: collision correction now applies `0` movement when simulation `delta_seconds == 0` (modal/paused virtual-time frames), preventing enemies from spreading while menus are open.
-- Added enemy unit cohesion stat scaffold:
-  - `enemies.json` now includes `cohesion` per enemy archetype,
-  - enemy spawn now attaches `UnitCohesion { current, max }`,
-  - data validation now requires enemy cohesion to be `> 0`.
+- Removed legacy enemy data dependency in runtime enemy config:
+  - `enemies.json` schema now relies on morale plus core combat/movement stats,
+  - enemy spawn no longer consumes deprecated legacy values from data.
 - Rescue spawn selection now uses pity-weighted randomness:
   - each rescue type gains spawn weight the longer it has not spawned,
   - the spawned type resets its drought counter to `0`,
@@ -78,32 +125,61 @@ Use this for entity/component/system lookup without scanning all source files.
   - `Exit`
 - Added `MatchSetup` screen:
   - faction selection (`Christian` and `Muslim` both enabled),
+  - difficulty selection (`Recruit`, `Experienced`, `Alone Against the Infidels`),
+  - commander selection row per selected faction (multiple commanders per faction),
+  - hover tooltip with commander description, base stats, run bonuses, and abilities,
   - map selection from data-driven map list,
-  - start gate that only allows valid faction/map combinations.
+  - start gate that only allows valid faction/difficulty/commander/map combinations.
+- Added data-driven difficulty profile config in `assets/data/difficulties.json`:
+  - per-difficulty enemy stat multipliers (health, damage, attack speed, move speed, morale),
+  - per-difficulty behavior flags (`enemy_ranged_dodge_enabled`, `enemy_block_enabled`, `ranged_support_avoid_melee`).
+- Difficulty behavior toggles are now live in runtime:
+  - `Recruit`: no enemy projectile-dodge and no enemy block behavior,
+  - `Experienced`: enemy projectile-dodge + enemy block behavior enabled,
+  - `Alone Against the Infidels`: stronger enemy projectile-dodge/block plus ranged/support retreat spacing when melee pressure closes distance.
 - Added roster level-budget economy:
   - tier-0 units cost `0` locked levels,
   - each tier-step promotion adds `+1` locked level,
   - unit death refunds the unit's locked level cost,
-  - allowed max commander level is derived from locked budget (`200 - locked_levels`).
+  - allowed max commander level is derived from locked budget (`100 - locked_levels`, saturating).
 - Added progression/upgrade lock feedback surfaces:
-  - `ProgressionLockFeedback` emits reason text when XP leveling is blocked by roster costs,
+  - `ProgressionLockFeedback` emits reason text when pending level rewards are blocked by roster costs,
   - `RosterEconomyFeedback` emits reason text when promotions are rejected by budget/path constraints,
   - Unit Upgrade modal now displays live budget and latest block reason strings.
-- Added wave-gated tier upgrade scaffolding:
-  - tier 1 unlocks at wave 11,
-  - tier 2 at wave 21,
-  - tier 3 at wave 31,
-  - tier 4 at wave 41,
-  - tier 5 at wave 51.
+- Replaced wave-number tier unlocks with major-army defeat unlocks:
+  - tier 1 unlocks after defeating the major army on wave 10,
+  - tier 2 after wave 20 major army,
+  - tier 3 after wave 30 major army,
+  - tier 4 after wave 40 major army,
+  - tier 5 after wave 50 major army.
 - Added `Hero` equipment-tier scaffold for inventory/UI only (no promotion or spawn path enabled yet).
 - Replaced peasant-priest potion placeholder sprite with a character sprite (`tile_0109`) for clearer class readability.
 - Implemented Unit Upgrade modal runtime:
   - left roster list with selectable unit source rows,
-  - right promotion-grid table with promotion options and affordability columns,
-  - bulk action buttons (`+1`, `+5`, `MAX`) with affordability clamping.
+  - tier-column node graph (`Tier 0..5 + Hero`) with active tier-1, tier-2, tier-3, and tier-4 promotion nodes,
+  - tier-0 swap context menu (`right-click` source unit -> `Swap 1`) with scaffolded tier-5+ and hero placeholders.
 - Promotion validation now rejects non-upgrade paths (same-tier or invalid-tier conversions).
-- Enemy wave runtime now uses continuous units-per-second scheduling with staggered batch emission.
+- Enemy wave runtime now uses layered army scheduling with hard wave lock:
+  - `Small` army lane every wave,
+  - `Minor` army lane every other wave,
+  - `Major` army lane every 10th wave.
+- Each wave still runs through staggered batch emission until all pending units are cleared.
+- Next wave does not start until both pending batches and alive enemy count reach zero.
 - Wave progression is finite at `100` waves; victory triggers only when wave-100 spawning is finished and all enemies are cleared.
+- Enemy army progression now mirrors player major/minor cadence by level:
+  - `major_count = floor(level / 5)`,
+  - `minor_count = level - major_count`.
+- Enemy army level assignment by difficulty:
+  - `Recruit`: `floor(player_level / 2)` (min 1),
+  - `Experienced` / `Alone Against the Infidels`: matches player level.
+- Enemy army item pressure now comes from deterministic chest-template loadouts:
+  - per-lane slot budgets (`Small=3`, `Minor=4`, `Major=5`),
+  - per-difficulty fill ratios (`Recruit=1/3`, `Experienced=1/2`, `Infidels=2/3`),
+  - per-difficulty rarity pressure modifiers (`0.0`, `0.18`, `0.33`),
+  - generated item stats feed role-aware enemy damage/armor/health/speed scaling.
+- Major army defeats now emit dedicated boss reward drops:
+  - exactly two equipment chests per defeated major army wave,
+  - chest positions are spread around the defeat location with non-overlap and map-bound clamps.
 - HUD commander level text now renders `current/allowed` and appends a lock marker when progression is budget-locked.
 - Rescue config now includes `recruit_pool` and validator rejects non-tier0 rescue entries.
 - Added inventory scaffold module/resource (`InventoryState`) with serializable bag/equipment setup model.
@@ -152,11 +228,11 @@ Use this for entity/component/system lookup without scanning all source files.
 - Draft filtering now removes skillbar-bound cards when skillbar is full.
 - Replaced the level-up pool with weighted random 5-option drafts from repeatable upgrades plus one-time skill unlocks.
 - Upgrade values now roll via weighted min/max sampling (higher values are rarer).
-- Activated commander aura mechanics:
-  - Authority aura: in-range friendly morale/cohesion-loss resistance + enemy morale drain.
-  - Hospitalier aura: in-range friendly HP/morale/cohesion regen.
+- Aura upgrades (`Authority`, `Hospitalier`) now apply in runtime morale systems:
+  - `Authority`: friendly morale-loss mitigation in aura + enemy morale drain in aura,
+  - `Hospitalier`: morale regen in aura.
 - Added shared ranged projectile attacks (outside-melee targeting, projectile travel, despawn on hit/max distance).
-- Added XP pack minimap markers (yellow blips).
+- Added gold pack minimap markers (yellow blips).
 - Added commander movement slowdown from enemy pressure inside formation bounds (capped at 50% minimum speed multiplier).
 - Pause menu button label now reads `Main Menu`.
 - Added mandatory `LevelUp` state with 5-card draft overlay (image + description) and no skip path.
@@ -188,9 +264,9 @@ Use this for entity/component/system lookup without scanning all source files.
 - Enemy waves now spawn as staggered batches at pseudo-random positions across the playable map (not border ring-only).
 - `Escape` now only triggers while in `InRun`, opening a centered pause overlay with `Resume`, `Restart`, and `Main Menu`.
 - Added enemy chase hysteresis and removed unit position snapping to reduce movement jitter.
-- Added delayed enemy XP drops (`0.9s` pickup lock) before homing can start.
-- Ambient XP packs now spawn around commander position for better visibility.
-- XP homing speed now scales from commander base speed and stays slightly faster.
+- Added delayed enemy gold drops (`0.9s` pickup lock) before homing can start.
+- Ambient gold packs now spawn around commander position for better visibility.
+- Gold homing speed now scales from commander base speed and stays slightly faster.
 - Increased base drop pickup radius from `30` to `45`.
 - Fixed Windows installer asset coverage for runtime-loaded art (`assets/sprites` + `oga_ishtar` pack).
 - Switched battlefield floor to cleaner sand tile set.
@@ -231,16 +307,20 @@ Use this for entity/component/system lookup without scanning all source files.
   - in-run HUD status line now surfaces active priest blessing remaining time,
   - blessed friendlies render a subtle golden ground-shadow marker while the priest blessing is active.
 - Replaced placeholder `morale_weight` usage with active per-unit `Morale` (friendlies and enemies).
-- Added morale-based combat debuff below 50% morale.
-- Refactored cohesion to event-driven behavior (damage/death/kill events + low-morale pressure).
+- Morale runtime is now single-axis in active gameplay:
+  - high bracket (`51..100`) grants gradual damage/armor/HP-regen bonuses,
+  - low bracket (`<50`) applies armor penalty and escape-speed bonus,
+  - encirclement pressure drains morale after a delay; no-pressure windows recover morale.
+- Collapse loop at average morale `<= 0`:
+  - drops 10% of retinue as rescuables (min 1),
+  - resets morale after 3s to 70% with 6s grace.
 - Reworked banner loop:
-  - auto-drop at low cohesion tier
+  - auto-drop at zero average morale
   - 10s pickup unlock delay
   - 5s pickup channel
-  - pickup restores cohesion to recovery tier
-  - dropped-banner effect is friendly move-speed penalty
-- Added HUD bottom-left vertical meters for average army morale and cohesion.
-- Added banner pickup progress bar under XP bar.
+  - dropped state disables commander banner-item effects
+- Added HUD bottom-left vertical meter for average army morale plus threshold-crossing toast messages.
+- Added banner pickup progress bar under treasury indicator.
 - Removed oasis from active runtime schema/config usage.
 
 ## Runtime Architecture
@@ -306,6 +386,20 @@ Loaded from `assets/data` by `GameData::load_from_dir`.
   - `recruit_muslim_peasant_archer` (hybrid melee+ranged)
   - `recruit_muslim_peasant_priest` (non-damaging support)
 
+### `roster_tuning.json`
+- `tier2_units`:
+  - per-tier2-kind `UnitStatsConfig` entries for both factions
+  - consumed by promotion/loadout runtime for tier-2 stat setup
+- `behavior`:
+  - `tracker_hound_active_secs`
+  - `tracker_hound_cooldown_secs`
+  - `tracker_hound_strike_interval_secs`
+  - `tracker_hound_damage_multiplier`
+  - `scout_raid_active_secs`
+  - `scout_raid_cooldown_secs`
+  - `scout_raid_speed_multiplier`
+  - `fanatic_life_leech_ratio`
+
 ### `enemies.json`
 - Christian enemy profiles:
   - `enemy_christian_peasant_infantry`
@@ -315,7 +409,7 @@ Loaded from `assets/data` by `GameData::load_from_dir`.
   - `enemy_muslim_peasant_infantry`
   - `enemy_muslim_peasant_archer`
   - `enemy_muslim_peasant_priest`
-- Each profile includes: `max_hp`, `armor`, `damage`, `attack_cooldown_secs`, `attack_range`, `move_speed`, `morale`, `cohesion`, `collision_radius`.
+- Each profile includes: `max_hp`, `armor`, `damage`, `attack_cooldown_secs`, `attack_range`, optional ranged fields, `move_speed`, `morale`, `collision_radius`.
 
 ### `formations.json`
 - `square`: `slot_spacing=30`, `offense=1.0`, `offense_while_moving=1.0`, `defense=1.0`, `anti_cavalry=1.0`, `move_speed=1.0`
@@ -329,19 +423,21 @@ Scripted waves:
 4. `t=90`, `count=20`
 5. `t=120`, `count=24`
 
-Runtime scripted count scaling:
-- Effective count per scripted wave: `round(configured_count * 1.18^wave_index)`
-
-Procedural continuation:
-- Interval: 30s
-- Count: `round(base * 1.22^(index+1))`
-- Stat scale: `1.0 + (wave-1)*0.092`
+Runtime conversion to spawn pacing:
+- `wave_base_count`:
+  - uses configured `count` while `wave_number` is inside scripted entries,
+  - then continues from the last scripted count with `last_count * 1.18^(extra_waves)`.
+- `units_per_second_for_wave = clamp(wave_base_count * 2.0, 1.0, 200.0) / 30.0`
+- `wave_stat_multiplier = 1.0 + (wave - 1) * 0.102`
+- Batch emission:
+  - `batch_size = clamp(7 + wave/4, 7, 22)`
+  - `batch_interval = clamp(0.7 - wave*0.01, 0.24, 0.7)`
 
 ### `drops.json`
 - `initial_spawn_count=8`
 - `spawn_interval_secs=2.5`
 - `pickup_radius=45`
-- `xp_per_pack=6`
+- `gold_per_pack=6`
 - `max_active_packs=5000`
 
 ### `rescue.json`
@@ -355,7 +451,7 @@ Procedural continuation:
 - `encirclement_doctrine` (`kind=formation_breach`, `one_time`, grants inside-formation damage bonus)
 - `damage`
 - `attack_speed`
-- `fast_learner` (repeatable XP gain multiplier for all XP packs)
+- `fast_learner` (repeatable gold gain multiplier for all gold packs)
 - `armor`
 - `pickup_radius`
 - `aura_radius`
@@ -396,7 +492,6 @@ Roll fields:
 - `Health { current, max }`
 - `BaseMaxHealth`
 - `Morale { current, max }`
-- `UnitCohesion { current, max }`
 - `Armor`
 - `AttackProfile`
 - `AttackCooldown`
@@ -408,7 +503,7 @@ Roll fields:
 - `RangedAttackProfile`, `RangedAttackCooldown` (`src/combat.rs`)
 - `BanditVisualRuntime`, `BanditVisualState` (`src/enemies.rs`)
 - `RescueProgress` (`src/rescue.rs`)
-- `ExpPack`, `DropInTransitToCommander`, `MagnetPickup` (`src/drops.rs`)
+- `GoldPack`, `DropInTransitToCommander`, `MagnetPickup` (`src/drops.rs`)
 - `Projectile` (`src/projectiles.rs`)
 - `BannerMarker` (`src/banner.rs`)
 
@@ -424,7 +519,6 @@ Roll fields:
 - `ActiveFormation`, `FormationModifiers`
 - `FormationSkillBar`
 - `WaveRuntime`
-- `Cohesion`, `CohesionCombatModifiers`
 - `BannerState`, `BannerMovementPenalty`
 - `Progression`, `UpgradeDraft`, `GlobalBuffs`
 - `ProgressionLockFeedback`
@@ -447,20 +541,31 @@ Roll fields:
 - `UnitDamagedEvent`
 - `DamageTextEvent`
 - `UnitDiedEvent`
-- `GainXpEvent`
-- `SpawnExpPackEvent`
+- `GainGoldEvent`
+- `SpawnGoldPackEvent`
 
 ## Key Gameplay Formulas
 
-### Morale Movement Debuff (`src/morale.rs`, `src/squad.rs`, `src/enemies.rs`)
-`morale_movement_multiplier(ratio)`:
-- `ratio >= 0.5`: `1.0`
-- `< 0.5`: linearly scales down to `0.75` at `0.0` (max 25% slow)
+### Morale Brackets + Movement (`src/morale.rs`, `src/squad.rs`, `src/enemies.rs`)
+Core thresholds:
+- neutral start: `0.51`
+- low threshold: `0.50`
 
-Applied to movement:
+Bonus bracket (`51..100` morale):
+- `morale_bonus_scale = clamp((ratio - 0.51) / (1.0 - 0.51), 0, 1)`
+- damage multiplier bonus: up to `+8%`
+- armor multiplier bonus: up to `+8%`
+- HP regen bonus: up to `0.4% max HP/s`
+
+Penalty bracket (`<50` morale):
+- `morale_penalty_scale = clamp((0.50 - ratio) / 0.50, 0, 1)`
+- armor penalty: up to `-12%`
+- movement becomes escape-biased: up to `+16%` speed at `0` morale
+
+Applied movement multiplier:
 - commander movement speed
 - enemy movement speed
-- squad movement follows commander motion (formation anchor behavior)
+- formation anchor movement inherits commander motion
 
 ### Friendly Outgoing Multiplier Floor
 Friendly combined outgoing multiplier has lower clamp:
@@ -501,27 +606,38 @@ Friendly combined outgoing multiplier has lower clamp:
 - Projectile is non-instant and travels via velocity each frame.
 - Projectile despawns on hit or when max travel distance is consumed.
 
-### Commander XP Requirement (`src/upgrades.rs`)
-- Uniform per-level exponential scaling:
-  - `base = 300`
-  - per-level multiplier: `1.054`
-- Formula:
-  - `xp_required(level) = 300 * 1.054^(level - 1)`
+### Commander Level Rewards (`src/upgrades.rs`, `src/enemies.rs`)
+- Level-ups are no longer XP-threshold based.
+- Wave completion emits `WaveCompletedEvent { wave_number }`.
+- Rewards are queued as pending level-ups:
+  - default: `+1` for each completed wave,
+  - checkpoint bonus: wave `98` grants `+2`.
+- Draft lane cadence is level-based:
+  - each processed level-up opens one draft,
+  - levels divisible by `5` are marked `Major`, all others are `Minor`.
+- Shared parity helper is available in runtime:
+  - `major_count = floor(level / 5)`,
+  - `minor_count = level - major_count`.
+- The level-up draft opens from queued rewards while commander level is still under roster-allowed cap.
 
 ### Commander Allowed Max Level from Roster Budget (`src/squad.rs`)
-- Hard commander cap: `200`.
+- Hard commander cap: `100`.
 - Roster lock rule:
-  - `allowed_max_level = max(1, 200 - locked_levels)`
+  - `allowed_max_level = saturating_sub(100, locked_levels)`
 - Promotion guard:
   - a promotion is rejected if it would reduce `allowed_max_level` below current commander level.
 
-### Unit Upgrade Bulk Affordability (`src/ui.rs`)
-- For each promotion row, UI computes:
-  - `step_cost = promotion_step_cost(from_kind, to_kind)` (allowed specialization paths can cost `1` even when tiers match)
-  - iterate requested count from `1..=source_count`
-  - stop when `level_cap_from_locked_budget(locked_levels + step_cost * requested) < commander_level`
-- `MAX` button uses the computed affordable count.
-- `+5` clamps to affordable count when fewer than 5 promotions are currently valid.
+### Unit Upgrade Promotion Affordability (`src/ui.rs`)
+- For each tier-1 promotion node, UI computes:
+  - `step_cost = promotion_step_cost(from_kind, to_kind)` (currently only valid tier-0 -> tier-1 branch links),
+  - `gold_cost = promotion_gold_cost(step_cost, target_tier)`,
+  - `next_locked = locked_levels + step_cost`.
+- Promotion button is enabled only when all are true:
+  - source unit count > `0`,
+  - target tier is unlocked by major-army defeat gate,
+  - `current_gold >= gold_cost`,
+  - `level_cap_from_locked_budget(next_locked) >= commander_level`.
+- Tooltip still reports `max_affordable` count for the same source row, but runtime action is currently a single-step `+1` promote.
 
 ### Conditional Upgrade Requirement Evaluation (`src/upgrades.rs`)
 - Owned conditional upgrades are evaluated each frame from live runtime context:
@@ -533,10 +649,10 @@ Friendly combined outgoing multiplier has lower clamp:
 ### Wave Spawn Rate + Victory Gate (`src/enemies.rs`, `src/core.rs`)
 - Wave duration: `30s`.
 - Spawn pacing:
-  - `units_per_second_for_wave = clamp(wave_base_count * 2.0, 1.0, 1000.0) / 30.0`
+  - `units_per_second_for_wave = clamp(wave_base_count * 2.0, 1.0, 200.0) / 30.0`
   - spawned units are queued into timed batches (`batch_size` scales by wave, interval shrinks with floor clamp).
 - Enemy stat progression:
-  - `wave_stat_multiplier = 1.0 + (wave - 1) * 0.092` (15% steeper than previous `0.08` slope).
+  - `wave_stat_multiplier = 1.0 + (wave - 1) * 0.102`.
 - Wave progression:
   - `current_wave` increases until `MAX_WAVES = 100`.
   - spawning stops after wave 100 finishes its duration window.
@@ -554,45 +670,40 @@ Friendly combined outgoing multiplier has lower clamp:
   - `value = min + (max - min) * roll`
   - optional quantization by `value_step`.
 
-### Cohesion Tier Table (`src/morale.rs`)
-- `>=50`: damage `1.0` (no debuff)
-- `<50`: damage scales linearly down to `0.65` at `0`
-- defense multiplier remains `1.0`
-- attack-speed multiplier remains `1.0`
-- `collapse_risk=true` only at `0`
-
-### Cohesion Event Tuning
-- Friendly damage taken: cohesion loss scales with post-mitigation damage.
-- Enemy kill rewards (friendly morale/cohesion gains) trigger on every 3rd enemy death only.
-- Friendly death: morale loss scaled by fallen unit max HP (commander death penalty multiplier).
-- Authority aura mitigates in-range friendly morale/cohesion losses from damage and death events.
-- Hospitalier aura provides in-range passive regen:
-  - HP regen (highest)
-  - cohesion regen (medium)
-  - morale regen (lowest)
-- Morale pressure:
-  - morale drains by encirclement pressure (enemies inside formation footprint vs retinue size)
-  - morale also drains while banner is dropped
-  - morale passively recovers when not pressured
-- Cohesion collapse:
-  - at `0` cohesion, 10% of retinue is dropped as rescuable units
-  - cohesion resets to `70`
-  - short collapse grace prevents immediate re-collapse chain
+### Morale Pressure + Collapse (`src/morale.rs`)
+- Encirclement pressure:
+  - pressure ratio is based on enemies inside formation footprint vs retinue size.
+  - a 3s delay gate must be crossed before drain starts.
+  - drain rate:
+    `-1.1 * pressure_ratio * conditional_loss_multiplier * faction_loss_multiplier * authority_loss_multiplier * gear_loss_multiplier`.
+  - chant immunity (`Battle Song`) sets morale-loss multiplier to `0` while active.
+  - passive morale regen from commander equipment is always applied.
+  - hospitalier aura morale regen is applied while inside commander aura.
+  - when pressure is zero, baseline morale recovery is `+0.30 * faction_gain_multiplier` per second.
+- Authority aura enemy pressure:
+  - enemies inside commander aura lose morale each frame using:
+    `authority_enemy_morale_drain_per_sec * faction_authority_multiplier * (1 + aura_enemy_effect_bonus_multiplier)`.
+- Collapse trigger:
+  - uses average friendly morale and triggers when average `<= 0` and grace is inactive.
+  - removes `ceil(retinue * 0.10)` units (min 1), converting valid recruit kinds into rescuables.
+  - reset is delayed by `3s`, then all friendly morale is restored to `70%`.
+  - post-reset grace window: `6s`.
+- Morale threshold events:
+  - crossing edges: `25%`, `50%`, `80%`, `100%`,
+  - events are emitted in edge order for both rising and falling transitions.
 
 ## Banner Loop (`src/banner.rs`)
 - Auto-drop trigger: average friendly morale ratio `<= 0` (with anti-redrop grace check)
-- Dropped effect: `BannerMovementPenalty.friendly_speed_multiplier = 0.72`
-- While dropped, commander `Banner` item bonuses are disabled (item remains equipped; bonuses resume on recovery)
+- Dropped effect: commander `Banner` item bonuses are disabled while banner is down
 - Banner follow render offset: banner is rendered with positive Y offset behind commander for visibility.
 - Pickup unlock delay: 10s after drop
 - Pickup channel: 5s while friendly unit is within recovery radius
 - Successful recovery:
   - banner returns to up state
-  - cohesion restored to `70`
-  - redrop grace timer starts
+  - redrop grace timer starts (10s)
 
 ### Banner Progress UI
-- Banner channel progress is surfaced under XP bar through same progress-strip region used by rescue bars.
+- Banner channel progress is surfaced under treasury indicator through same progress-strip region used by rescue bars.
 
 ## Drop Flow (`src/drops.rs`)
 1. Spawn ambient packs + event packs (enemy death events).
@@ -600,12 +711,19 @@ Friendly combined outgoing multiplier has lower clamp:
 3. Any friendly within pickup radius marks pack as `DropInTransitToCommander` (after delay).
    - Effective pickup radius = `base pickup radius + stacked pickup-radius upgrades`.
 4. Transit pack homes to commander each frame at speed slightly above commander base speed.
-5. On commander contact radius, pack is consumed and effect is applied (`GainXpEvent`).
+5. On commander contact radius, pack is consumed and effect is applied (`GainGoldEvent`).
 6. Magnet pickup lifecycle:
    - spawns at wave start on waves divisible by `3` (map center),
    - despawns automatically when the next wave starts.
 7. Magnet pickup effect:
-   - on friendly pickup, all active XP packs are immediately forced into transit-to-commander mode.
+   - on friendly pickup, all active gold packs are immediately forced into transit-to-commander mode.
+8. Equipment chest lifecycle:
+   - one chest can spawn on wave transitions divisible by `3`,
+   - chest pickup has `0.9s` unlock + `2.0s` channel,
+   - successful channel opens the in-run `Chest` modal with `1..3` rolled items.
+9. Major army chest rewards:
+   - defeating a major army wave emits two additional chest drops,
+   - duplicate rewards for the same major wave are blocked.
 
 ## System Summary (By Module)
 
@@ -658,7 +776,7 @@ Friendly combined outgoing multiplier has lower clamp:
 ### `formation.rs`
 - square offsets and smoothing
 - depth sorting
-- formation movement now scaled by `BannerMovementPenalty`
+- formation movement is wired through `BannerMovementPenalty` (currently neutral `1.0` multiplier)
 
 ### `rescue.rs`
 - start spawn + timed respawn of rescuables (`20s` cadence, max `6` active at once)
@@ -667,18 +785,21 @@ Friendly combined outgoing multiplier has lower clamp:
 - pity-weighted recruit-kind selection for rescue spawns (`weight = 1 + drought`) to reduce long spawn streaks of one type
 
 ### `drops.rs`
-- ambient and event XP pack spawning with wave/level XP scaling
+- ambient and event gold pack spawning with wave/level gold scaling
 - pickup-delay-aware pack pickup detection (any friendly can trigger)
 - transit-to-commander homing consume flow
-- final XP award applies `GlobalBuffs.xp_gain_multiplier` at consume time (affects ambient + enemy-drop packs)
+- final gold award applies `GlobalBuffs.gold_gain_multiplier` at consume time (affects ambient + enemy-drop packs)
 - wave magnet pickup spawn/despawn cadence (every 3 waves)
-- magnet pickup force-homes all active XP packs
+- magnet pickup force-homes all active gold packs
+- major-army reward chest spawning (2 chests per major-wave defeat with dedupe + spread positioning)
 
 ### `enemies.rs`
 - finite 100-wave runtime with units-per-second spawning
 - queued enemy batch spawning with wave-scaled batch sizes/intervals
+- no wave overflow: next wave starts only after current wave spawn queue is empty and all alive enemies are cleared
 - pseudo-random spawn points within playable map bounds
 - chase AI (retinue-prioritized targeting)
+- difficulty-gated ranged/support melee-avoidance behavior (`ranged_support_avoid_melee`)
 - active-formation inside-footprint cap with perimeter repel for overflow enemies
 - visual state texture mapping
 
@@ -691,41 +812,48 @@ Friendly combined outgoing multiplier has lower clamp:
 - friendly armor mitigation includes resolved equipment armor bonus
 - enemy-in-formation vulnerability check (`+20%` friendly damage when inside formation bounds)
 - friendly crit roll on melee and ranged outgoing hits (before armor mitigation)
+- difficulty-gated enemy block behavior in hit resolution (`enemy_block_enabled`)
 - damage apply + `UnitDamagedEvent` + `DamageTextEvent` (uses final applied damage, not requested pre-clamp amount)
 - death resolve + drop spawn events
 
+### `projectiles.rs`
+- projectile travel + despawn-on-hit/max-distance
+- projectile collision damage resolution with armor/morale modifiers
+- difficulty-gated enemy ranged dodge checks for friendly projectiles (`enemy_ranged_dodge_enabled`)
+
 ### `morale.rs`
-- run-start cohesion reset
-- morale/cohesion updates from damage/death events
-- authority aura in-range mitigation + enemy morale drain
-- hospitalier aura in-range HP/morale/cohesion regen
-- low-morale retinue pressure on cohesion
-- cohesion modifier recalculation
+- run-start morale runtime reset (pressure/collapse/threshold trackers)
+- encirclement-driven morale drain with delay + safe recovery while unpressured
+- high-morale bonus / low-morale penalty bracket math
+- collapse handling (retinue losses + delayed morale reset + grace window)
+- threshold-crossing event emission (`25/50/80/100`)
 
 ### `banner.rs`
 - run-start banner reset
-- low-cohesion drop
+- zero-morale drop trigger
 - delayed pickup channel
-- movement penalty state updates
+- movement-penalty resource refresh (currently neutral)
 
 ### `ui.rs`
 - main menu buttons (`Play Offline`, `Play Online` disabled, `Settings`, `Bestiary`, `Exit`)
 - main-menu `Bestiary` screen (same dataset/content source as in-run archive modal)
-- `MatchSetup` screen with faction + map selectors and `Start`/`Back` actions
+- `MatchSetup` screen with faction + commander + map selectors and `Start`/`Back` actions
+- commander hover tooltip in match setup (description, stats, abilities, run bonuses)
 - settings screen with FPS selector
 - global UI scale sync from live window resolution (`UiScale`) for resolution-mode resilience
 - pause overlay buttons (`Resume`, `Restart`, `Main Menu`)
 - level-up overlay (5 mandatory upgrade cards, icon + description, no skip)
 - game-over overlay buttons (`Restart`, `Main Menu`)
-- top HUD (left column: wave/time, center: level/xp/rescue bars)
+- top HUD (left column: wave/time, center: level/treasury/rescue bars)
 - progress strips (rescue + banner pickup)
-- bottom-left vertical bars (average morale + cohesion)
+- bottom-left vertical bar (average morale)
+- morale-threshold toast text below top-center bars
 - commander aura footprint indicator (subtle world-space circle around commander)
 - world-space health bars
 - world-space floating damage text with timed rise/fade cleanup
 - top-right minimap prototype with periodic blip refresh (`204px`, +20% from previous size)
   - commander/friendlies/enemies
-  - XP packs (yellow)
+  - gold packs (yellow)
   - wave magnet pickup symbol (cross for Christian, crescent for Muslim)
   - rescuable retinue markers
   - dropped-banner marker
@@ -740,6 +868,9 @@ Friendly combined outgoing multiplier has lower clamp:
   - `Skill Book`
   - `Bestiary`
   - `Unit Upgrade`
+- inventory right-click context menu on backpack items:
+  - `Equip` (same target resolution contract as double-click equip path)
+  - `Scrap` (remove item and convert to gold based on item rarity + stat rarity tiers)
 - inventory modal content:
   - bag drops grid (1 item = 1 slot, with empty placeholders)
   - fixed 5x6 backpack viewport (first 30 slots shown in-grid)
@@ -768,12 +899,12 @@ Friendly combined outgoing multiplier has lower clamp:
   - `Unit Upgrade` (`U`)
 
 ### `upgrades.rs`
-- XP thresholds and explicit level-up draft flow (`InRun -> LevelUp -> InRun`)
+- Wave-reward level queue and explicit level-up draft flow (`InRun -> LevelUp -> InRun`)
 - 5-option upgrade draft cards (keyboard `1..5` and mouse click selection)
 - weighted random min/max upgrade value rolls
 - upgrade-rarity roll bonus (`upgrade_rarity`) shifts draft value distributions toward higher tiers
 - additive stacked upgrade effects
-- repeatable `fast_learner` upgrade adds to `GlobalBuffs.xp_gain_multiplier`
+- repeatable `fast_learner` upgrade adds to `GlobalBuffs.gold_gain_multiplier`
 - repeatable crit upgrades (`crit_chance`, `crit_damage`) wired into `GlobalBuffs`
 - repeatable item-rarity upgrade (`item_rarity`) feeds equipment chest roll weighting
 - shared skill timing buffs:

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -5,7 +6,7 @@ use anyhow::{Context, Result, bail};
 use bevy::prelude::*;
 use serde::Deserialize;
 
-use crate::model::{GameState, PlayerFaction, RecruitUnitKind, UnitKind};
+use crate::model::{GameDifficulty, GameState, PlayerFaction, RecruitUnitKind, UnitKind};
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct UnitStatsConfig {
@@ -29,6 +30,24 @@ pub struct UnitStatsConfig {
     pub ranged_projectile_speed: f32,
     #[serde(default)]
     pub ranged_projectile_max_distance: f32,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct CommanderRunBonuses {
+    pub damage_multiplier_bonus: f32,
+    pub move_speed_bonus: f32,
+    pub aura_radius_bonus: f32,
+    pub pickup_radius_bonus: f32,
+}
+
+#[derive(Clone, Debug)]
+pub struct CommanderOptionConfig {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub abilities: Vec<String>,
+    pub stats: UnitStatsConfig,
+    pub run_bonuses: CommanderRunBonuses,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -60,6 +79,170 @@ impl UnitsConfigFile {
             RecruitUnitKind::MuslimPeasantArcher => &self.recruit_muslim_peasant_archer,
             RecruitUnitKind::MuslimPeasantPriest => &self.recruit_muslim_peasant_priest,
         }
+    }
+
+    pub const fn default_commander_id_for_faction(faction: PlayerFaction) -> &'static str {
+        match faction {
+            PlayerFaction::Christian => "baldiun",
+            PlayerFaction::Muslim => "saladin",
+        }
+    }
+
+    pub fn commander_options_for_faction(
+        &self,
+        faction: PlayerFaction,
+    ) -> Vec<CommanderOptionConfig> {
+        let base = self.commander_for_faction(faction);
+        match faction {
+            PlayerFaction::Christian => {
+                let mut marshal_stats = base.clone();
+                marshal_stats.id = "baldiun".to_string();
+                marshal_stats.aura_radius += 8.0;
+
+                let mut rider_stats = base.clone();
+                rider_stats.id = "raymond_the_rider".to_string();
+                rider_stats.max_hp = (rider_stats.max_hp - 10.0).max(1.0);
+                rider_stats.armor = (rider_stats.armor - 1.0).max(0.0);
+                rider_stats.damage += 4.0;
+                rider_stats.move_speed += 28.0;
+                rider_stats.aura_radius = (rider_stats.aura_radius - 14.0).max(20.0);
+
+                let mut sentinel_stats = base.clone();
+                sentinel_stats.id = "templar_sentinel".to_string();
+                sentinel_stats.max_hp += 24.0;
+                sentinel_stats.armor += 2.0;
+                sentinel_stats.damage += 1.0;
+                sentinel_stats.move_speed = (sentinel_stats.move_speed - 10.0).max(1.0);
+                sentinel_stats.aura_radius += 22.0;
+
+                vec![
+                    CommanderOptionConfig {
+                        id: "baldiun".to_string(),
+                        name: "Baldiun, Banner Marshal".to_string(),
+                        description: "Balanced command profile with strong aura coverage and disciplined pacing.".to_string(),
+                        abilities: vec![
+                            "Disciplined March: +6 army movement speed.".to_string(),
+                            "Banner Reach: +8 commander aura radius.".to_string(),
+                        ],
+                        stats: marshal_stats,
+                        run_bonuses: CommanderRunBonuses {
+                            move_speed_bonus: 6.0,
+                            aura_radius_bonus: 8.0,
+                            ..default()
+                        },
+                    },
+                    CommanderOptionConfig {
+                        id: "raymond_the_rider".to_string(),
+                        name: "Raymond the Rider".to_string(),
+                        description: "Fast aggressive doctrine focused on repositioning, pickup tempo, and pressure.".to_string(),
+                        abilities: vec![
+                            "Rider's Tempo: +14 army movement speed.".to_string(),
+                            "Foraging Trains: +12 pickup radius.".to_string(),
+                        ],
+                        stats: rider_stats,
+                        run_bonuses: CommanderRunBonuses {
+                            move_speed_bonus: 14.0,
+                            pickup_radius_bonus: 12.0,
+                            ..default()
+                        },
+                    },
+                    CommanderOptionConfig {
+                        id: "templar_sentinel".to_string(),
+                        name: "Templar Sentinel".to_string(),
+                        description: "Defensive command profile with broader aura pressure and steadier frontline output.".to_string(),
+                        abilities: vec![
+                            "Line Discipline: +8% army damage.".to_string(),
+                            "Sanctified Banner: +16 commander aura radius.".to_string(),
+                        ],
+                        stats: sentinel_stats,
+                        run_bonuses: CommanderRunBonuses {
+                            damage_multiplier_bonus: 0.08,
+                            aura_radius_bonus: 16.0,
+                            ..default()
+                        },
+                    },
+                ]
+            }
+            PlayerFaction::Muslim => {
+                let mut sultan_stats = base.clone();
+                sultan_stats.id = "saladin".to_string();
+                sultan_stats.aura_radius += 8.0;
+
+                let mut vanguard_stats = base.clone();
+                vanguard_stats.id = "faris_vanguard".to_string();
+                vanguard_stats.max_hp = (vanguard_stats.max_hp - 8.0).max(1.0);
+                vanguard_stats.armor = (vanguard_stats.armor - 0.8).max(0.0);
+                vanguard_stats.damage += 4.0;
+                vanguard_stats.move_speed += 26.0;
+                vanguard_stats.aura_radius = (vanguard_stats.aura_radius - 12.0).max(20.0);
+
+                let mut warden_stats = base.clone();
+                warden_stats.id = "mamluk_warden".to_string();
+                warden_stats.max_hp += 22.0;
+                warden_stats.armor += 2.2;
+                warden_stats.damage += 1.0;
+                warden_stats.move_speed = (warden_stats.move_speed - 8.0).max(1.0);
+                warden_stats.aura_radius += 20.0;
+
+                vec![
+                    CommanderOptionConfig {
+                        id: "saladin".to_string(),
+                        name: "Saladin, Sultan's Standard".to_string(),
+                        description: "Balanced command profile with reliable aura projection and run-wide stability.".to_string(),
+                        abilities: vec![
+                            "Ordered Advance: +6 army movement speed.".to_string(),
+                            "Standard Reach: +8 commander aura radius.".to_string(),
+                        ],
+                        stats: sultan_stats,
+                        run_bonuses: CommanderRunBonuses {
+                            move_speed_bonus: 6.0,
+                            aura_radius_bonus: 8.0,
+                            ..default()
+                        },
+                    },
+                    CommanderOptionConfig {
+                        id: "faris_vanguard".to_string(),
+                        name: "Faris Vanguard".to_string(),
+                        description: "Mobile strike doctrine focused on rotation speed and resource control.".to_string(),
+                        abilities: vec![
+                            "Vanguard Pace: +14 army movement speed.".to_string(),
+                            "Spoils Control: +12 pickup radius.".to_string(),
+                        ],
+                        stats: vanguard_stats,
+                        run_bonuses: CommanderRunBonuses {
+                            move_speed_bonus: 14.0,
+                            pickup_radius_bonus: 12.0,
+                            ..default()
+                        },
+                    },
+                    CommanderOptionConfig {
+                        id: "mamluk_warden".to_string(),
+                        name: "Mamluk Warden".to_string(),
+                        description: "Durable command profile with stronger sustained formation pressure.".to_string(),
+                        abilities: vec![
+                            "Disciplined Blades: +8% army damage.".to_string(),
+                            "Ward Line: +16 commander aura radius.".to_string(),
+                        ],
+                        stats: warden_stats,
+                        run_bonuses: CommanderRunBonuses {
+                            damage_multiplier_bonus: 0.08,
+                            aura_radius_bonus: 16.0,
+                            ..default()
+                        },
+                    },
+                ]
+            }
+        }
+    }
+
+    pub fn commander_option_for_faction_and_id(
+        &self,
+        faction: PlayerFaction,
+        commander_id: &str,
+    ) -> Option<CommanderOptionConfig> {
+        self.commander_options_for_faction(faction)
+            .into_iter()
+            .find(|entry| entry.id == commander_id)
     }
 }
 
@@ -267,7 +450,8 @@ pub struct DropsConfig {
     pub initial_spawn_count: u32,
     pub spawn_interval_secs: f32,
     pub pickup_radius: f32,
-    pub xp_per_pack: f32,
+    #[serde(alias = "xp_per_pack")]
+    pub gold_per_pack: f32,
     pub max_active_packs: u32,
 }
 
@@ -291,8 +475,8 @@ pub struct FactionGameplayConfig {
     pub friendly_morale_loss_multiplier: f32,
     #[serde(default)]
     pub commander_aura_radius_bonus: f32,
-    #[serde(default = "default_multiplier")]
-    pub xp_gain_multiplier: f32,
+    #[serde(default = "default_multiplier", alias = "xp_gain_multiplier")]
+    pub gold_gain_multiplier: f32,
     #[serde(default = "default_multiplier")]
     pub rescue_time_multiplier: f32,
     #[serde(default = "default_multiplier")]
@@ -324,6 +508,68 @@ impl FactionsConfigFile {
     }
 }
 
+#[derive(Clone, Debug, Deserialize)]
+pub struct DifficultyGameplayConfig {
+    #[serde(default = "default_multiplier")]
+    pub enemy_health_multiplier: f32,
+    #[serde(default = "default_multiplier")]
+    pub enemy_damage_multiplier: f32,
+    #[serde(default = "default_multiplier")]
+    pub enemy_attack_speed_multiplier: f32,
+    #[serde(default = "default_multiplier")]
+    pub enemy_move_speed_multiplier: f32,
+    #[serde(default = "default_multiplier")]
+    pub enemy_morale_multiplier: f32,
+    #[serde(default, alias = "enemy_dodge_enabled")]
+    pub enemy_ranged_dodge_enabled: bool,
+    #[serde(default)]
+    pub enemy_block_enabled: bool,
+    #[serde(default)]
+    pub ranged_support_avoid_melee: bool,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct DifficultiesConfigFile {
+    pub recruit: DifficultyGameplayConfig,
+    pub experienced: DifficultyGameplayConfig,
+    pub alone_against_the_infidels: DifficultyGameplayConfig,
+}
+
+impl DifficultiesConfigFile {
+    pub fn for_difficulty(&self, difficulty: GameDifficulty) -> &DifficultyGameplayConfig {
+        match difficulty {
+            GameDifficulty::Recruit => &self.recruit,
+            GameDifficulty::Experienced => &self.experienced,
+            GameDifficulty::AloneAgainstTheInfidels => &self.alone_against_the_infidels,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct RosterBehaviorConfig {
+    pub tracker_hound_active_secs: f32,
+    pub tracker_hound_cooldown_secs: f32,
+    pub tracker_hound_strike_interval_secs: f32,
+    pub tracker_hound_damage_multiplier: f32,
+    pub scout_raid_active_secs: f32,
+    pub scout_raid_cooldown_secs: f32,
+    pub scout_raid_speed_multiplier: f32,
+    pub fanatic_life_leech_ratio: f32,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct RosterTuningConfigFile {
+    pub tier2_units: HashMap<String, UnitStatsConfig>,
+    pub behavior: RosterBehaviorConfig,
+}
+
+impl RosterTuningConfigFile {
+    pub fn tier2_stats_for_kind(&self, kind: UnitKind) -> Option<&UnitStatsConfig> {
+        let key = tier2_config_key_for_kind(kind)?;
+        self.tier2_units.get(key)
+    }
+}
+
 #[derive(Resource, Clone, Debug)]
 pub struct GameData {
     pub units: UnitsConfigFile,
@@ -335,6 +581,8 @@ pub struct GameData {
     pub rescue: RescueConfig,
     pub drops: DropsConfig,
     pub factions: FactionsConfigFile,
+    pub difficulties: DifficultiesConfigFile,
+    pub roster_tuning: RosterTuningConfigFile,
 }
 
 impl GameData {
@@ -348,6 +596,8 @@ impl GameData {
         let rescue: RescueConfig = read_json(base_dir.join("rescue.json"))?;
         let drops: DropsConfig = read_json(base_dir.join("drops.json"))?;
         let factions: FactionsConfigFile = read_json(base_dir.join("factions.json"))?;
+        let difficulties: DifficultiesConfigFile = read_json(base_dir.join("difficulties.json"))?;
+        let roster_tuning: RosterTuningConfigFile = read_json(base_dir.join("roster_tuning.json"))?;
 
         validate_units(&units)?;
         validate_enemies(&enemies)?;
@@ -358,6 +608,8 @@ impl GameData {
         validate_rescue(&rescue)?;
         validate_drops(&drops)?;
         validate_factions(&factions)?;
+        validate_difficulties(&difficulties)?;
+        validate_roster_tuning(&roster_tuning)?;
 
         Ok(Self {
             units,
@@ -369,7 +621,35 @@ impl GameData {
             rescue,
             drops,
             factions,
+            difficulties,
+            roster_tuning,
         })
+    }
+}
+
+fn tier2_config_key_for_kind(kind: UnitKind) -> Option<&'static str> {
+    match kind {
+        UnitKind::ChristianShieldInfantry => Some("christian_shield_infantry"),
+        UnitKind::ChristianSpearman => Some("christian_spearman"),
+        UnitKind::ChristianUnmountedKnight => Some("christian_unmounted_knight"),
+        UnitKind::ChristianSquire => Some("christian_squire"),
+        UnitKind::ChristianExperiencedBowman => Some("christian_experienced_bowman"),
+        UnitKind::ChristianCrossbowman => Some("christian_crossbowman"),
+        UnitKind::ChristianTracker => Some("christian_tracker"),
+        UnitKind::ChristianScout => Some("christian_scout"),
+        UnitKind::ChristianDevotedOne => Some("christian_devoted_one"),
+        UnitKind::ChristianFanatic => Some("christian_fanatic"),
+        UnitKind::MuslimShieldInfantry => Some("muslim_shield_infantry"),
+        UnitKind::MuslimSpearman => Some("muslim_spearman"),
+        UnitKind::MuslimUnmountedKnight => Some("muslim_unmounted_knight"),
+        UnitKind::MuslimSquire => Some("muslim_squire"),
+        UnitKind::MuslimExperiencedBowman => Some("muslim_experienced_bowman"),
+        UnitKind::MuslimCrossbowman => Some("muslim_crossbowman"),
+        UnitKind::MuslimTracker => Some("muslim_tracker"),
+        UnitKind::MuslimScout => Some("muslim_scout"),
+        UnitKind::MuslimDevotedOne => Some("muslim_devoted_one"),
+        UnitKind::MuslimFanatic => Some("muslim_fanatic"),
+        _ => None,
     }
 }
 
@@ -744,8 +1024,8 @@ fn validate_drops(config: &DropsConfig) -> Result<()> {
     if config.pickup_radius <= 0.0 {
         bail!("drops pickup_radius must be > 0");
     }
-    if config.xp_per_pack <= 0.0 {
-        bail!("drops xp_per_pack must be > 0");
+    if config.gold_per_pack <= 0.0 {
+        bail!("drops gold_per_pack must be > 0");
     }
     if config.max_active_packs == 0 {
         bail!("drops max_active_packs must be > 0");
@@ -756,6 +1036,16 @@ fn validate_drops(config: &DropsConfig) -> Result<()> {
 fn validate_factions(config: &FactionsConfigFile) -> Result<()> {
     validate_faction_profile("factions.christian", &config.christian)?;
     validate_faction_profile("factions.muslim", &config.muslim)?;
+    Ok(())
+}
+
+fn validate_difficulties(config: &DifficultiesConfigFile) -> Result<()> {
+    validate_difficulty_profile("difficulties.recruit", &config.recruit)?;
+    validate_difficulty_profile("difficulties.experienced", &config.experienced)?;
+    validate_difficulty_profile(
+        "difficulties.alone_against_the_infidels",
+        &config.alone_against_the_infidels,
+    )?;
     Ok(())
 }
 
@@ -797,8 +1087,8 @@ fn validate_faction_profile(label: &str, profile: &FactionGameplayConfig) -> Res
     )?;
 
     validate_multiplier_field(
-        &format!("{label}.xp_gain_multiplier"),
-        profile.xp_gain_multiplier,
+        &format!("{label}.gold_gain_multiplier"),
+        profile.gold_gain_multiplier,
     )?;
     validate_multiplier_field(
         &format!("{label}.rescue_time_multiplier"),
@@ -832,6 +1122,100 @@ fn validate_faction_profile(label: &str, profile: &FactionGameplayConfig) -> Res
     Ok(())
 }
 
+fn validate_difficulty_profile(label: &str, profile: &DifficultyGameplayConfig) -> Result<()> {
+    validate_multiplier_field(
+        &format!("{label}.enemy_health_multiplier"),
+        profile.enemy_health_multiplier,
+    )?;
+    validate_multiplier_field(
+        &format!("{label}.enemy_damage_multiplier"),
+        profile.enemy_damage_multiplier,
+    )?;
+    validate_multiplier_field(
+        &format!("{label}.enemy_attack_speed_multiplier"),
+        profile.enemy_attack_speed_multiplier,
+    )?;
+    validate_multiplier_field(
+        &format!("{label}.enemy_move_speed_multiplier"),
+        profile.enemy_move_speed_multiplier,
+    )?;
+    validate_multiplier_field(
+        &format!("{label}.enemy_morale_multiplier"),
+        profile.enemy_morale_multiplier,
+    )?;
+    Ok(())
+}
+
+fn validate_roster_tuning(config: &RosterTuningConfigFile) -> Result<()> {
+    let required_tier2_kinds = [
+        UnitKind::ChristianShieldInfantry,
+        UnitKind::ChristianSpearman,
+        UnitKind::ChristianUnmountedKnight,
+        UnitKind::ChristianSquire,
+        UnitKind::ChristianExperiencedBowman,
+        UnitKind::ChristianCrossbowman,
+        UnitKind::ChristianTracker,
+        UnitKind::ChristianScout,
+        UnitKind::ChristianDevotedOne,
+        UnitKind::ChristianFanatic,
+        UnitKind::MuslimShieldInfantry,
+        UnitKind::MuslimSpearman,
+        UnitKind::MuslimUnmountedKnight,
+        UnitKind::MuslimSquire,
+        UnitKind::MuslimExperiencedBowman,
+        UnitKind::MuslimCrossbowman,
+        UnitKind::MuslimTracker,
+        UnitKind::MuslimScout,
+        UnitKind::MuslimDevotedOne,
+        UnitKind::MuslimFanatic,
+    ];
+    for kind in required_tier2_kinds {
+        let key = tier2_config_key_for_kind(kind).expect("tier2 key should exist");
+        let Some(stats) = config.tier2_units.get(key) else {
+            bail!("roster_tuning.tier2_units is missing required entry '{key}'");
+        };
+        let allow_zero_damage = matches!(
+            kind,
+            UnitKind::ChristianSquire
+                | UnitKind::ChristianDevotedOne
+                | UnitKind::MuslimSquire
+                | UnitKind::MuslimDevotedOne
+        );
+        validate_unit_stats(
+            stats,
+            &format!("roster_tuning.tier2_units.{key}"),
+            allow_zero_damage,
+        )?;
+    }
+
+    let behavior = &config.behavior;
+    if behavior.tracker_hound_active_secs <= 0.0 {
+        bail!("roster_tuning.behavior.tracker_hound_active_secs must be > 0");
+    }
+    if behavior.tracker_hound_cooldown_secs <= 0.0 {
+        bail!("roster_tuning.behavior.tracker_hound_cooldown_secs must be > 0");
+    }
+    if behavior.tracker_hound_strike_interval_secs <= 0.0 {
+        bail!("roster_tuning.behavior.tracker_hound_strike_interval_secs must be > 0");
+    }
+    if behavior.tracker_hound_damage_multiplier <= 0.0 {
+        bail!("roster_tuning.behavior.tracker_hound_damage_multiplier must be > 0");
+    }
+    if behavior.scout_raid_active_secs <= 0.0 {
+        bail!("roster_tuning.behavior.scout_raid_active_secs must be > 0");
+    }
+    if behavior.scout_raid_cooldown_secs <= 0.0 {
+        bail!("roster_tuning.behavior.scout_raid_cooldown_secs must be > 0");
+    }
+    if behavior.scout_raid_speed_multiplier <= 0.0 {
+        bail!("roster_tuning.behavior.scout_raid_speed_multiplier must be > 0");
+    }
+    if !(0.0..=1.0).contains(&behavior.fanatic_life_leech_ratio) {
+        bail!("roster_tuning.behavior.fanatic_life_leech_ratio must be between 0 and 1");
+    }
+    Ok(())
+}
+
 pub struct DataPlugin;
 
 impl Plugin for DataPlugin {
@@ -852,6 +1236,8 @@ mod tests {
     use std::path::Path;
 
     use tempfile::TempDir;
+
+    use crate::model::{PlayerFaction, UnitKind};
 
     use super::GameData;
 
@@ -931,7 +1317,7 @@ mod tests {
         write_config(
             dir,
             "drops.json",
-            r#"{"initial_spawn_count":3,"spawn_interval_secs":1.5,"pickup_radius":15.0,"xp_per_pack":5.0,"max_active_packs":30}"#,
+            r#"{"initial_spawn_count":3,"spawn_interval_secs":1.5,"pickup_radius":15.0,"gold_per_pack":5.0,"max_active_packs":30}"#,
         );
         write_config(
             dir,
@@ -947,7 +1333,7 @@ mod tests {
                 "friendly_morale_gain_multiplier":1.0,
                 "friendly_morale_loss_multiplier":1.0,
                 "commander_aura_radius_bonus":0.0,
-                "xp_gain_multiplier":1.0,
+                "gold_gain_multiplier":1.0,
                 "rescue_time_multiplier":1.0,
                 "authority_enemy_morale_drain_multiplier":1.0,
                 "enemy_health_multiplier":1.0,
@@ -966,7 +1352,7 @@ mod tests {
                 "friendly_morale_gain_multiplier":1.0,
                 "friendly_morale_loss_multiplier":1.0,
                 "commander_aura_radius_bonus":0.0,
-                "xp_gain_multiplier":1.0,
+                "gold_gain_multiplier":1.0,
                 "rescue_time_multiplier":1.0,
                 "authority_enemy_morale_drain_multiplier":1.0,
                 "enemy_health_multiplier":1.0,
@@ -974,6 +1360,80 @@ mod tests {
                 "enemy_attack_speed_multiplier":1.0,
                 "enemy_move_speed_multiplier":1.0,
                 "enemy_morale_multiplier":1.0
+              }
+            }"#,
+        );
+        write_config(
+            dir,
+            "difficulties.json",
+            r#"{
+              "recruit":{
+                "enemy_health_multiplier":1.0,
+                "enemy_damage_multiplier":1.0,
+                "enemy_attack_speed_multiplier":1.0,
+                "enemy_move_speed_multiplier":1.0,
+                "enemy_morale_multiplier":1.0,
+                "enemy_ranged_dodge_enabled":false,
+                "enemy_block_enabled":false,
+                "ranged_support_avoid_melee":false
+              },
+              "experienced":{
+                "enemy_health_multiplier":1.2,
+                "enemy_damage_multiplier":1.15,
+                "enemy_attack_speed_multiplier":1.1,
+                "enemy_move_speed_multiplier":1.05,
+                "enemy_morale_multiplier":1.1,
+                "enemy_ranged_dodge_enabled":true,
+                "enemy_block_enabled":true,
+                "ranged_support_avoid_melee":false
+              },
+              "alone_against_the_infidels":{
+                "enemy_health_multiplier":1.35,
+                "enemy_damage_multiplier":1.3,
+                "enemy_attack_speed_multiplier":1.2,
+                "enemy_move_speed_multiplier":1.1,
+                "enemy_morale_multiplier":1.2,
+                "enemy_ranged_dodge_enabled":true,
+                "enemy_block_enabled":true,
+                "ranged_support_avoid_melee":true
+              }
+            }"#,
+        );
+        write_config(
+            dir,
+            "roster_tuning.json",
+            r#"{
+              "tier2_units":{
+                "christian_shield_infantry":{"id":"christian_shield_infantry","max_hp":184.464,"armor":10.0,"damage":6.336,"attack_cooldown_secs":1.23552,"attack_range":36.0,"move_speed":135.375,"morale":123.2},
+                "christian_spearman":{"id":"christian_spearman","max_hp":143.64,"armor":8.6,"damage":7.8848,"attack_cooldown_secs":1.16424,"attack_range":48.0,"move_speed":141.075,"morale":118.72},
+                "christian_unmounted_knight":{"id":"christian_unmounted_knight","max_hp":136.08,"armor":10.3,"damage":11.04,"attack_cooldown_secs":1.0692,"attack_range":36.0,"move_speed":152.475,"morale":120.96},
+                "christian_squire":{"id":"christian_squire","max_hp":146.8392,"armor":3.0,"damage":0.0,"attack_cooldown_secs":1.428,"attack_range":20.0,"move_speed":153.9792,"morale":158.112},
+                "christian_experienced_bowman":{"id":"christian_experienced_bowman","max_hp":81.7048,"armor":2.525,"damage":2.0664,"attack_cooldown_secs":1.336175,"attack_range":26.0,"move_speed":168.1372,"morale":107.3088,"ranged_attack_damage":16.128,"ranged_attack_cooldown_secs":0.78936,"ranged_attack_range":630.0,"ranged_projectile_speed":338.0,"ranged_projectile_max_distance":750.0},
+                "christian_crossbowman":{"id":"christian_crossbowman","max_hp":78.6216,"armor":2.925,"damage":1.4616,"attack_cooldown_secs":1.446375,"attack_range":26.0,"move_speed":158.3428,"morale":104.328,"ranged_attack_damage":20.88,"ranged_attack_cooldown_secs":1.13022,"ranged_attack_range":525.0,"ranged_projectile_speed":362.0,"ranged_projectile_max_distance":670.0},
+                "christian_tracker":{"id":"christian_tracker","max_hp":83.2464,"armor":2.525,"damage":1.89,"attack_cooldown_secs":1.308625,"attack_range":26.0,"move_speed":173.0344,"morale":109.296,"ranged_attack_damage":10.368,"ranged_attack_cooldown_secs":0.8073,"ranged_attack_range":505.0,"ranged_projectile_speed":330.0,"ranged_projectile_max_distance":640.0},
+                "christian_scout":{"id":"christian_scout","max_hp":84.788,"armor":2.01875,"damage":3.15,"attack_cooldown_secs":1.18465,"attack_range":34.0,"move_speed":192.6232,"morale":107.3088},
+                "christian_devoted_one":{"id":"christian_devoted_one","max_hp":146.8392,"armor":3.8,"damage":0.0,"attack_cooldown_secs":1.4,"attack_range":20.0,"move_speed":155.4888,"morale":152.928},
+                "christian_fanatic":{"id":"christian_fanatic","max_hp":111.996,"armor":0.0,"damage":14.0,"attack_cooldown_secs":1.148,"attack_range":23.0,"move_speed":169.0752,"morale":139.968},
+                "muslim_shield_infantry":{"id":"muslim_shield_infantry","max_hp":184.464,"armor":10.0,"damage":6.336,"attack_cooldown_secs":1.23552,"attack_range":36.0,"move_speed":135.375,"morale":123.2},
+                "muslim_spearman":{"id":"muslim_spearman","max_hp":143.64,"armor":8.6,"damage":7.8848,"attack_cooldown_secs":1.16424,"attack_range":48.0,"move_speed":141.075,"morale":118.72},
+                "muslim_unmounted_knight":{"id":"muslim_unmounted_knight","max_hp":136.08,"armor":10.3,"damage":11.04,"attack_cooldown_secs":1.0692,"attack_range":36.0,"move_speed":152.475,"morale":120.96},
+                "muslim_squire":{"id":"muslim_squire","max_hp":146.8392,"armor":3.0,"damage":0.0,"attack_cooldown_secs":1.428,"attack_range":20.0,"move_speed":153.9792,"morale":158.112},
+                "muslim_experienced_bowman":{"id":"muslim_experienced_bowman","max_hp":81.7048,"armor":2.525,"damage":2.0664,"attack_cooldown_secs":1.336175,"attack_range":26.0,"move_speed":168.1372,"morale":107.3088,"ranged_attack_damage":16.128,"ranged_attack_cooldown_secs":0.78936,"ranged_attack_range":630.0,"ranged_projectile_speed":338.0,"ranged_projectile_max_distance":750.0},
+                "muslim_crossbowman":{"id":"muslim_crossbowman","max_hp":78.6216,"armor":2.925,"damage":1.4616,"attack_cooldown_secs":1.446375,"attack_range":26.0,"move_speed":158.3428,"morale":104.328,"ranged_attack_damage":20.88,"ranged_attack_cooldown_secs":1.13022,"ranged_attack_range":525.0,"ranged_projectile_speed":362.0,"ranged_projectile_max_distance":670.0},
+                "muslim_tracker":{"id":"muslim_tracker","max_hp":83.2464,"armor":2.525,"damage":1.89,"attack_cooldown_secs":1.308625,"attack_range":26.0,"move_speed":173.0344,"morale":109.296,"ranged_attack_damage":10.368,"ranged_attack_cooldown_secs":0.8073,"ranged_attack_range":505.0,"ranged_projectile_speed":330.0,"ranged_projectile_max_distance":640.0},
+                "muslim_scout":{"id":"muslim_scout","max_hp":84.788,"armor":2.01875,"damage":3.15,"attack_cooldown_secs":1.18465,"attack_range":34.0,"move_speed":192.6232,"morale":107.3088},
+                "muslim_devoted_one":{"id":"muslim_devoted_one","max_hp":146.8392,"armor":3.8,"damage":0.0,"attack_cooldown_secs":1.4,"attack_range":20.0,"move_speed":155.4888,"morale":152.928},
+                "muslim_fanatic":{"id":"muslim_fanatic","max_hp":111.996,"armor":0.0,"damage":14.0,"attack_cooldown_secs":1.148,"attack_range":23.0,"move_speed":169.0752,"morale":139.968}
+              },
+              "behavior":{
+                "tracker_hound_active_secs":10.0,
+                "tracker_hound_cooldown_secs":20.0,
+                "tracker_hound_strike_interval_secs":0.45,
+                "tracker_hound_damage_multiplier":0.55,
+                "scout_raid_active_secs":10.0,
+                "scout_raid_cooldown_secs":20.0,
+                "scout_raid_speed_multiplier":1.28,
+                "fanatic_life_leech_ratio":0.08
               }
             }"#,
         );
@@ -986,6 +1446,33 @@ mod tests {
         let data = GameData::load_from_dir(tmp.path()).expect("load");
         assert_eq!(data.waves.waves.len(), 2);
         assert_eq!(data.upgrades.upgrades.len(), 1);
+    }
+
+    #[test]
+    fn opposing_enemy_pool_swaps_by_player_faction() {
+        let tmp = TempDir::new().expect("tmp");
+        write_valid_set(tmp.path());
+        let data = GameData::load_from_dir(tmp.path()).expect("load");
+
+        let christian_player_pool = data.enemies.opposing_enemy_pool(PlayerFaction::Christian);
+        assert_eq!(
+            christian_player_pool,
+            [
+                UnitKind::MuslimPeasantInfantry,
+                UnitKind::MuslimPeasantArcher,
+                UnitKind::MuslimPeasantPriest,
+            ]
+        );
+
+        let muslim_player_pool = data.enemies.opposing_enemy_pool(PlayerFaction::Muslim);
+        assert_eq!(
+            muslim_player_pool,
+            [
+                UnitKind::ChristianPeasantInfantry,
+                UnitKind::ChristianPeasantArcher,
+                UnitKind::ChristianPeasantPriest,
+            ]
+        );
     }
 
     #[test]
@@ -1019,12 +1506,12 @@ mod tests {
             tmp.path(),
             "enemies.json",
             r#"{
-              "enemy_christian_peasant_infantry":{"id":"ec_i","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0,"cohesion":70.0},
-              "enemy_christian_peasant_archer":{"id":"ec_a","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"ranged_attack_damage":2.0,"move_speed":80.0,"morale":85.0,"cohesion":70.0},
-              "enemy_christian_peasant_priest":{"id":"ec_p","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0,"cohesion":70.0},
-              "enemy_muslim_peasant_infantry":{"id":"em_i","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0,"cohesion":70.0},
-              "enemy_muslim_peasant_archer":{"id":"em_a","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0,"cohesion":70.0},
-              "enemy_muslim_peasant_priest":{"id":"em_p","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0,"cohesion":70.0}
+              "enemy_christian_peasant_infantry":{"id":"ec_i","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0},
+              "enemy_christian_peasant_archer":{"id":"ec_a","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"ranged_attack_damage":2.0,"move_speed":80.0,"morale":85.0},
+              "enemy_christian_peasant_priest":{"id":"ec_p","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0},
+              "enemy_muslim_peasant_infantry":{"id":"em_i","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0},
+              "enemy_muslim_peasant_archer":{"id":"em_a","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0},
+              "enemy_muslim_peasant_priest":{"id":"em_p","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0}
             }"#,
         );
 
@@ -1198,5 +1685,26 @@ mod tests {
 
         let err = GameData::load_from_dir(tmp.path()).expect_err("expected bad faction config");
         assert!(err.to_string().contains("friendly_health_multiplier"));
+    }
+
+    #[test]
+    fn rejects_non_positive_difficulty_multiplier() {
+        let tmp = TempDir::new().expect("tmp");
+        write_valid_set(tmp.path());
+        write_config(
+            tmp.path(),
+            "difficulties.json",
+            r#"{
+              "recruit":{"enemy_health_multiplier":0.0},
+              "experienced":{"enemy_health_multiplier":1.0},
+              "alone_against_the_infidels":{"enemy_health_multiplier":1.0}
+            }"#,
+        );
+
+        let err = GameData::load_from_dir(tmp.path()).expect_err("expected bad difficulty config");
+        assert!(
+            err.to_string()
+                .contains("difficulties.recruit.enemy_health_multiplier")
+        );
     }
 }

@@ -1,16 +1,17 @@
-use bevy::prelude::*;
 use crate::random::runtime_entropy_seed_u32;
+use bevy::prelude::*;
+use std::collections::HashSet;
 
 use crate::data::GameData;
-use crate::enemies::WaveRuntime;
+use crate::enemies::{MajorArmyDefeatedEvent, WaveRuntime};
 use crate::inventory::{
     EquipmentChestState, InventoryRngState, ItemRarityRollBonus, roll_chest_items,
 };
 use crate::map::MapBounds;
 use crate::model::{
-    CommanderUnit, FriendlyUnit, GainXpEvent, GameState, GlobalBuffs, MatchSetupSelection,
+    CommanderUnit, FriendlyUnit, GainGoldEvent, GameState, GlobalBuffs, MatchSetupSelection,
     MoveSpeed, PlayerFaction, RunModalAction, RunModalRequestEvent, RunModalScreen,
-    SpawnExpPackEvent, StartRunEvent,
+    SpawnGoldPackEvent, StartRunEvent,
 };
 use crate::upgrades::Progression;
 use crate::visuals::ArtAssets;
@@ -28,10 +29,12 @@ const CHEST_PICKUP_Z: f32 = 43.0;
 const CHEST_PICKUP_DELAY_SECS: f32 = 0.9;
 const CHEST_PICKUP_CHANNEL_SECS: f32 = 2.0;
 const CHEST_PICKUP_WAVE_INTERVAL: u32 = 3;
+const MAJOR_ARMY_CHEST_SPREAD_DISTANCE: f32 = 42.0;
+const MAJOR_ARMY_CHEST_MIN_SEPARATION: f32 = 24.0;
 
 #[derive(Component, Clone, Copy, Debug)]
-pub struct ExpPack {
-    pub xp_value: f32,
+pub struct GoldPack {
+    pub gold_value: f32,
     pub pickup_delay_remaining: f32,
 }
 
@@ -77,6 +80,21 @@ struct ChestWaveRuntime {
     rng_state: u64,
 }
 
+#[derive(Resource, Clone, Debug)]
+struct MajorArmyChestRuntime {
+    granted_waves: HashSet<u32>,
+    rng_state: u64,
+}
+
+impl Default for MajorArmyChestRuntime {
+    fn default() -> Self {
+        Self {
+            granted_waves: HashSet::new(),
+            rng_state: 0xA6D4_39F1_C211_5B0E,
+        }
+    }
+}
+
 pub struct DropsPlugin;
 
 impl Plugin for DropsPlugin {
@@ -84,17 +102,19 @@ impl Plugin for DropsPlugin {
         app.init_resource::<DropSpawnRuntime>()
             .init_resource::<MagnetWaveRuntime>()
             .init_resource::<ChestWaveRuntime>()
-            .add_systems(Update, spawn_exp_packs_on_run_start)
+            .init_resource::<MajorArmyChestRuntime>()
+            .add_systems(Update, spawn_gold_packs_on_run_start)
             .add_systems(
                 Update,
                 (
-                    spawn_exp_packs_over_time,
-                    spawn_exp_packs_from_events,
+                    spawn_gold_packs_over_time,
+                    spawn_gold_packs_from_events,
                     update_wave_magnet_pickup,
                     update_wave_chest_drop,
+                    spawn_major_army_dual_chests,
                     pickup_wave_magnet,
                     pickup_equipment_chest,
-                    pickup_exp_packs,
+                    pickup_gold_packs,
                     transit_drops_to_commander,
                 )
                     .chain()
@@ -104,7 +124,7 @@ impl Plugin for DropsPlugin {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn spawn_exp_packs_on_run_start(
+fn spawn_gold_packs_on_run_start(
     mut commands: Commands,
     mut start_events: EventReader<StartRunEvent>,
     data: Res<GameData>,
@@ -113,12 +133,13 @@ fn spawn_exp_packs_on_run_start(
     progression: Option<Res<Progression>>,
     bounds: Option<Res<MapBounds>>,
     commanders: Query<&Transform, With<CommanderUnit>>,
-    existing_packs: Query<Entity, With<ExpPack>>,
+    existing_packs: Query<Entity, With<GoldPack>>,
     existing_magnets: Query<Entity, With<MagnetPickup>>,
     existing_chests: Query<Entity, With<EquipmentChestDrop>>,
     mut runtime: ResMut<DropSpawnRuntime>,
     mut magnet_runtime: ResMut<MagnetWaveRuntime>,
     mut chest_runtime: ResMut<ChestWaveRuntime>,
+    mut major_chest_runtime: ResMut<MajorArmyChestRuntime>,
     mut chest_state: ResMut<EquipmentChestState>,
 ) {
     if start_events.is_empty() {
@@ -139,19 +160,21 @@ fn spawn_exp_packs_on_run_start(
     let runtime_seed = runtime_seed_from_time();
     runtime.rng_state = rng_state_from_seed(runtime_seed);
     chest_runtime.rng_state = rng_state_from_seed(runtime_seed ^ 0xA5A5_3C3C);
+    major_chest_runtime.rng_state = rng_state_from_seed(runtime_seed ^ 0x5AC6_9D12);
+    major_chest_runtime.granted_waves.clear();
 
     let initial_count = data.drops.initial_spawn_count.max(1);
     let wave_number = current_wave_number(waves.as_deref());
     let commander_level = current_commander_level(progression.as_deref());
-    let xp_value = scaled_pack_xp(data.drops.xp_per_pack, wave_number, commander_level);
+    let gold_value = scaled_pack_gold(data.drops.gold_per_pack, wave_number, commander_level);
     let center = commander_spawn_center(&commanders);
     for _ in 0..initial_count {
         let position =
             drop_spawn_position(&mut runtime.rng_state, bounds.as_deref().copied(), center);
-        spawn_exp_pack(
+        spawn_gold_pack(
             &mut commands,
             position,
-            xp_value,
+            gold_value,
             AMBIENT_PICKUP_DELAY_SECS,
             &art,
         );
@@ -163,7 +186,7 @@ fn spawn_exp_packs_on_run_start(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn spawn_exp_packs_over_time(
+fn spawn_gold_packs_over_time(
     mut commands: Commands,
     time: Res<Time>,
     data: Res<GameData>,
@@ -172,7 +195,7 @@ fn spawn_exp_packs_over_time(
     progression: Option<Res<Progression>>,
     bounds: Option<Res<MapBounds>>,
     commanders: Query<&Transform, With<CommanderUnit>>,
-    packs: Query<Entity, With<ExpPack>>,
+    packs: Query<Entity, With<GoldPack>>,
     mut runtime: ResMut<DropSpawnRuntime>,
 ) {
     let max_active = data.drops.max_active_packs as usize;
@@ -189,24 +212,24 @@ fn spawn_exp_packs_over_time(
     let position = drop_spawn_position(&mut runtime.rng_state, bounds.as_deref().copied(), center);
     let wave_number = current_wave_number(waves.as_deref());
     let commander_level = current_commander_level(progression.as_deref());
-    let xp_value = scaled_pack_xp(data.drops.xp_per_pack, wave_number, commander_level);
-    spawn_exp_pack(
+    let gold_value = scaled_pack_gold(data.drops.gold_per_pack, wave_number, commander_level);
+    spawn_gold_pack(
         &mut commands,
         position,
-        xp_value,
+        gold_value,
         AMBIENT_PICKUP_DELAY_SECS,
         &art,
     );
 }
 
-fn spawn_exp_packs_from_events(
+fn spawn_gold_packs_from_events(
     mut commands: Commands,
     data: Res<GameData>,
     art: Res<ArtAssets>,
     waves: Option<Res<WaveRuntime>>,
     progression: Option<Res<Progression>>,
-    packs: Query<Entity, With<ExpPack>>,
-    mut spawn_events: EventReader<SpawnExpPackEvent>,
+    packs: Query<Entity, With<GoldPack>>,
+    mut spawn_events: EventReader<SpawnGoldPackEvent>,
 ) {
     if spawn_events.is_empty() {
         return;
@@ -219,16 +242,18 @@ fn spawn_exp_packs_from_events(
         if active_count >= max_active {
             break;
         }
-        let base_xp = event.xp_value_override.unwrap_or(data.drops.xp_per_pack);
-        let xp_value = scaled_pack_xp(base_xp, wave_number, commander_level);
+        let base_gold = event
+            .gold_value_override
+            .unwrap_or(data.drops.gold_per_pack);
+        let gold_value = scaled_pack_gold(base_gold, wave_number, commander_level);
         let pickup_delay = event
             .pickup_delay_secs
             .unwrap_or(AMBIENT_PICKUP_DELAY_SECS)
             .max(0.0);
-        spawn_exp_pack(
+        spawn_gold_pack(
             &mut commands,
             event.world_position,
-            xp_value,
+            gold_value,
             pickup_delay,
             &art,
         );
@@ -288,6 +313,28 @@ fn update_wave_chest_drop(
     let center = commander_spawn_center(&commanders);
     let position = chest_spawn_position(&mut runtime.rng_state, bounds.as_deref().copied(), center);
     spawn_equipment_chest(&mut commands, &art, current_wave, position);
+}
+
+fn spawn_major_army_dual_chests(
+    mut commands: Commands,
+    art: Res<ArtAssets>,
+    bounds: Option<Res<MapBounds>>,
+    mut runtime: ResMut<MajorArmyChestRuntime>,
+    mut defeated_events: EventReader<MajorArmyDefeatedEvent>,
+) {
+    if defeated_events.is_empty() {
+        return;
+    }
+    let map_bounds = bounds.as_deref().copied();
+    for event in defeated_events.read() {
+        if !should_grant_major_boss_chests(&mut runtime.granted_waves, event.wave_number) {
+            continue;
+        }
+        let positions =
+            major_army_chest_positions(event.position, map_bounds, &mut runtime.rng_state);
+        spawn_equipment_chest(&mut commands, &art, event.wave_number, positions[0]);
+        spawn_equipment_chest(&mut commands, &art, event.wave_number, positions[1]);
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -366,7 +413,7 @@ fn pickup_wave_magnet(
     buffs: Option<Res<GlobalBuffs>>,
     friendlies: Query<&Transform, With<FriendlyUnit>>,
     magnets: Query<(Entity, &Transform), With<MagnetPickup>>,
-    mut packs: Query<(Entity, Option<&DropInTransitToCommander>, &mut ExpPack)>,
+    mut packs: Query<(Entity, Option<&DropInTransitToCommander>, &mut GoldPack)>,
 ) {
     let friendly_positions: Vec<Vec2> = friendlies
         .iter()
@@ -419,15 +466,15 @@ fn spawn_wave_magnet(commands: &mut Commands, art: &ArtAssets, faction: PlayerFa
 }
 
 #[allow(clippy::type_complexity)]
-fn pickup_exp_packs(
+fn pickup_gold_packs(
     mut commands: Commands,
     time: Res<Time>,
     data: Res<GameData>,
     buffs: Option<Res<GlobalBuffs>>,
     friendlies: Query<&Transform, With<FriendlyUnit>>,
     mut packs: Query<
-        (Entity, &mut ExpPack, &Transform),
-        (Without<DropInTransitToCommander>, With<ExpPack>),
+        (Entity, &mut GoldPack, &Transform),
+        (Without<DropInTransitToCommander>, With<GoldPack>),
     >,
 ) {
     let friendly_positions: Vec<Vec2> = friendlies
@@ -467,10 +514,10 @@ fn transit_drops_to_commander(
     buffs: Option<Res<GlobalBuffs>>,
     commanders: Query<(&Transform, &MoveSpeed), With<CommanderUnit>>,
     mut packs: Query<
-        (Entity, &ExpPack, &mut Transform),
+        (Entity, &GoldPack, &mut Transform),
         (With<DropInTransitToCommander>, Without<CommanderUnit>),
     >,
-    mut xp_events: EventWriter<GainXpEvent>,
+    mut gold_events: EventWriter<GainGoldEvent>,
 ) {
     let Ok((commander_transform, commander_speed)) = commanders.get_single() else {
         return;
@@ -479,7 +526,10 @@ fn transit_drops_to_commander(
         .as_deref()
         .map(|selection| selection.faction)
         .unwrap_or(PlayerFaction::Christian);
-    let faction_xp_multiplier = data.factions.for_faction(player_faction).xp_gain_multiplier;
+    let faction_gold_multiplier = data
+        .factions
+        .for_faction(player_faction)
+        .gold_gain_multiplier;
     let target = commander_transform.translation.truncate();
     let homing_speed = homing_speed_from_commander_base(commander_speed.0);
     let max_step = homing_speed * time.delta_seconds();
@@ -491,24 +541,27 @@ fn transit_drops_to_commander(
         transform.translation.y = next.y;
 
         if reached_target(next, target, DROP_CONSUME_RADIUS) {
-            let xp_gain =
-                apply_xp_gain_multiplier(pack.xp_value, buffs.as_deref(), faction_xp_multiplier);
-            xp_events.send(GainXpEvent(xp_gain));
+            let gold_gain = apply_gold_gain_multiplier(
+                pack.gold_value,
+                buffs.as_deref(),
+                faction_gold_multiplier,
+            );
+            gold_events.send(GainGoldEvent(gold_gain));
             commands.entity(entity).despawn_recursive();
         }
     }
 }
 
-fn spawn_exp_pack(
+fn spawn_gold_pack(
     commands: &mut Commands,
     position: Vec2,
-    xp_value: f32,
+    gold_value: f32,
     pickup_delay_secs: f32,
     art: &ArtAssets,
 ) {
     commands.spawn((
-        ExpPack {
-            xp_value,
+        GoldPack {
+            gold_value,
             pickup_delay_remaining: pickup_delay_secs.max(0.0),
         },
         SpriteBundle {
@@ -544,6 +597,52 @@ pub fn chest_wave_lifecycle(last_seen_wave: u32, current_wave: u32) -> (bool, bo
 
 pub fn should_spawn_chest_for_wave(wave_number: u32) -> bool {
     wave_number > 0 && wave_number.is_multiple_of(CHEST_PICKUP_WAVE_INTERVAL)
+}
+
+fn should_grant_major_boss_chests(granted_waves: &mut HashSet<u32>, wave_number: u32) -> bool {
+    granted_waves.insert(wave_number)
+}
+
+fn major_army_chest_positions(
+    center: Vec2,
+    bounds: Option<MapBounds>,
+    rng_state: &mut u64,
+) -> [Vec2; 2] {
+    let angle = next_random_f32(rng_state) * std::f32::consts::TAU;
+    let direction = Vec2::from_angle(angle);
+    let perpendicular = Vec2::new(-direction.y, direction.x);
+    let spread = MAJOR_ARMY_CHEST_SPREAD_DISTANCE + next_random_f32(rng_state) * 8.0;
+    let jitter = (next_random_f32(rng_state) - 0.5) * 18.0;
+
+    let mut first = center + direction * spread + perpendicular * jitter;
+    let mut second =
+        center - direction * (spread + MAJOR_ARMY_CHEST_MIN_SEPARATION) - perpendicular * jitter;
+    if let Some(active_bounds) = bounds {
+        first = clamp_position_to_bounds(first, active_bounds);
+        second = clamp_position_to_bounds(second, active_bounds);
+        let separation = first.distance(second);
+        if separation + f32::EPSILON < MAJOR_ARMY_CHEST_MIN_SEPARATION {
+            let direction = (second - first).normalize_or_zero();
+            let fallback_direction = if direction == Vec2::ZERO {
+                Vec2::X
+            } else {
+                direction
+            };
+            second = clamp_position_to_bounds(
+                first + fallback_direction * MAJOR_ARMY_CHEST_MIN_SEPARATION,
+                active_bounds,
+            );
+        }
+    }
+
+    [first, second]
+}
+
+fn clamp_position_to_bounds(position: Vec2, bounds: MapBounds) -> Vec2 {
+    Vec2::new(
+        position.x.clamp(-bounds.half_width, bounds.half_width),
+        position.y.clamp(-bounds.half_height, bounds.half_height),
+    )
 }
 
 pub fn force_home_pack_state(
@@ -604,23 +703,23 @@ fn commander_spawn_center(commanders: &Query<&Transform, With<CommanderUnit>>) -
         .unwrap_or(Vec2::ZERO)
 }
 
-pub fn scaled_pack_xp(base_xp: f32, wave_number: u32, commander_level: u32) -> f32 {
+pub fn scaled_pack_gold(base_gold: f32, wave_number: u32, commander_level: u32) -> f32 {
     let wave_scale = 1.0 + wave_number.saturating_sub(1) as f32 * 0.06;
     let level_scale = 1.0 + commander_level.saturating_sub(1) as f32 * 0.03;
-    (base_xp * wave_scale * level_scale).max(1.0)
+    (base_gold * wave_scale * level_scale).max(1.0)
 }
 
-pub fn apply_xp_gain_multiplier(
-    base_xp: f32,
+pub fn apply_gold_gain_multiplier(
+    base_gold: f32,
     buffs: Option<&GlobalBuffs>,
     faction_multiplier: f32,
 ) -> f32 {
     let multiplier = buffs
-        .map(|value| value.xp_gain_multiplier)
+        .map(|value| value.gold_gain_multiplier)
         .unwrap_or(1.0)
         .max(0.0)
         * faction_multiplier.max(0.0);
-    (base_xp * multiplier).max(0.0)
+    (base_gold * multiplier).max(0.0)
 }
 
 fn drop_spawn_position(rng_state: &mut u64, bounds: Option<MapBounds>, center: Vec2) -> Vec2 {
@@ -737,10 +836,11 @@ mod tests {
     use bevy::prelude::Vec2;
 
     use crate::drops::{
-        EquipmentChestDrop, any_friendly_in_pickup_radius, apply_xp_gain_multiplier,
+        EquipmentChestDrop, any_friendly_in_pickup_radius, apply_gold_gain_multiplier,
         chest_pickup_progress_ratio, chest_wave_lifecycle, drop_spawn_position,
         force_home_pack_state, homing_speed_from_commander_base, magnet_wave_lifecycle,
-        reached_target, scaled_pack_xp, should_spawn_chest_for_wave, should_spawn_magnet_for_wave,
+        major_army_chest_positions, reached_target, scaled_pack_gold,
+        should_grant_major_boss_chests, should_spawn_chest_for_wave, should_spawn_magnet_for_wave,
         step_towards_target, tick_pickup_delay,
     };
     use crate::map::MapBounds;
@@ -788,12 +888,12 @@ mod tests {
     }
 
     #[test]
-    fn xp_pack_scaling_increases_with_wave_and_level() {
+    fn gold_pack_scaling_increases_with_wave_and_level() {
         let base = 6.0;
-        let early = scaled_pack_xp(base, 1, 1);
-        let later_wave = scaled_pack_xp(base, 5, 1);
-        let later_level = scaled_pack_xp(base, 1, 6);
-        let both = scaled_pack_xp(base, 5, 6);
+        let early = scaled_pack_gold(base, 1, 1);
+        let later_wave = scaled_pack_gold(base, 5, 1);
+        let later_level = scaled_pack_gold(base, 1, 6);
+        let both = scaled_pack_gold(base, 5, 6);
 
         assert!(later_wave > early);
         assert!(later_level > early);
@@ -802,19 +902,19 @@ mod tests {
     }
 
     #[test]
-    fn xp_gain_multiplier_scales_consumed_pack_xp() {
+    fn gold_gain_multiplier_scales_consumed_pack_gold() {
         let base = 12.0;
-        let default_gain = apply_xp_gain_multiplier(base, None, 1.0);
+        let default_gain = apply_gold_gain_multiplier(base, None, 1.0);
         assert!((default_gain - 12.0).abs() < 0.001);
 
         let buffs = GlobalBuffs {
-            xp_gain_multiplier: 1.35,
+            gold_gain_multiplier: 1.35,
             ..GlobalBuffs::default()
         };
-        let boosted = apply_xp_gain_multiplier(base, Some(&buffs), 1.0);
+        let boosted = apply_gold_gain_multiplier(base, Some(&buffs), 1.0);
         assert!((boosted - 16.2).abs() < 0.001);
 
-        let faction_boosted = apply_xp_gain_multiplier(base, Some(&buffs), 1.1);
+        let faction_boosted = apply_gold_gain_multiplier(base, Some(&buffs), 1.1);
         assert!((faction_boosted - 17.82).abs() < 0.001);
     }
 
@@ -892,5 +992,30 @@ mod tests {
 
         chest.pickup_progress = 2.0;
         assert_eq!(chest_pickup_progress_ratio(&chest), None);
+    }
+
+    #[test]
+    fn major_army_chest_positions_are_non_overlapping_and_in_bounds() {
+        let mut rng_state = 0x9182_6A77_11CD_44E0u64;
+        let bounds = MapBounds {
+            half_width: 300.0,
+            half_height: 260.0,
+        };
+        let [first, second] =
+            major_army_chest_positions(Vec2::new(280.0, -245.0), Some(bounds), &mut rng_state);
+
+        assert!(first.x >= -bounds.half_width && first.x <= bounds.half_width);
+        assert!(first.y >= -bounds.half_height && first.y <= bounds.half_height);
+        assert!(second.x >= -bounds.half_width && second.x <= bounds.half_width);
+        assert!(second.y >= -bounds.half_height && second.y <= bounds.half_height);
+        assert!(first.distance(second) + f32::EPSILON >= super::MAJOR_ARMY_CHEST_MIN_SEPARATION);
+    }
+
+    #[test]
+    fn major_army_chest_reward_is_only_granted_once_per_wave() {
+        let mut granted = std::collections::HashSet::new();
+        assert!(should_grant_major_boss_chests(&mut granted, 10));
+        assert!(!should_grant_major_boss_chests(&mut granted, 10));
+        assert!(should_grant_major_boss_chests(&mut granted, 20));
     }
 }

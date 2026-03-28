@@ -185,10 +185,10 @@ pub fn build_archive_entries(data: &GameData) -> Vec<ArchiveEntry> {
         },
         ArchiveEntry {
             category: ArchiveCategory::Drops,
-            title: "XP Pack".to_string(),
+            title: "Gold Pack".to_string(),
             description: format!(
-                "Pickup grants XP. Base pack value {} and scales by wave/level.",
-                data.drops.xp_per_pack,
+                "Pickup grants gold. Base pack value {} and scales by wave/level.",
+                data.drops.gold_per_pack,
             ),
             icon: Some(UpgradeCardIcon::PickupRadius),
         },

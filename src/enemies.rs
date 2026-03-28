@@ -6,27 +6,30 @@ use crate::ai::{
     should_move_towards_target,
 };
 use crate::combat::{RangedAttackCooldown, RangedAttackProfile};
-use crate::data::{EnemyStatsConfig, GameData, WavesConfigFile};
+use crate::data::{DifficultyGameplayConfig, EnemyStatsConfig, GameData, WavesConfigFile};
 use crate::formation::{ActiveFormation, active_formation_config, formation_contains_position};
+use crate::inventory::{
+    UnitCombatRole, UnitEquipmentBonuses, aggregate_item_bonuses_for_role,
+    roll_chest_items_from_seed,
+};
 use crate::map::{MapBounds, playable_bounds};
 use crate::model::{
     Armor, AttackCooldown, AttackProfile, ColliderRadius, CommanderUnit, EnemyUnit, FriendlyUnit,
-    GameState, Health, MatchSetupSelection, Morale, MoveSpeed, PlayerFaction, StartRunEvent, Team,
-    Unit, UnitKind,
+    GameDifficulty, GameState, Health, MatchSetupSelection, Morale, MoveSpeed, PlayerFaction,
+    StartRunEvent, Team, Unit, UnitKind,
 };
 use crate::morale::morale_movement_multiplier;
 use crate::random::runtime_entropy_seed_u32;
 use crate::squad::PriestSupportCaster;
 use crate::squad::RosterEconomy;
-use crate::upgrades::Progression;
+use crate::upgrades::{Progression, major_minor_reward_counts_for_level};
 use crate::visuals::ArtAssets;
 
 #[derive(Resource, Clone, Debug, Default)]
 pub struct WaveRuntime {
     pub elapsed: f32,
     pub current_wave: u32,
-    pub wave_elapsed: f32,
-    pub spawn_accumulator: f32,
+    pub wave_started: bool,
     pub finished_spawning: bool,
     pub victory_announced: bool,
     pub pending_batches: Vec<PendingEnemyBatch>,
@@ -36,12 +39,79 @@ pub struct WaveRuntime {
     pub spawn_rng_state: u64,
 }
 
+#[derive(Event, Clone, Copy, Debug)]
+pub struct WaveCompletedEvent {
+    pub wave_number: u32,
+}
+
+#[derive(Event, Clone, Copy, Debug)]
+pub struct MajorArmyDefeatedEvent {
+    pub wave_number: u32,
+    pub position: Vec2,
+}
+
+#[derive(Component, Clone, Copy, Debug)]
+struct MajorArmyUnit {
+    wave_number: u32,
+}
+
+#[derive(Resource, Clone, Copy, Debug, Default)]
+struct MajorArmyTracker {
+    active_wave: Option<u32>,
+    last_position: Vec2,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EnemyArmyLane {
+    Small,
+    Minor,
+    Major,
+}
+
 #[derive(Clone, Debug)]
 pub struct PendingEnemyBatch {
     pub remaining: u32,
     pub wave_number: u32,
     pub stat_scale: f32,
+    pub lane: EnemyArmyLane,
     pub next_spawn_time: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct WaveArmyBatchPlan {
+    lane: EnemyArmyLane,
+    count: u32,
+    stat_scale: f32,
+}
+
+#[derive(Clone, Debug, Default)]
+struct EnemyArmyProgressionProfile {
+    army_level: u32,
+    major_upgrades: u32,
+    minor_upgrades: u32,
+    equipment_fill_ratio: f32,
+    upgrade_pressure_multiplier: f32,
+    equipment: EnemyEquipmentLoadoutProfile,
+}
+
+#[derive(Clone, Debug, Default)]
+struct EnemyEquipmentLoadoutProfile {
+    filled_slots: usize,
+    template_ids: Vec<String>,
+    melee_bonuses: UnitEquipmentBonuses,
+    ranged_bonuses: UnitEquipmentBonuses,
+    support_bonuses: UnitEquipmentBonuses,
+    power_multiplier: f32,
+}
+
+impl EnemyEquipmentLoadoutProfile {
+    fn bonuses_for_spawn_role(&self, role: EnemySpawnRole) -> UnitEquipmentBonuses {
+        match role {
+            EnemySpawnRole::Melee => self.melee_bonuses,
+            EnemySpawnRole::Ranged => self.ranged_bonuses,
+            EnemySpawnRole::Support => self.support_bonuses,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -120,6 +190,13 @@ const POST_SCRIPTED_WAVE_COUNT_GROWTH: f32 = 1.18;
 const WAVE_STAT_GROWTH_PER_WAVE: f32 = 0.102;
 const WAVE_BATCH_SIZE: u32 = 7;
 const WAVE_BATCH_INTERVAL_SECS: f32 = 0.7;
+const MINOR_ARMY_COUNT_MULTIPLIER: f32 = 0.55;
+const MAJOR_ARMY_COUNT_MULTIPLIER: f32 = 1.25;
+const MINOR_ARMY_STAT_MULTIPLIER: f32 = 1.12;
+const MAJOR_ARMY_STAT_MULTIPLIER: f32 = 1.30;
+const SMALL_ARMY_LOADOUT_SLOT_COUNT: usize = 3;
+const MINOR_ARMY_LOADOUT_SLOT_COUNT: usize = 4;
+const MAJOR_ARMY_LOADOUT_SLOT_COUNT: usize = 5;
 const ENEMY_SPAWN_MIN_DISTANCE_FROM_COMMANDER: f32 = 200.0;
 const ENEMY_SPAWN_ATTEMPTS: u32 = 8;
 const DEFAULT_SPAWN_HALF_WIDTH: f32 = 900.0;
@@ -141,12 +218,15 @@ pub struct EnemyPlugin;
 impl Plugin for EnemyPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<WaveRuntime>()
+            .init_resource::<MajorArmyTracker>()
+            .add_event::<MajorArmyDefeatedEvent>()
             .add_systems(Update, reset_waves_on_run_start)
             .add_systems(
                 Update,
                 (
                     spawn_waves,
                     spawn_pending_enemy_batches,
+                    track_major_army_defeats,
                     enemy_chase_targets,
                     update_bandit_visual_states,
                 )
@@ -162,6 +242,7 @@ impl Plugin for EnemyPlugin {
 
 fn reset_waves_on_run_start(
     mut wave_runtime: ResMut<WaveRuntime>,
+    mut major_army_tracker: ResMut<MajorArmyTracker>,
     mut start_events: EventReader<StartRunEvent>,
 ) {
     if start_events.is_empty() {
@@ -175,9 +256,16 @@ fn reset_waves_on_run_start(
         spawn_rng_state: rng_state_from_seed(seed ^ 0x4A3C_11D7),
         ..WaveRuntime::default()
     };
+    *major_army_tracker = MajorArmyTracker::default();
 }
 
-fn spawn_waves(time: Res<Time>, data: Res<GameData>, mut wave_runtime: ResMut<WaveRuntime>) {
+fn spawn_waves(
+    time: Res<Time>,
+    data: Res<GameData>,
+    alive_enemies: Query<(), With<EnemyUnit>>,
+    mut wave_runtime: ResMut<WaveRuntime>,
+    mut wave_completed_events: EventWriter<WaveCompletedEvent>,
+) {
     let dt = time.delta_seconds();
     if dt <= 0.0 {
         return;
@@ -190,29 +278,66 @@ fn spawn_waves(time: Res<Time>, data: Res<GameData>, mut wave_runtime: ResMut<Wa
     if wave_runtime.finished_spawning {
         return;
     }
-
-    wave_runtime.wave_elapsed += dt;
-    while wave_runtime.wave_elapsed >= WAVE_DURATION_SECS && wave_runtime.current_wave < MAX_WAVES {
-        wave_runtime.wave_elapsed -= WAVE_DURATION_SECS;
-        wave_runtime.current_wave = wave_runtime.current_wave.saturating_add(1);
-    }
-
-    if wave_runtime.current_wave >= MAX_WAVES && wave_runtime.wave_elapsed >= WAVE_DURATION_SECS {
-        wave_runtime.finished_spawning = true;
-        wave_runtime.wave_elapsed = WAVE_DURATION_SECS;
+    let pending_empty = wave_runtime.pending_batches.is_empty();
+    let alive_count = alive_enemies.iter().count();
+    if !wave_runtime.wave_started {
+        let wave_number = wave_runtime.current_wave;
+        let base_spawn_count = units_to_spawn_for_wave(&data.waves, wave_number);
+        let base_stat_scale = wave_stat_multiplier(wave_number);
+        for plan in planned_wave_army_batches(base_spawn_count, wave_number, base_stat_scale) {
+            enqueue_wave_batch(
+                &mut wave_runtime,
+                plan.count,
+                wave_number,
+                plan.stat_scale,
+                plan.lane,
+            );
+        }
+        wave_runtime.wave_started = true;
         return;
     }
 
-    let spawn_rate = units_per_second_for_wave(&data.waves, wave_runtime.current_wave);
-    wave_runtime.spawn_accumulator += spawn_rate * dt;
-    let spawn_count = wave_runtime.spawn_accumulator.floor().max(0.0) as u32;
-    if spawn_count == 0 {
+    if pending_empty && alive_count == 0 {
+        let completed_wave = wave_runtime.current_wave.max(1);
+        wave_completed_events.send(WaveCompletedEvent {
+            wave_number: completed_wave,
+        });
+        if completed_wave >= MAX_WAVES {
+            wave_runtime.finished_spawning = true;
+            return;
+        }
+        wave_runtime.current_wave = completed_wave.saturating_add(1);
+        wave_runtime.wave_started = false;
+    }
+}
+
+fn track_major_army_defeats(
+    mut tracker: ResMut<MajorArmyTracker>,
+    major_units: Query<(&MajorArmyUnit, &Transform), With<EnemyUnit>>,
+    mut defeated_events: EventWriter<MajorArmyDefeatedEvent>,
+) {
+    let mut major_wave = None;
+    let mut major_count = 0usize;
+    let mut position_accumulator = Vec2::ZERO;
+    for (unit, transform) in &major_units {
+        major_wave = Some(unit.wave_number);
+        major_count = major_count.saturating_add(1);
+        position_accumulator += transform.translation.truncate();
+    }
+
+    if major_count > 0 {
+        let centroid = position_accumulator / major_count as f32;
+        tracker.active_wave = major_wave;
+        tracker.last_position = centroid;
         return;
     }
-    wave_runtime.spawn_accumulator -= spawn_count as f32;
-    let wave_number = wave_runtime.current_wave;
-    let stat_scale = wave_stat_multiplier(wave_number);
-    enqueue_wave_batch(&mut wave_runtime, spawn_count, wave_number, stat_scale);
+
+    if let Some(defeated_wave) = tracker.active_wave.take() {
+        defeated_events.send(MajorArmyDefeatedEvent {
+            wave_number: defeated_wave,
+            position: tracker.last_position,
+        });
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -235,6 +360,11 @@ fn spawn_pending_enemy_batches(
         .as_ref()
         .map(|selection| selection.faction)
         .unwrap_or(PlayerFaction::Christian);
+    let difficulty = setup_selection
+        .as_ref()
+        .map(|selection| selection.difficulty)
+        .unwrap_or(GameDifficulty::Recruit);
+    let difficulty_mods = data.difficulties.for_difficulty(difficulty);
     let spawn_bounds = bounds
         .as_deref()
         .copied()
@@ -264,6 +394,14 @@ fn spawn_pending_enemy_batches(
         }
 
         let spawn_now = batch_size_for_wave(batch.wave_number).min(batch.remaining);
+        let army_progression = enemy_army_progression_profile(
+            difficulty,
+            commander_level,
+            batch.wave_number,
+            batch.lane,
+            player_faction.opposing(),
+            wave_runtime.spawn_seed,
+        );
         spawn_enemy_batch(
             &mut commands,
             spawn_now,
@@ -273,7 +411,12 @@ fn spawn_pending_enemy_batches(
             spawn_bounds,
             commander_position,
             batch.wave_number,
-            batch.stat_scale * player_pressure_multiplier,
+            batch.stat_scale
+                * player_pressure_multiplier
+                * army_progression.upgrade_pressure_multiplier,
+            difficulty_mods,
+            army_progression,
+            batch.lane,
             wave_runtime.spawn_seed,
             &mut spawn_sequence,
             &mut spawn_rng_state,
@@ -302,6 +445,9 @@ fn spawn_enemy_batch(
     commander_position: Vec2,
     wave_number: u32,
     stat_scale: f32,
+    difficulty_mods: &DifficultyGameplayConfig,
+    army_progression: EnemyArmyProgressionProfile,
+    lane: EnemyArmyLane,
     spawn_seed: u32,
     spawn_sequence: &mut u32,
     spawn_rng_state: &mut u64,
@@ -354,34 +500,89 @@ fn spawn_enemy_batch(
             .register(spawn_role);
         let enemy_faction = enemy_kind.faction().unwrap_or(player_faction.opposing());
         let faction_mods = data.factions.for_faction(enemy_faction);
-        let hp = cfg.max_hp * stat_scale * faction_mods.enemy_health_multiplier;
-        let armor = cfg.armor + (stat_scale - 1.0) * 2.0;
-        let damage = cfg.damage * stat_scale * faction_mods.enemy_damage_multiplier;
-        let base_cooldown = (cfg.attack_cooldown_secs / (1.0 + (stat_scale - 1.0) * 0.15))
+        let equipment_bonuses = army_progression
+            .equipment
+            .bonuses_for_spawn_role(spawn_role);
+        let role_damage_bonus = match spawn_role {
+            EnemySpawnRole::Ranged => equipment_bonuses.ranged_damage_multiplier,
+            EnemySpawnRole::Melee | EnemySpawnRole::Support => {
+                equipment_bonuses.melee_damage_multiplier
+            }
+        };
+        let equipment_power_multiplier = army_progression.equipment.power_multiplier;
+        let role_attack_speed_multiplier =
+            (1.0 + equipment_bonuses.attack_speed_multiplier).clamp(0.25, 3.0);
+        let hp = (cfg.max_hp
+            * combined_enemy_stat_multiplier(
+                stat_scale,
+                faction_mods.enemy_health_multiplier,
+                difficulty_mods.enemy_health_multiplier,
+            )
+            * equipment_power_multiplier
+            + equipment_bonuses.health_bonus)
+            .max(1.0);
+        let armor = cfg.armor
+            + (stat_scale - 1.0) * 2.0
+            + army_progression.equipment_fill_ratio * 1.8
+            + army_progression.equipment.filled_slots as f32 * 0.22
+            + army_progression.equipment.template_ids.len() as f32 * 0.08
+            + army_progression.major_upgrades as f32 * 0.04
+            + army_progression.minor_upgrades as f32 * 0.01
+            + equipment_bonuses.armor_bonus;
+        let damage = cfg.damage
+            * combined_enemy_stat_multiplier(
+                stat_scale,
+                faction_mods.enemy_damage_multiplier,
+                difficulty_mods.enemy_damage_multiplier,
+            )
+            * equipment_power_multiplier
+            * (1.0 + role_damage_bonus).clamp(0.2, 3.0);
+        let base_cooldown = (cfg.attack_cooldown_secs
+            / (1.0 + (stat_scale - 1.0) * 0.15)
+            / role_attack_speed_multiplier)
             .clamp(0.2, cfg.attack_cooldown_secs);
-        let attack_cooldown_secs =
-            scale_enemy_attack_cooldown(base_cooldown, faction_mods.enemy_attack_speed_multiplier);
+        let attack_cooldown_secs = scale_enemy_attack_cooldown(
+            base_cooldown,
+            faction_mods.enemy_attack_speed_multiplier
+                * difficulty_mods.enemy_attack_speed_multiplier,
+        );
         let ranged_cooldown_secs = if cfg.ranged_attack_damage > 0.0 {
             let base_ranged_cooldown = (cfg.ranged_attack_cooldown_secs
                 / (1.0 + (stat_scale - 1.0) * 0.15))
-                .clamp(0.15, cfg.ranged_attack_cooldown_secs);
+                / role_attack_speed_multiplier;
+            let base_ranged_cooldown =
+                base_ranged_cooldown.clamp(0.15, cfg.ranged_attack_cooldown_secs);
             Some(scale_enemy_attack_cooldown(
                 base_ranged_cooldown,
-                faction_mods.enemy_attack_speed_multiplier,
+                faction_mods.enemy_attack_speed_multiplier
+                    * difficulty_mods.enemy_attack_speed_multiplier,
             ))
         } else {
             None
         };
-        let move_speed =
-            enemy_move_speed(cfg.move_speed * faction_mods.enemy_move_speed_multiplier);
-        let morale = (cfg.morale * faction_mods.enemy_morale_multiplier).max(1.0);
+        let move_speed = enemy_move_speed(
+            (cfg.move_speed
+                * combined_enemy_speed_multiplier(
+                    faction_mods.enemy_move_speed_multiplier,
+                    difficulty_mods.enemy_move_speed_multiplier,
+                )
+                + equipment_bonuses.move_speed_bonus)
+                .max(20.0),
+        );
+        let morale = (cfg.morale
+            * combined_enemy_stat_multiplier(
+                1.0,
+                faction_mods.enemy_morale_multiplier,
+                difficulty_mods.enemy_morale_multiplier,
+            ))
+        .max(1.0);
         let texture = enemy_texture_for_kind(art, enemy_kind);
         let pos = random_spawn_position_from_rng(bounds, commander_position, spawn_rng_state);
         let mut entity = commands.spawn((
             Unit {
                 team: Team::Enemy,
                 kind: enemy_kind,
-                level: 1,
+                level: army_progression.army_level.max(1),
             },
             EnemyUnit,
             BanditVisualRuntime {
@@ -422,16 +623,24 @@ fn spawn_enemy_batch(
         if let Some(cooldown_secs) = ranged_cooldown_secs {
             entity.insert((
                 RangedAttackProfile {
-                    damage: cfg.ranged_attack_damage,
-                    range: cfg.ranged_attack_range,
+                    damage: cfg.ranged_attack_damage
+                        * equipment_power_multiplier
+                        * (1.0 + equipment_bonuses.ranged_damage_multiplier).clamp(0.2, 3.0),
+                    range: (cfg.ranged_attack_range + equipment_bonuses.ranged_range_bonus)
+                        .max(cfg.attack_range),
                     projectile_speed: cfg.ranged_projectile_speed,
-                    projectile_max_distance: cfg.ranged_projectile_max_distance,
+                    projectile_max_distance: (cfg.ranged_projectile_max_distance
+                        + equipment_bonuses.ranged_range_bonus)
+                        .max(cfg.ranged_projectile_max_distance),
                 },
                 RangedAttackCooldown(Timer::from_seconds(cooldown_secs, TimerMode::Repeating)),
             ));
         }
         if enemy_kind.is_priest() {
             entity.insert(PriestSupportCaster { cooldown: 20.0 });
+        }
+        if matches!(lane, EnemyArmyLane::Major) {
+            entity.insert((MajorArmyUnit { wave_number }, Name::new("MajorArmyUnit")));
         }
     }
 }
@@ -573,11 +782,263 @@ fn scale_enemy_attack_cooldown(base_cooldown: f32, speed_multiplier: f32) -> f32
     (base_cooldown / speed_multiplier.max(0.01)).max(0.08)
 }
 
+pub fn is_minor_army_wave(wave_number: u32) -> bool {
+    wave_number > 0 && wave_number.is_multiple_of(2)
+}
+
+pub fn is_major_army_wave(wave_number: u32) -> bool {
+    wave_number > 0 && wave_number.is_multiple_of(10)
+}
+
+fn planned_wave_army_batches(
+    base_count: u32,
+    wave_number: u32,
+    base_stat_scale: f32,
+) -> Vec<WaveArmyBatchPlan> {
+    let mut plans = Vec::with_capacity(3);
+    plans.push(WaveArmyBatchPlan {
+        lane: EnemyArmyLane::Small,
+        count: base_count.max(1),
+        stat_scale: base_stat_scale,
+    });
+    if is_minor_army_wave(wave_number) {
+        plans.push(WaveArmyBatchPlan {
+            lane: EnemyArmyLane::Minor,
+            count: scaled_lane_count(base_count, MINOR_ARMY_COUNT_MULTIPLIER),
+            stat_scale: base_stat_scale * MINOR_ARMY_STAT_MULTIPLIER,
+        });
+    }
+    if is_major_army_wave(wave_number) {
+        plans.push(WaveArmyBatchPlan {
+            lane: EnemyArmyLane::Major,
+            count: scaled_lane_count(base_count, MAJOR_ARMY_COUNT_MULTIPLIER),
+            stat_scale: base_stat_scale * MAJOR_ARMY_STAT_MULTIPLIER,
+        });
+    }
+    plans
+}
+
+fn scaled_lane_count(base_count: u32, multiplier: f32) -> u32 {
+    ((base_count.max(1) as f32) * multiplier).round().max(1.0) as u32
+}
+
+pub fn enemy_army_level_for_difficulty(difficulty: GameDifficulty, player_level: u32) -> u32 {
+    let level = player_level.max(1);
+    match difficulty {
+        GameDifficulty::Recruit => (level / 2).max(1),
+        GameDifficulty::Experienced | GameDifficulty::AloneAgainstTheInfidels => level,
+    }
+}
+
+fn enemy_equipment_fill_ratio_for_difficulty(difficulty: GameDifficulty) -> f32 {
+    match difficulty {
+        GameDifficulty::Recruit => 1.0 / 3.0,
+        GameDifficulty::Experienced => 0.5,
+        GameDifficulty::AloneAgainstTheInfidels => 2.0 / 3.0,
+    }
+}
+
+fn enemy_equipment_rarity_bonus_for_difficulty(difficulty: GameDifficulty) -> f32 {
+    match difficulty {
+        GameDifficulty::Recruit => 0.0,
+        GameDifficulty::Experienced => 0.18,
+        GameDifficulty::AloneAgainstTheInfidels => 0.33,
+    }
+}
+
+fn enemy_loadout_slot_count_for_lane(lane: EnemyArmyLane) -> usize {
+    match lane {
+        EnemyArmyLane::Small => SMALL_ARMY_LOADOUT_SLOT_COUNT,
+        EnemyArmyLane::Minor => MINOR_ARMY_LOADOUT_SLOT_COUNT,
+        EnemyArmyLane::Major => MAJOR_ARMY_LOADOUT_SLOT_COUNT,
+    }
+}
+
+fn enemy_army_progression_profile(
+    difficulty: GameDifficulty,
+    player_level: u32,
+    wave_number: u32,
+    lane: EnemyArmyLane,
+    enemy_faction: PlayerFaction,
+    spawn_seed: u32,
+) -> EnemyArmyProgressionProfile {
+    let army_level = enemy_army_level_for_difficulty(difficulty, player_level);
+    let (major_upgrades, minor_upgrades) = major_minor_reward_counts_for_level(army_level);
+    let equipment_fill_ratio = enemy_equipment_fill_ratio_for_difficulty(difficulty);
+    let equipment = enemy_equipment_loadout_for_army(
+        difficulty,
+        lane,
+        enemy_faction,
+        wave_number,
+        army_level,
+        equipment_fill_ratio,
+        spawn_seed,
+    );
+    let upgrade_pressure_multiplier = enemy_upgrade_pressure_multiplier(
+        major_upgrades,
+        minor_upgrades,
+        difficulty,
+        wave_number,
+        spawn_seed,
+    );
+    EnemyArmyProgressionProfile {
+        army_level,
+        major_upgrades,
+        minor_upgrades,
+        equipment_fill_ratio,
+        upgrade_pressure_multiplier,
+        equipment,
+    }
+}
+
+fn enemy_equipment_loadout_for_army(
+    difficulty: GameDifficulty,
+    lane: EnemyArmyLane,
+    enemy_faction: PlayerFaction,
+    wave_number: u32,
+    army_level: u32,
+    equipment_fill_ratio: f32,
+    spawn_seed: u32,
+) -> EnemyEquipmentLoadoutProfile {
+    let slot_count = enemy_loadout_slot_count_for_lane(lane);
+    let filled_slots = enemy_loadout_slot_fill_count(
+        difficulty,
+        lane,
+        wave_number,
+        slot_count,
+        equipment_fill_ratio,
+        spawn_seed,
+    );
+    if filled_slots == 0 {
+        return EnemyEquipmentLoadoutProfile::default();
+    }
+
+    let seed = ((hash_seed(
+        spawn_seed ^ lane_seed_salt(lane),
+        wave_number ^ (army_level << 8) ^ difficulty_seed_salt(difficulty),
+        filled_slots as u32,
+    ) as u64)
+        << 32)
+        | hash_seed(
+            spawn_seed ^ 0x74AD_1E93,
+            wave_number ^ lane_seed_salt(lane),
+            difficulty_seed_salt(difficulty),
+        ) as u64;
+    let items = roll_chest_items_from_seed(
+        seed,
+        enemy_faction,
+        filled_slots,
+        enemy_equipment_rarity_bonus_for_difficulty(difficulty),
+    );
+    let melee_bonuses = aggregate_item_bonuses_for_role(&items, UnitCombatRole::Melee);
+    let ranged_bonuses = aggregate_item_bonuses_for_role(&items, UnitCombatRole::Ranged);
+    let support_bonuses = aggregate_item_bonuses_for_role(&items, UnitCombatRole::Support);
+    let power_multiplier = role_loadout_power_multiplier(melee_bonuses, filled_slots)
+        .max(role_loadout_power_multiplier(ranged_bonuses, filled_slots))
+        .max(role_loadout_power_multiplier(support_bonuses, filled_slots));
+
+    EnemyEquipmentLoadoutProfile {
+        filled_slots,
+        template_ids: items.into_iter().map(|item| item.template_id).collect(),
+        melee_bonuses,
+        ranged_bonuses,
+        support_bonuses,
+        power_multiplier,
+    }
+}
+
+fn enemy_loadout_slot_fill_count(
+    difficulty: GameDifficulty,
+    lane: EnemyArmyLane,
+    wave_number: u32,
+    slot_count: usize,
+    equipment_fill_ratio: f32,
+    spawn_seed: u32,
+) -> usize {
+    if slot_count == 0 || equipment_fill_ratio <= 0.0 {
+        return 0;
+    }
+    let mut filled = 0usize;
+    for slot_index in 0..slot_count {
+        let roll = normalized_seed(hash_seed(
+            spawn_seed ^ lane_seed_salt(lane),
+            wave_number ^ ((slot_index as u32) << 4),
+            difficulty_seed_salt(difficulty),
+        ));
+        if roll < equipment_fill_ratio {
+            filled += 1;
+        }
+    }
+    filled.clamp(1, slot_count)
+}
+
+fn role_loadout_power_multiplier(bonuses: UnitEquipmentBonuses, filled_slots: usize) -> f32 {
+    let offensive_bonus = bonuses
+        .melee_damage_multiplier
+        .max(bonuses.ranged_damage_multiplier)
+        + bonuses.attack_speed_multiplier * 0.6;
+    let defense_bonus = bonuses.health_bonus / 120.0 + bonuses.armor_bonus * 0.025;
+    let utility_bonus = bonuses.move_speed_bonus / 220.0 + bonuses.ranged_range_bonus / 1_000.0;
+    let slot_bonus = filled_slots as f32 * 0.018;
+    (1.0 + offensive_bonus * 0.35 + defense_bonus + utility_bonus + slot_bonus).clamp(1.0, 1.8)
+}
+
+fn difficulty_seed_salt(difficulty: GameDifficulty) -> u32 {
+    match difficulty {
+        GameDifficulty::Recruit => 0x1A77_91C3,
+        GameDifficulty::Experienced => 0x4B62_D4AF,
+        GameDifficulty::AloneAgainstTheInfidels => 0x73D3_2AA1,
+    }
+}
+
+fn lane_seed_salt(lane: EnemyArmyLane) -> u32 {
+    match lane {
+        EnemyArmyLane::Small => 0x15F8_2B6D,
+        EnemyArmyLane::Minor => 0x42C5_B9F0,
+        EnemyArmyLane::Major => 0x9BA2_11CE,
+    }
+}
+
+fn enemy_upgrade_pressure_multiplier(
+    major_upgrades: u32,
+    minor_upgrades: u32,
+    difficulty: GameDifficulty,
+    wave_number: u32,
+    spawn_seed: u32,
+) -> f32 {
+    let base = 1.0 + major_upgrades as f32 * 0.03 + minor_upgrades as f32 * 0.004;
+    let spread = match difficulty {
+        GameDifficulty::Recruit => 0.03,
+        GameDifficulty::Experienced => 0.05,
+        GameDifficulty::AloneAgainstTheInfidels => 0.07,
+    };
+    let roll = normalized_seed(hash_seed(
+        spawn_seed ^ 0xA5A5_1F1F,
+        wave_number ^ (major_upgrades << 16),
+        minor_upgrades,
+    ));
+    let variance = 1.0 + (roll * 2.0 - 1.0) * spread;
+    (base * variance).clamp(1.0, 4.0)
+}
+
+fn combined_enemy_stat_multiplier(
+    stat_scale: f32,
+    faction_multiplier: f32,
+    difficulty_multiplier: f32,
+) -> f32 {
+    stat_scale * faction_multiplier * difficulty_multiplier
+}
+
+fn combined_enemy_speed_multiplier(faction_multiplier: f32, difficulty_multiplier: f32) -> f32 {
+    faction_multiplier * difficulty_multiplier
+}
+
 fn enqueue_wave_batch(
     wave_runtime: &mut WaveRuntime,
     count: u32,
     wave_number: u32,
     stat_scale: f32,
+    lane: EnemyArmyLane,
 ) {
     if count == 0 {
         return;
@@ -586,6 +1047,7 @@ fn enqueue_wave_batch(
         remaining: count,
         wave_number,
         stat_scale,
+        lane,
         next_spawn_time: wave_runtime.elapsed,
     });
 }
@@ -615,6 +1077,13 @@ pub fn units_per_second_for_wave(config: &WavesConfigFile, wave_number: u32) -> 
     let base_count = wave_base_count(config, wave_number);
     let wave_total = (base_count * WAVE_UNITS_MULTIPLIER).clamp(1.0, MAX_ENEMIES_PER_WAVE);
     wave_total / WAVE_DURATION_SECS
+}
+
+pub fn units_to_spawn_for_wave(config: &WavesConfigFile, wave_number: u32) -> u32 {
+    let base_count = wave_base_count(config, wave_number);
+    (base_count * WAVE_UNITS_MULTIPLIER)
+        .clamp(1.0, MAX_ENEMIES_PER_WAVE)
+        .round() as u32
 }
 
 pub fn wave_stat_multiplier(wave_number: u32) -> f32 {
@@ -756,6 +1225,8 @@ fn runtime_seed_from_time() -> u32 {
 #[allow(clippy::type_complexity)]
 fn enemy_chase_targets(
     time: Res<Time>,
+    data: Res<GameData>,
+    setup_selection: Option<Res<MatchSetupSelection>>,
     mut enemy_sets: ParamSet<(
         Query<
             (
@@ -782,6 +1253,11 @@ fn enemy_chase_targets(
         .iter()
         .map(|(transform, commander)| (transform.translation.truncate(), commander.is_some()))
         .collect();
+    let difficulty = setup_selection
+        .as_ref()
+        .map(|selection| selection.difficulty)
+        .unwrap_or(GameDifficulty::Recruit);
+    let difficulty_mods = data.difficulties.for_difficulty(difficulty);
     let targets = chase_target_positions(&all_friendlies);
     if targets.is_empty() {
         return;
@@ -846,7 +1322,13 @@ fn enemy_chase_targets(
         if let Some(target) = target {
             let delta = target - enemy_position;
             let distance = delta.length();
-            let desired_range = enemy_engagement_range(attack_profile.range, ranged_profile);
+            let prefers_spacing =
+                enemy_prefers_ranged_spacing(unit.kind, attack_profile, ranged_profile);
+            let desired_range = enemy_desired_engagement_range(
+                attack_profile.range,
+                ranged_profile,
+                prefers_spacing && difficulty_mods.ranged_support_avoid_melee,
+            );
             let stop_distance = (desired_range * STOP_FACTOR).max(10.0);
             let resume_distance = (desired_range * RESUME_FACTOR).max(stop_distance + 3.0);
             let crowded = crowded_enemy_neighbor_count(
@@ -869,6 +1351,27 @@ fn enemy_chase_targets(
             {
                 movement_state.moving = false;
                 continue;
+            }
+
+            if difficulty_mods.ranged_support_avoid_melee && prefers_spacing {
+                let avoid_trigger_distance = enemy_ranged_support_avoid_trigger_distance(
+                    attack_profile.range,
+                    ranged_profile,
+                );
+                if distance <= avoid_trigger_distance && distance > 0.001 {
+                    let morale_speed_multiplier = morale
+                        .copied()
+                        .map(|value| morale_movement_multiplier(value.ratio()))
+                        .unwrap_or(1.0);
+                    let retreat_step = move_speed.0 * morale_speed_multiplier * delta_seconds;
+                    if retreat_step > 0.0 {
+                        let retreat_direction = (enemy_position - target).normalize();
+                        enemy_transform.translation.x += retreat_direction.x * retreat_step;
+                        enemy_transform.translation.y += retreat_direction.y * retreat_step;
+                        movement_state.moving = true;
+                        continue;
+                    }
+                }
             }
 
             movement_state.moving = should_move_towards_target(
@@ -953,6 +1456,42 @@ pub fn enemy_engagement_range(
         Some(profile) if profile.range > melee_range && profile.damage > 0.0 => profile.range,
         _ => melee_range,
     }
+}
+
+fn enemy_prefers_ranged_spacing(
+    kind: UnitKind,
+    attack_profile: &AttackProfile,
+    ranged_profile: Option<&RangedAttackProfile>,
+) -> bool {
+    if kind.is_priest() {
+        return true;
+    }
+    ranged_profile
+        .map(|profile| profile.range > attack_profile.range && profile.damage > 0.0)
+        .unwrap_or(false)
+}
+
+fn enemy_ranged_support_avoid_trigger_distance(
+    melee_range: f32,
+    ranged_profile: Option<&RangedAttackProfile>,
+) -> f32 {
+    let ranged_range = enemy_engagement_range(melee_range, ranged_profile);
+    (ranged_range * 0.70).max(melee_range + 28.0)
+}
+
+fn enemy_desired_engagement_range(
+    melee_range: f32,
+    ranged_profile: Option<&RangedAttackProfile>,
+    avoid_melee: bool,
+) -> f32 {
+    let base = enemy_engagement_range(melee_range, ranged_profile);
+    if !avoid_melee {
+        return base;
+    }
+    base.max(enemy_ranged_support_avoid_trigger_distance(
+        melee_range,
+        ranged_profile,
+    ))
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1172,12 +1711,78 @@ fn enemy_texture_for_state(
 
 fn enemy_texture_for_kind(art: &ArtAssets, kind: UnitKind) -> Handle<Image> {
     match kind {
-        UnitKind::ChristianPeasantInfantry => art.friendly_peasant_infantry_idle.clone(),
-        UnitKind::ChristianPeasantArcher => art.friendly_peasant_archer_idle.clone(),
-        UnitKind::ChristianPeasantPriest => art.friendly_peasant_priest_idle.clone(),
-        UnitKind::MuslimPeasantInfantry => art.muslim_peasant_infantry_idle.clone(),
-        UnitKind::MuslimPeasantArcher => art.muslim_peasant_archer_idle.clone(),
-        UnitKind::MuslimPeasantPriest => art.muslim_peasant_priest_idle.clone(),
+        UnitKind::ChristianPeasantInfantry
+        | UnitKind::ChristianMenAtArms
+        | UnitKind::ChristianShieldInfantry
+        | UnitKind::ChristianExperiencedShieldInfantry
+        | UnitKind::ChristianEliteShieldInfantry
+        | UnitKind::ChristianSpearman
+        | UnitKind::ChristianShieldedSpearman
+        | UnitKind::ChristianHalberdier
+        | UnitKind::ChristianUnmountedKnight
+        | UnitKind::ChristianKnight
+        | UnitKind::ChristianHeavyKnight => art.friendly_peasant_infantry_idle.clone(),
+        UnitKind::ChristianPeasantArcher
+        | UnitKind::ChristianBowman
+        | UnitKind::ChristianExperiencedBowman
+        | UnitKind::ChristianEliteBowman
+        | UnitKind::ChristianLongbowman
+        | UnitKind::ChristianCrossbowman
+        | UnitKind::ChristianArmoredCrossbowman
+        | UnitKind::ChristianEliteCrossbowman
+        | UnitKind::ChristianTracker
+        | UnitKind::ChristianPathfinder
+        | UnitKind::ChristianHoundmaster
+        | UnitKind::ChristianScout
+        | UnitKind::ChristianMountedScout
+        | UnitKind::ChristianShockCavalry => art.friendly_peasant_archer_idle.clone(),
+        UnitKind::ChristianPeasantPriest
+        | UnitKind::ChristianDevoted
+        | UnitKind::ChristianSquire
+        | UnitKind::ChristianBannerman
+        | UnitKind::ChristianEliteBannerman
+        | UnitKind::ChristianDevotedOne
+        | UnitKind::ChristianCardinal
+        | UnitKind::ChristianEliteCardinal
+        | UnitKind::ChristianFanatic
+        | UnitKind::ChristianFlagellant
+        | UnitKind::ChristianEliteFlagellant => art.friendly_peasant_priest_idle.clone(),
+        UnitKind::MuslimPeasantInfantry
+        | UnitKind::MuslimMenAtArms
+        | UnitKind::MuslimShieldInfantry
+        | UnitKind::MuslimExperiencedShieldInfantry
+        | UnitKind::MuslimEliteShieldInfantry
+        | UnitKind::MuslimSpearman
+        | UnitKind::MuslimShieldedSpearman
+        | UnitKind::MuslimHalberdier
+        | UnitKind::MuslimUnmountedKnight
+        | UnitKind::MuslimKnight
+        | UnitKind::MuslimHeavyKnight => art.muslim_peasant_infantry_idle.clone(),
+        UnitKind::MuslimPeasantArcher
+        | UnitKind::MuslimBowman
+        | UnitKind::MuslimExperiencedBowman
+        | UnitKind::MuslimEliteBowman
+        | UnitKind::MuslimLongbowman
+        | UnitKind::MuslimCrossbowman
+        | UnitKind::MuslimArmoredCrossbowman
+        | UnitKind::MuslimEliteCrossbowman
+        | UnitKind::MuslimTracker
+        | UnitKind::MuslimPathfinder
+        | UnitKind::MuslimHoundmaster
+        | UnitKind::MuslimScout
+        | UnitKind::MuslimMountedScout
+        | UnitKind::MuslimShockCavalry => art.muslim_peasant_archer_idle.clone(),
+        UnitKind::MuslimPeasantPriest
+        | UnitKind::MuslimDevoted
+        | UnitKind::MuslimSquire
+        | UnitKind::MuslimBannerman
+        | UnitKind::MuslimEliteBannerman
+        | UnitKind::MuslimDevotedOne
+        | UnitKind::MuslimCardinal
+        | UnitKind::MuslimEliteCardinal
+        | UnitKind::MuslimFanatic
+        | UnitKind::MuslimFlagellant
+        | UnitKind::MuslimEliteFlagellant => art.muslim_peasant_priest_idle.clone(),
         UnitKind::Commander
         | UnitKind::RescuableChristianPeasantInfantry
         | UnitKind::RescuableChristianPeasantArcher
@@ -1224,16 +1829,20 @@ mod tests {
     use crate::data::{WaveConfig, WavesConfigFile};
     use crate::enemies::{
         BanditVisualState, EnemyRoleCounts, EnemySpawnRole, batch_interval_secs,
-        batch_size_for_wave, crowded_enemy_neighbor_count, decide_bandit_visual_state,
-        enemy_engagement_range, enemy_move_speed, enemy_player_pressure_multiplier,
-        formation_overflow_repel_target, formation_perimeter_target,
+        batch_size_for_wave, combined_enemy_speed_multiplier, combined_enemy_stat_multiplier,
+        crowded_enemy_neighbor_count, decide_bandit_visual_state, enemy_army_level_for_difficulty,
+        enemy_army_progression_profile, enemy_desired_engagement_range, enemy_engagement_range,
+        enemy_move_speed, enemy_player_pressure_multiplier, enemy_prefers_ranged_spacing,
+        enemy_ranged_support_avoid_trigger_distance, formation_overflow_repel_target,
+        formation_perimeter_target, is_major_army_wave, is_minor_army_wave,
         max_inside_enemy_count_for_formation, next_enemy_stuck_secs, overflow_indices_by_distance,
-        pick_next_spawn_role, random_spawn_position, should_start_crowd_hold,
-        units_per_second_for_wave, wave_duration_secs, wave_stat_multiplier,
+        pick_next_spawn_role, planned_wave_army_batches, random_spawn_position,
+        should_start_crowd_hold, units_per_second_for_wave, wave_duration_secs,
+        wave_stat_multiplier,
     };
     use crate::formation::{ActiveFormation, formation_contains_position};
     use crate::map::MapBounds;
-
+    use crate::model::{GameDifficulty, PlayerFaction};
 
     #[test]
     fn chooses_nearest_target() {
@@ -1303,6 +1912,140 @@ mod tests {
     }
 
     #[test]
+    fn wave_batch_planner_layers_small_minor_and_major_armies() {
+        let wave_1 = planned_wave_army_batches(20, 1, 1.0);
+        assert_eq!(wave_1.len(), 1);
+        assert_eq!(wave_1[0].lane, super::EnemyArmyLane::Small);
+
+        let wave_2 = planned_wave_army_batches(20, 2, 1.0);
+        assert_eq!(wave_2.len(), 2);
+        assert!(
+            wave_2
+                .iter()
+                .any(|entry| entry.lane == super::EnemyArmyLane::Small)
+        );
+        assert!(
+            wave_2
+                .iter()
+                .any(|entry| entry.lane == super::EnemyArmyLane::Minor)
+        );
+        assert!(
+            !wave_2
+                .iter()
+                .any(|entry| entry.lane == super::EnemyArmyLane::Major)
+        );
+
+        let wave_10 = planned_wave_army_batches(20, 10, 1.0);
+        assert_eq!(wave_10.len(), 3);
+        assert!(
+            wave_10
+                .iter()
+                .any(|entry| entry.lane == super::EnemyArmyLane::Small)
+        );
+        assert!(
+            wave_10
+                .iter()
+                .any(|entry| entry.lane == super::EnemyArmyLane::Minor)
+        );
+        assert!(
+            wave_10
+                .iter()
+                .any(|entry| entry.lane == super::EnemyArmyLane::Major)
+        );
+        assert!(is_minor_army_wave(10));
+        assert!(is_major_army_wave(10));
+    }
+
+    #[test]
+    fn enemy_army_level_depends_on_difficulty() {
+        assert_eq!(
+            enemy_army_level_for_difficulty(GameDifficulty::Recruit, 30),
+            15
+        );
+        assert_eq!(
+            enemy_army_level_for_difficulty(GameDifficulty::Experienced, 30),
+            30
+        );
+        assert_eq!(
+            enemy_army_level_for_difficulty(GameDifficulty::AloneAgainstTheInfidels, 30),
+            30
+        );
+    }
+
+    #[test]
+    fn enemy_army_profile_uses_major_minor_parity_formula() {
+        let recruit = enemy_army_progression_profile(
+            GameDifficulty::Recruit,
+            30,
+            10,
+            super::EnemyArmyLane::Major,
+            PlayerFaction::Muslim,
+            123,
+        );
+        assert_eq!(recruit.army_level, 15);
+        assert_eq!(recruit.major_upgrades, 3);
+        assert_eq!(recruit.minor_upgrades, 12);
+        assert!(recruit.equipment.filled_slots > 0);
+        assert_eq!(
+            recruit.equipment.template_ids.len(),
+            recruit.equipment.filled_slots
+        );
+
+        let experienced = enemy_army_progression_profile(
+            GameDifficulty::Experienced,
+            30,
+            10,
+            super::EnemyArmyLane::Major,
+            PlayerFaction::Muslim,
+            123,
+        );
+        assert_eq!(experienced.army_level, 30);
+        assert_eq!(experienced.major_upgrades, 6);
+        assert_eq!(experienced.minor_upgrades, 24);
+        assert!(experienced.upgrade_pressure_multiplier >= 1.0);
+        assert!(experienced.equipment.power_multiplier >= 1.0);
+    }
+
+    #[test]
+    fn enemy_loadout_fill_and_seed_are_deterministic_per_difficulty() {
+        let recruit_a = enemy_army_progression_profile(
+            GameDifficulty::Recruit,
+            40,
+            20,
+            super::EnemyArmyLane::Major,
+            PlayerFaction::Christian,
+            991,
+        );
+        let recruit_b = enemy_army_progression_profile(
+            GameDifficulty::Recruit,
+            40,
+            20,
+            super::EnemyArmyLane::Major,
+            PlayerFaction::Christian,
+            991,
+        );
+        assert_eq!(
+            recruit_a.equipment.template_ids,
+            recruit_b.equipment.template_ids
+        );
+        assert_eq!(
+            recruit_a.equipment.filled_slots,
+            recruit_b.equipment.filled_slots
+        );
+
+        let experienced = enemy_army_progression_profile(
+            GameDifficulty::Experienced,
+            40,
+            20,
+            super::EnemyArmyLane::Major,
+            PlayerFaction::Christian,
+            991,
+        );
+        assert!(experienced.equipment.filled_slots >= recruit_a.equipment.filled_slots);
+        assert!(experienced.equipment.power_multiplier >= recruit_a.equipment.power_multiplier);
+    }
+
+    #[test]
     fn player_pressure_multiplier_increases_with_level_and_retinue() {
         let baseline = enemy_player_pressure_multiplier(1, 0);
         let mid = enemy_player_pressure_multiplier(30, 20);
@@ -1319,6 +2062,15 @@ mod tests {
         let passive_friendly = 1.0 + commander_level.saturating_sub(1) as f32 * 0.01;
         let enemy_pressure = enemy_player_pressure_multiplier(commander_level, retinue_count);
         assert!(enemy_pressure > passive_friendly);
+    }
+
+    #[test]
+    fn combined_enemy_multipliers_include_difficulty_layer() {
+        let stat = combined_enemy_stat_multiplier(1.5, 1.1, 1.2);
+        assert!((stat - 1.98).abs() < 0.001);
+
+        let speed = combined_enemy_speed_multiplier(1.05, 1.15);
+        assert!((speed - 1.2075).abs() < 0.001);
     }
 
     #[test]
@@ -1483,6 +2235,52 @@ mod tests {
         };
         assert!((enemy_engagement_range(30.0, Some(&ranged)) - 260.0).abs() < 0.001);
         assert!((enemy_engagement_range(30.0, None) - 30.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn ranged_and_priest_units_prefer_spacing_when_enabled() {
+        let melee_profile = crate::model::AttackProfile {
+            damage: 4.0,
+            range: 34.0,
+            cooldown_secs: 1.0,
+        };
+        let ranged_profile = RangedAttackProfile {
+            damage: 8.0,
+            range: 260.0,
+            projectile_speed: 200.0,
+            projectile_max_distance: 320.0,
+        };
+        assert!(enemy_prefers_ranged_spacing(
+            crate::model::UnitKind::MuslimPeasantArcher,
+            &melee_profile,
+            Some(&ranged_profile),
+        ));
+        assert!(enemy_prefers_ranged_spacing(
+            crate::model::UnitKind::MuslimPeasantPriest,
+            &melee_profile,
+            None,
+        ));
+        assert!(!enemy_prefers_ranged_spacing(
+            crate::model::UnitKind::MuslimPeasantInfantry,
+            &melee_profile,
+            None,
+        ));
+    }
+
+    #[test]
+    fn spacing_helpers_expand_engagement_window_for_avoidance_mode() {
+        let ranged_profile = RangedAttackProfile {
+            damage: 8.0,
+            range: 240.0,
+            projectile_speed: 200.0,
+            projectile_max_distance: 300.0,
+        };
+        let trigger = enemy_ranged_support_avoid_trigger_distance(30.0, Some(&ranged_profile));
+        let desired = enemy_desired_engagement_range(30.0, Some(&ranged_profile), true);
+        let baseline = enemy_desired_engagement_range(30.0, Some(&ranged_profile), false);
+        assert!(trigger > 30.0);
+        assert!(desired >= trigger);
+        assert!(desired >= baseline);
     }
 
     #[test]

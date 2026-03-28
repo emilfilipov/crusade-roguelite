@@ -1,0 +1,32 @@
+{
+  "recruit": {
+    "enemy_health_multiplier": 1.0,
+    "enemy_damage_multiplier": 1.0,
+    "enemy_attack_speed_multiplier": 1.0,
+    "enemy_move_speed_multiplier": 1.0,
+    "enemy_morale_multiplier": 1.0,
+    "enemy_ranged_dodge_enabled": false,
+    "enemy_block_enabled": false,
+    "ranged_support_avoid_melee": false
+  },
+  "experienced": {
+    "enemy_health_multiplier": 1.2,
+    "enemy_damage_multiplier": 1.15,
+    "enemy_attack_speed_multiplier": 1.1,
+    "enemy_move_speed_multiplier": 1.05,
+    "enemy_morale_multiplier": 1.1,
+    "enemy_ranged_dodge_enabled": true,
+    "enemy_block_enabled": true,
+    "ranged_support_avoid_melee": false
+  },
+  "alone_against_the_infidels": {
+    "enemy_health_multiplier": 1.35,
+    "enemy_damage_multiplier": 1.3,
+    "enemy_attack_speed_multiplier": 1.2,
+    "enemy_move_speed_multiplier": 1.1,
+    "enemy_morale_multiplier": 1.2,
+    "enemy_ranged_dodge_enabled": true,
+    "enemy_block_enabled": true,
+    "ranged_support_avoid_melee": true
+  }
+}

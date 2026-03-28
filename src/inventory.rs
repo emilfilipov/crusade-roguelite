@@ -2,8 +2,8 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::banner::BannerState;
-use crate::random::runtime_entropy_seed_u64;
 use crate::model::{GameState, PlayerFaction, StartRunEvent, UnitKind};
+use crate::random::runtime_entropy_seed_u64;
 use crate::upgrades::{Progression, SkillTimingBuffs, commander_level_hp_bonus};
 
 pub const BACKPACK_ROWS: usize = 5;
@@ -135,9 +135,7 @@ pub enum GearStatKind {
     MoveSpeedFlat,
     CommanderMaxHealthFlat,
     MoraleRegenPerSec,
-    CohesionRegenPerSec,
     MoraleLossResistancePercent,
-    CohesionLossResistancePercent,
     AuraRangeFlat,
     AuraEnemyEffectPercent,
     CooldownReductionSecs,
@@ -156,9 +154,7 @@ impl GearStatKind {
             Self::MoveSpeedFlat => "Move Speed",
             Self::CommanderMaxHealthFlat => "Unit Health",
             Self::MoraleRegenPerSec => "Morale Regen/s",
-            Self::CohesionRegenPerSec => "Cohesion Regen/s",
             Self::MoraleLossResistancePercent => "Morale Loss Resist",
-            Self::CohesionLossResistancePercent => "Cohesion Loss Resist",
             Self::AuraRangeFlat => "Aura Range",
             Self::AuraEnemyEffectPercent => "Aura Enemy Effect",
             Self::CooldownReductionSecs => "Cooldown Reduction",
@@ -176,10 +172,8 @@ impl GearStatKind {
             Self::RangedRangeFlat => 22.0,
             Self::MoveSpeedFlat => 14.0,
             Self::CommanderMaxHealthFlat => 18.0,
-            Self::MoraleRegenPerSec => 0.35,
-            Self::CohesionRegenPerSec => 0.30,
-            Self::MoraleLossResistancePercent => 0.08,
-            Self::CohesionLossResistancePercent => 0.08,
+            Self::MoraleRegenPerSec => 0.75,
+            Self::MoraleLossResistancePercent => 0.20,
             Self::AuraRangeFlat => 24.0,
             Self::AuraEnemyEffectPercent => 0.12,
             Self::CooldownReductionSecs => 1.2,
@@ -287,6 +281,18 @@ impl Default for InventoryRngState {
 }
 
 impl InventoryRngState {
+    pub fn from_seed(seed: u64) -> Self {
+        let state = if seed == 0 {
+            0xBADC_0FFE_FEED_F00D
+        } else {
+            seed
+        };
+        Self {
+            state,
+            next_item_serial: 1,
+        }
+    }
+
     fn reseed_from_time(&mut self) {
         self.state = runtime_entropy_seed_u64();
     }
@@ -366,9 +372,7 @@ pub struct UnitEquipmentBonuses {
     pub aura_enemy_effect_bonus_multiplier: f32,
     pub cooldown_reduction_secs: f32,
     pub morale_regen_per_sec: f32,
-    pub cohesion_regen_per_sec: f32,
     pub morale_loss_resistance: f32,
-    pub cohesion_loss_resistance: f32,
     pub drum_armor_pulse_flat: f32,
 }
 
@@ -386,9 +390,7 @@ impl UnitEquipmentBonuses {
             aura_enemy_effect_bonus_multiplier: 0.0,
             cooldown_reduction_secs: 0.0,
             morale_regen_per_sec: 0.0,
-            cohesion_regen_per_sec: 0.0,
             morale_loss_resistance: 0.0,
-            cohesion_loss_resistance: 0.0,
             drum_armor_pulse_flat: 0.0,
         }
     }
@@ -405,9 +407,7 @@ impl UnitEquipmentBonuses {
         self.aura_enemy_effect_bonus_multiplier += other.aura_enemy_effect_bonus_multiplier;
         self.cooldown_reduction_secs += other.cooldown_reduction_secs;
         self.morale_regen_per_sec += other.morale_regen_per_sec;
-        self.cohesion_regen_per_sec += other.cohesion_regen_per_sec;
         self.morale_loss_resistance += other.morale_loss_resistance;
-        self.cohesion_loss_resistance += other.cohesion_loss_resistance;
         self.drum_armor_pulse_flat += other.drum_armor_pulse_flat;
     }
 }
@@ -445,13 +445,10 @@ const TEMPLATES: [GearTemplate; 9] = [
     GearTemplate {
         id: "banner_sturdy_pole",
         name: "Banner on Sturdy Pole",
-        description: "Army banner balancing sustain versus loss resistance.",
+        description: "Army banner boosting pace and command reach.",
         icon_key: "item_banner",
         item_type: GearItemType::Banner,
-        stats: [
-            GearStatKind::MoraleRegenPerSec,
-            GearStatKind::CohesionLossResistancePercent,
-        ],
+        stats: [GearStatKind::MoveSpeedFlat, GearStatKind::AuraRangeFlat],
         special_effect: None,
         faction: None,
     },
@@ -584,26 +581,90 @@ impl InventoryState {
 }
 
 pub fn equipment_unit_type_for_unit(kind: UnitKind, tier: Option<u8>) -> Option<EquipmentUnitType> {
-    match kind {
-        UnitKind::Commander => Some(EquipmentUnitType::Commander),
-        UnitKind::ChristianPeasantInfantry
-        | UnitKind::ChristianPeasantArcher
-        | UnitKind::ChristianPeasantPriest
-        | UnitKind::MuslimPeasantInfantry
-        | UnitKind::MuslimPeasantArcher
-        | UnitKind::MuslimPeasantPriest => EquipmentUnitType::from_tier(tier.unwrap_or(0)),
-        _ => None,
+    if kind == UnitKind::Commander {
+        return Some(EquipmentUnitType::Commander);
     }
+    if kind.is_friendly_recruit() {
+        return EquipmentUnitType::from_tier(tier.unwrap_or(0));
+    }
+    None
 }
 
 fn role_for_unit(kind: UnitKind) -> UnitCombatRole {
     match kind {
         UnitKind::Commander => UnitCombatRole::Commander,
-        UnitKind::ChristianPeasantInfantry | UnitKind::MuslimPeasantInfantry => {
-            UnitCombatRole::Melee
-        }
-        UnitKind::ChristianPeasantArcher | UnitKind::MuslimPeasantArcher => UnitCombatRole::Ranged,
-        UnitKind::ChristianPeasantPriest | UnitKind::MuslimPeasantPriest => UnitCombatRole::Support,
+        UnitKind::ChristianPeasantInfantry
+        | UnitKind::ChristianMenAtArms
+        | UnitKind::ChristianShieldInfantry
+        | UnitKind::ChristianExperiencedShieldInfantry
+        | UnitKind::ChristianEliteShieldInfantry
+        | UnitKind::ChristianSpearman
+        | UnitKind::ChristianShieldedSpearman
+        | UnitKind::ChristianHalberdier
+        | UnitKind::ChristianUnmountedKnight
+        | UnitKind::ChristianKnight
+        | UnitKind::ChristianHeavyKnight
+        | UnitKind::ChristianScout
+        | UnitKind::ChristianMountedScout
+        | UnitKind::ChristianShockCavalry
+        | UnitKind::ChristianFanatic
+        | UnitKind::ChristianFlagellant
+        | UnitKind::ChristianEliteFlagellant
+        | UnitKind::MuslimPeasantInfantry
+        | UnitKind::MuslimMenAtArms
+        | UnitKind::MuslimShieldInfantry
+        | UnitKind::MuslimExperiencedShieldInfantry
+        | UnitKind::MuslimEliteShieldInfantry
+        | UnitKind::MuslimSpearman
+        | UnitKind::MuslimShieldedSpearman
+        | UnitKind::MuslimHalberdier
+        | UnitKind::MuslimUnmountedKnight
+        | UnitKind::MuslimKnight
+        | UnitKind::MuslimHeavyKnight
+        | UnitKind::MuslimScout
+        | UnitKind::MuslimMountedScout
+        | UnitKind::MuslimShockCavalry
+        | UnitKind::MuslimFanatic
+        | UnitKind::MuslimFlagellant
+        | UnitKind::MuslimEliteFlagellant => UnitCombatRole::Melee,
+        UnitKind::ChristianPeasantArcher
+        | UnitKind::ChristianBowman
+        | UnitKind::ChristianExperiencedBowman
+        | UnitKind::ChristianEliteBowman
+        | UnitKind::ChristianLongbowman
+        | UnitKind::ChristianCrossbowman
+        | UnitKind::ChristianTracker
+        | UnitKind::ChristianArmoredCrossbowman
+        | UnitKind::ChristianPathfinder
+        | UnitKind::ChristianEliteCrossbowman
+        | UnitKind::ChristianHoundmaster
+        | UnitKind::MuslimPeasantArcher
+        | UnitKind::MuslimBowman
+        | UnitKind::MuslimExperiencedBowman
+        | UnitKind::MuslimCrossbowman
+        | UnitKind::MuslimEliteBowman
+        | UnitKind::MuslimLongbowman
+        | UnitKind::MuslimArmoredCrossbowman
+        | UnitKind::MuslimTracker
+        | UnitKind::MuslimPathfinder
+        | UnitKind::MuslimEliteCrossbowman
+        | UnitKind::MuslimHoundmaster => UnitCombatRole::Ranged,
+        UnitKind::ChristianPeasantPriest
+        | UnitKind::ChristianDevoted
+        | UnitKind::ChristianSquire
+        | UnitKind::ChristianBannerman
+        | UnitKind::ChristianEliteBannerman
+        | UnitKind::ChristianDevotedOne
+        | UnitKind::ChristianCardinal
+        | UnitKind::ChristianEliteCardinal
+        | UnitKind::MuslimPeasantPriest
+        | UnitKind::MuslimDevoted
+        | UnitKind::MuslimSquire
+        | UnitKind::MuslimBannerman
+        | UnitKind::MuslimEliteBannerman
+        | UnitKind::MuslimDevotedOne
+        | UnitKind::MuslimCardinal
+        | UnitKind::MuslimEliteCardinal => UnitCombatRole::Support,
         _ => UnitCombatRole::Melee,
     }
 }
@@ -627,11 +688,7 @@ fn apply_stat_to_bonuses(
         GearStatKind::MoveSpeedFlat => bonuses.move_speed_bonus += stat.value,
         GearStatKind::CommanderMaxHealthFlat => bonuses.health_bonus += stat.value,
         GearStatKind::MoraleRegenPerSec => bonuses.morale_regen_per_sec += stat.value,
-        GearStatKind::CohesionRegenPerSec => bonuses.cohesion_regen_per_sec += stat.value,
         GearStatKind::MoraleLossResistancePercent => bonuses.morale_loss_resistance += stat.value,
-        GearStatKind::CohesionLossResistancePercent => {
-            bonuses.cohesion_loss_resistance += stat.value
-        }
         GearStatKind::AuraRangeFlat => bonuses.aura_radius_bonus += stat.value,
         GearStatKind::AuraEnemyEffectPercent => {
             bonuses.aura_enemy_effect_bonus_multiplier += stat.value
@@ -659,6 +716,17 @@ fn item_bonuses_for_role(item: &GearItemEntry, role: UnitCombatRole) -> UnitEqui
     let mut bonuses = UnitEquipmentBonuses::zero();
     for stat in &item.stats {
         apply_stat_to_bonuses(&mut bonuses, stat, role);
+    }
+    bonuses
+}
+
+pub fn aggregate_item_bonuses_for_role(
+    items: &[GearItemEntry],
+    role: UnitCombatRole,
+) -> UnitEquipmentBonuses {
+    let mut bonuses = UnitEquipmentBonuses::zero();
+    for item in items {
+        bonuses.merge_assign(item_bonuses_for_role(item, role));
     }
     bonuses
 }
@@ -698,10 +766,7 @@ pub fn commander_armywide_bonuses_with_banner_state(
     setup_bonuses_for_role(commander_setup, role, banner_item_active)
 }
 
-fn armywide_move_speed_bonus(
-    inventory: &InventoryState,
-    banner_item_active: bool,
-) -> f32 {
+fn armywide_move_speed_bonus(inventory: &InventoryState, banner_item_active: bool) -> f32 {
     let mut total = 0.0;
     for setup in &inventory.setups {
         for slot in &setup.slots {
@@ -739,9 +804,11 @@ pub fn gear_bonuses_for_unit_with_banner_state(
         return UnitEquipmentBonuses::zero();
     };
     let role = role_for_unit(kind);
+    let unit_banner_item_active =
+        unit_type != EquipmentUnitType::Commander || commander_banner_item_active;
     let mut bonuses = inventory
         .setup_for(unit_type)
-        .map(|setup| setup_bonuses_for_role(setup, role, true))
+        .map(|setup| setup_bonuses_for_role(setup, role, unit_banner_item_active))
         .unwrap_or_else(UnitEquipmentBonuses::zero);
 
     if kind == UnitKind::Commander || kind.is_friendly_recruit() {
@@ -754,7 +821,8 @@ pub fn gear_bonuses_for_unit_with_banner_state(
             bonuses.merge_assign(commander_bonuses);
         }
 
-        bonuses.move_speed_bonus = armywide_move_speed_bonus(inventory, commander_banner_item_active);
+        bonuses.move_speed_bonus =
+            armywide_move_speed_bonus(inventory, commander_banner_item_active);
     }
 
     bonuses
@@ -768,12 +836,27 @@ pub fn item_rarity_tier_for_display(item: &GearItemEntry) -> GearRarity {
         .unwrap_or(GearRarity::Common)
 }
 
+pub fn item_scrap_gold_value(item: &GearItemEntry) -> f32 {
+    let overall_tier_points = item_rarity_tier_for_display(item).points() as f32;
+    let stat_tier_points: f32 = item
+        .stats
+        .iter()
+        .map(|stat| stat.rarity.points() as f32)
+        .sum();
+    let special_bonus = if item.special_effect.is_some() {
+        12.0
+    } else {
+        0.0
+    };
+    let raw = overall_tier_points * 14.0 + stat_tier_points * 5.5 + special_bonus;
+    raw.max(1.0).round()
+}
+
 pub fn format_stat_value_for_tooltip(stat: &GearRolledStat) -> String {
     match stat.kind {
         GearStatKind::DamagePercent
         | GearStatKind::AttackSpeedPercent
         | GearStatKind::MoraleLossResistancePercent
-        | GearStatKind::CohesionLossResistancePercent
         | GearStatKind::AuraEnemyEffectPercent
         | GearStatKind::SquirePrimary
         | GearStatKind::SquireSecondary => format!("{:+.1}%", stat.value * 100.0),
@@ -1024,6 +1107,16 @@ pub fn roll_chest_items(
         ));
     }
     items
+}
+
+pub fn roll_chest_items_from_seed(
+    seed: u64,
+    player_faction: PlayerFaction,
+    count: usize,
+    rarity_roll_bonus_pct: f32,
+) -> Vec<GearItemEntry> {
+    let mut rng = InventoryRngState::from_seed(seed);
+    roll_chest_items(&mut rng, player_faction, count, rarity_roll_bonus_pct)
 }
 
 fn make_slot(slot_id: &str, display_name: &str, accepted: &[GearItemType]) -> EquippedSlot {
@@ -1277,7 +1370,8 @@ mod tests {
         BACKPACK_SLOT_CAPACITY, CHEST_SLOT_CAPACITY, EquipmentChestState, EquipmentUnitType,
         GearItemEntry, GearItemType, GearRarity, GearRolledStat, GearStatKind, InventoryPlaceError,
         InventoryRngState, InventorySlotRef, InventoryState, commander_armywide_bonuses,
-        gear_bonuses_for_unit, place_item_into_slot, roll_chest_items, take_item_from_slot,
+        gear_bonuses_for_unit, gear_bonuses_for_unit_with_banner_state, place_item_into_slot,
+        roll_chest_items, take_item_from_slot,
     };
     use crate::inventory::UnitCombatRole;
     use crate::model::{PlayerFaction, UnitKind};
@@ -1422,6 +1516,51 @@ mod tests {
     }
 
     #[test]
+    fn dropped_banner_disables_commander_banner_item_bonuses() {
+        let mut inventory = InventoryState::default();
+        let mut chest = EquipmentChestState::default();
+        chest.ensure_capacity();
+
+        let banner_damage = make_test_item(GearItemType::Banner, GearStatKind::DamagePercent, 0.2);
+        place_item_into_slot(
+            &mut inventory,
+            &mut chest,
+            InventorySlotRef::Equipment {
+                unit_type: EquipmentUnitType::Commander,
+                slot_index: 0,
+            },
+            banner_damage,
+        )
+        .expect("equip commander banner");
+
+        let commander_with_banner =
+            gear_bonuses_for_unit_with_banner_state(&inventory, UnitKind::Commander, Some(0), true);
+        let commander_without_banner = gear_bonuses_for_unit_with_banner_state(
+            &inventory,
+            UnitKind::Commander,
+            Some(0),
+            false,
+        );
+        assert!(commander_with_banner.melee_damage_multiplier > 0.0);
+        assert_eq!(commander_without_banner.melee_damage_multiplier, 0.0);
+
+        let retinue_with_banner = gear_bonuses_for_unit_with_banner_state(
+            &inventory,
+            UnitKind::ChristianPeasantInfantry,
+            Some(0),
+            true,
+        );
+        let retinue_without_banner = gear_bonuses_for_unit_with_banner_state(
+            &inventory,
+            UnitKind::ChristianPeasantInfantry,
+            Some(0),
+            false,
+        );
+        assert!(retinue_with_banner.melee_damage_multiplier > 0.0);
+        assert_eq!(retinue_without_banner.melee_damage_multiplier, 0.0);
+    }
+
+    #[test]
     fn tier_and_hero_equipment_stays_scoped_to_matching_setup() {
         let mut inventory = InventoryState::default();
         let mut chest = EquipmentChestState::default();
@@ -1503,7 +1642,8 @@ mod tests {
         let mut chest = EquipmentChestState::default();
         chest.ensure_capacity();
 
-        let tier5_armor_speed = make_test_item(GearItemType::Armor, GearStatKind::MoveSpeedFlat, 10.0);
+        let tier5_armor_speed =
+            make_test_item(GearItemType::Armor, GearStatKind::MoveSpeedFlat, 10.0);
         place_item_into_slot(
             &mut inventory,
             &mut chest,

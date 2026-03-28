@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use bevy::time::Virtual;
 
 use crate::banner::BannerMarker;
-use crate::drops::ExpPack;
+use crate::drops::GoldPack;
 use crate::enemies::{WaveRuntime, should_trigger_victory};
 use crate::model::EnemyUnit;
 use crate::model::{
@@ -58,7 +58,7 @@ fn boot_to_menu(mut next_state: ResMut<NextState<GameState>>) {
 fn cleanup_run_entities_on_menu_enter(
     mut commands: Commands,
     units: Query<Entity, With<Unit>>,
-    drops: Query<Entity, With<ExpPack>>,
+    drops: Query<Entity, With<GoldPack>>,
     banners: Query<Entity, With<BannerMarker>>,
     projectiles: Query<Entity, With<Projectile>>,
     mut run_session: ResMut<RunSession>,

@@ -64,8 +64,7 @@ pub fn runtime_entropy_seed_u32() -> u32 {
 /// - match seed -> rescue/drop/upgrade seed
 pub fn derive_stream_seed(base_seed: u64, stream_tag: u64) -> u64 {
     let mixed = splitmix64_finalize(
-        base_seed
-            .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+        base_seed.wrapping_mul(0x9E37_79B9_7F4A_7C15)
             ^ stream_tag.wrapping_mul(0xD1B5_4A32_D192_ED03)
             ^ (base_seed ^ stream_tag).rotate_left(27),
     );

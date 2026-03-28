@@ -7,22 +7,22 @@ use std::collections::HashMap;
 
 use crate::archive::{ArchiveCategory, ArchiveDataset, ArchiveEntry};
 use crate::banner::{BannerState, banner_pickup_progress_ratio};
-use crate::data::{GameData, UnitStatsConfig};
-use crate::drops::{EquipmentChestDrop, ExpPack, MagnetPickup, chest_pickup_progress_ratio};
+use crate::data::{CommanderOptionConfig, GameData};
+use crate::drops::{EquipmentChestDrop, GoldPack, MagnetPickup, chest_pickup_progress_ratio};
 use crate::enemies::WaveRuntime;
 use crate::formation::{ActiveFormation, FormationModifiers, FormationSkillBar, SkillBarSkillKind};
 use crate::inventory::{
     BACKPACK_SLOT_CAPACITY, CHEST_SLOT_CAPACITY, EquipmentChestState, EquipmentUnitType,
     GearItemEntry, GearRarity, InventoryPlaceError, InventorySlotRef, InventoryState,
-    gear_item_tooltip, get_item_from_slot, item_rarity_tier_for_display, place_item_into_slot,
-    take_item_from_slot,
+    gear_item_tooltip, get_item_from_slot, item_rarity_tier_for_display, item_scrap_gold_value,
+    place_item_into_slot, take_item_from_slot,
 };
 use crate::map::MapBounds;
 use crate::model::{
-    CommanderUnit, DamageTextEvent, EnemyUnit, FrameRateCap, FriendlyUnit, GameState, Health,
-    MatchSetupSelection, Morale, PlayerFaction, RescuableUnit, RunModalAction,
+    CommanderUnit, DamageTextEvent, EnemyUnit, FrameRateCap, FriendlyUnit, GameDifficulty,
+    GameState, Health, MatchSetupSelection, Morale, PlayerFaction, RescuableUnit, RunModalAction,
     RunModalRequestEvent, RunModalScreen, RunModalState, RunSession, StartRunEvent, Team, Unit,
-    UnitKind,
+    UnitKind, level_cap_from_locked_budget,
 };
 use crate::morale::{
     MoraleThresholdCrossedEvent, average_morale_ratio, commander_aura_radius,
@@ -31,8 +31,10 @@ use crate::morale::{
 use crate::rescue::{RescueProgress, effective_rescue_duration};
 use crate::settings::AppSettings;
 use crate::squad::{
-    ConvertTierZeroUnitsEvent, PriestAttackSpeedBlessing, RosterEconomy, RosterEconomyFeedback,
-    SquadRoster, friendly_tier_for_kind, tier0_conversion_xp_cost, unit_kind_label,
+    ConvertTierZeroUnitsEvent, PriestAttackSpeedBlessing, PromoteUnitsEvent, RosterEconomy,
+    RosterEconomyFeedback, SquadRoster, UpgradeTierUnlockState, friendly_stats_for_kind,
+    friendly_tier_for_kind, promotion_gold_cost, promotion_step_cost, promotion_targets_for_kind,
+    tier0_conversion_gold_cost, unit_kind_label, unlock_boss_wave_for_tier,
 };
 use crate::upgrades::{
     ConditionalUpgradeEffects, ConditionalUpgradeStatus, OneTimeUpgradeTracker, Progression,
@@ -50,8 +52,7 @@ pub struct HudSnapshot {
     pub retinue_count: usize,
     pub level: u32,
     pub allowed_max_level: u32,
-    pub xp: f32,
-    pub next_level_xp: f32,
+    pub gold: f32,
     pub wave_index: usize,
     pub current_wave: u32,
     pub elapsed_seconds: f32,
@@ -68,8 +69,7 @@ impl Default for HudSnapshot {
             retinue_count: 0,
             level: 1,
             allowed_max_level: 100,
-            xp: 0.0,
-            next_level_xp: 30.0,
+            gold: 0.0,
             wave_index: 0,
             current_wave: 1,
             elapsed_seconds: 0.0,
@@ -124,10 +124,28 @@ struct MatchSetupFactionButton {
     faction: PlayerFaction,
 }
 
+#[derive(Component, Clone, Copy, Debug, Eq, PartialEq)]
+struct MatchSetupDifficultyButton {
+    difficulty: GameDifficulty,
+}
+
 #[derive(Component, Clone, Debug, Eq, PartialEq)]
 struct MatchSetupMapButton {
     map_id: String,
 }
+
+#[derive(Component, Clone, Debug)]
+struct MatchSetupCommanderButton {
+    faction: PlayerFaction,
+    commander_id: String,
+    tooltip: String,
+}
+
+#[derive(Component, Clone, Copy, Debug)]
+struct MatchSetupCommanderTooltipRoot;
+
+#[derive(Component, Clone, Copy, Debug)]
+struct MatchSetupCommanderTooltipText;
 
 #[derive(Component, Clone, Copy, Debug)]
 struct MatchSetupButtonDisabled;
@@ -222,7 +240,7 @@ struct RetinueCountHudText;
 struct CommanderLevelHudText;
 
 #[derive(Component, Clone, Copy, Debug)]
-struct XpBarFill;
+struct TreasuryHudText;
 
 #[derive(Component, Clone, Copy, Debug)]
 struct RescueProgressBarsRoot;
@@ -305,6 +323,21 @@ impl Default for InventoryDoubleClickState {
     }
 }
 
+#[derive(Resource, Clone, Copy, Debug, Default)]
+struct InventoryContextMenuState {
+    slot: Option<InventorySlotRef>,
+    position: Vec2,
+}
+
+#[derive(Component, Clone, Copy, Debug)]
+struct InventoryContextMenuRoot;
+
+#[derive(Component, Clone, Copy, Debug, Eq, PartialEq)]
+enum InventoryContextMenuAction {
+    Equip,
+    Scrap,
+}
+
 #[derive(Component, Clone, Copy, Debug)]
 struct InventoryTooltipRoot;
 
@@ -374,6 +407,12 @@ struct UnitUpgradeConvertButton {
 }
 
 #[derive(Component, Clone, Copy, Debug, Eq, PartialEq)]
+struct UnitUpgradePromoteButton {
+    from: UnitKind,
+    to: UnitKind,
+}
+
+#[derive(Component, Clone, Copy, Debug, Eq, PartialEq)]
 struct UnitUpgradeSwapTargetCycleButton {
     from: UnitKind,
 }
@@ -430,10 +469,12 @@ struct UnitUpgradePanelData {
     commander_level: u32,
     allowed_max_level: u32,
     locked_levels: u32,
+    unlocked_tier: u8,
     selected_source: UnitKind,
     roster_entries: Vec<UnitUpgradeRosterEntry>,
-    current_xp: f32,
-    conversion_xp_cost_per_unit: f32,
+    promotions: Vec<UnitPromotionOption>,
+    current_gold: f32,
+    conversion_gold_cost_per_unit: f32,
     context_swap_option: Option<UnitConversionOption>,
     graph_scroll_offset: f32,
     graph_scroll_max_offset: f32,
@@ -450,6 +491,16 @@ struct UnitConversionOption {
     to_kind: UnitKind,
     source_count: u32,
     max_affordable: u32,
+}
+
+#[derive(Clone, Debug)]
+struct UnitPromotionOption {
+    from_kind: UnitKind,
+    to_kind: UnitKind,
+    source_count: u32,
+    max_affordable: u32,
+    unlock_tier: u8,
+    unlock_wave: Option<u32>,
 }
 
 #[derive(Resource, Clone, Debug)]
@@ -483,6 +534,7 @@ struct RunModalOverlayDeps<'w, 's> {
     progression: Res<'w, Progression>,
     roster_economy: Res<'w, RosterEconomy>,
     roster_feedback: Res<'w, RosterEconomyFeedback>,
+    upgrade_unlock_state: Res<'w, UpgradeTierUnlockState>,
     unit_upgrade_state: Res<'w, UnitUpgradeUiState>,
     buffs: Res<'w, crate::model::GlobalBuffs>,
     skill_book: Res<'w, SkillBookLog>,
@@ -496,6 +548,16 @@ struct RunModalOverlayDeps<'w, 's> {
     roots: Query<'w, 's, (Entity, &'static RunModalRoot)>,
 }
 
+#[derive(SystemParam)]
+struct UnitUpgradeRuntimeDeps<'w> {
+    economy: Res<'w, RosterEconomy>,
+    progression: Res<'w, Progression>,
+    unlock_state: Res<'w, UpgradeTierUnlockState>,
+    economy_feedback: ResMut<'w, RosterEconomyFeedback>,
+    convert_events: EventWriter<'w, ConvertTierZeroUnitsEvent>,
+    promote_events: EventWriter<'w, PromoteUnitsEvent>,
+}
+
 const MENU_BACKGROUND: Color = Color::srgb(0.12, 0.1, 0.08);
 const MENU_BUTTON_TEXT_NORMAL: Color = Color::srgb(0.92, 0.88, 0.8);
 const MENU_BUTTON_TEXT_HOVERED: Color = Color::srgb(0.98, 0.96, 0.88);
@@ -505,7 +567,6 @@ const MENU_BUTTON_BORDER_DISABLED: Color = Color::srgba(0.62, 0.57, 0.5, 0.2);
 const MENU_FPS_BOX_BORDER: Color = Color::srgba(0.86, 0.78, 0.62, 0.7);
 const HUD_TEXT_COLOR: Color = Color::srgb(0.97, 0.95, 0.9);
 const HUD_BAR_BG: Color = Color::srgba(0.12, 0.1, 0.08, 0.8);
-const HUD_BAR_FILL: Color = Color::srgb(0.88, 0.72, 0.28);
 const HUD_VERTICAL_BAR_BG: Color = Color::srgba(0.08, 0.07, 0.06, 0.85);
 const MINIMAP_SIZE: f32 = 204.0;
 const MINIMAP_BORDER: Color = Color::srgb(0.84, 0.76, 0.62);
@@ -515,11 +576,11 @@ const MINIMAP_FRIENDLY_COLOR: Color = Color::srgb(0.38, 0.79, 0.36);
 const MINIMAP_ENEMY_COLOR: Color = Color::srgb(0.9, 0.28, 0.22);
 const MINIMAP_RESCUABLE_COLOR: Color = Color::srgb(0.45, 0.72, 0.94);
 const MINIMAP_DROPPED_BANNER_COLOR: Color = Color::srgb(0.95, 0.8, 0.32);
-const MINIMAP_EXP_COLOR: Color = Color::srgb(0.98, 0.87, 0.22);
+const MINIMAP_GOLD_COLOR: Color = Color::srgb(0.98, 0.87, 0.22);
 const MINIMAP_MAX_ENEMY_BLIPS: usize = 220;
 const MINIMAP_MAX_FRIENDLY_BLIPS: usize = 260;
 const MINIMAP_MAX_RESCUABLE_BLIPS: usize = 80;
-const MINIMAP_MAX_EXP_BLIPS: usize = 320;
+const MINIMAP_MAX_GOLD_BLIPS: usize = 320;
 const MINIMAP_MAX_MAGNET_BLIPS: usize = 4;
 const MINIMAP_MAX_CHEST_BLIPS: usize = 8;
 const SKILL_BAR_SLOT_BG: Color = Color::srgba(0.05, 0.045, 0.04, 0.82);
@@ -559,6 +620,7 @@ impl Plugin for UiPlugin {
             .init_resource::<UnitUpgradeUiState>()
             .init_resource::<InventorySlotSelection>()
             .init_resource::<InventoryDoubleClickState>()
+            .init_resource::<InventoryContextMenuState>()
             .add_systems(OnEnter(GameState::MainMenu), spawn_main_menu)
             .add_systems(OnExit(GameState::MainMenu), despawn_main_menu)
             .add_systems(OnEnter(GameState::MatchSetup), spawn_match_setup_menu)
@@ -594,11 +656,16 @@ impl Plugin for UiPlugin {
                 Update,
                 (
                     handle_match_setup_faction_buttons,
+                    handle_match_setup_difficulty_buttons,
+                    handle_match_setup_commander_buttons,
                     handle_match_setup_map_buttons,
                     handle_match_setup_action_buttons,
                     refresh_match_setup_faction_button_visuals,
+                    refresh_match_setup_difficulty_button_visuals,
+                    refresh_match_setup_commander_button_visuals,
                     refresh_match_setup_map_button_visuals,
                     refresh_match_setup_action_button_visuals,
+                    update_match_setup_commander_tooltip,
                 )
                     .chain()
                     .run_if(in_state(GameState::MatchSetup)),
@@ -647,6 +714,8 @@ impl Plugin for UiPlugin {
                     sync_run_modal_overlay,
                     handle_run_modal_buttons,
                     handle_inventory_slot_buttons,
+                    update_inventory_context_menu_ui,
+                    handle_inventory_context_menu_buttons,
                     update_inventory_hover_tooltip,
                     update_unit_upgrade_hover_tooltip,
                     clear_chest_state_when_modal_exits,
@@ -893,6 +962,7 @@ fn spawn_match_setup_menu(
     if !can_select_match_setup_faction(setup_selection.faction) {
         setup_selection.faction = PlayerFaction::Christian;
     }
+    ensure_valid_match_setup_commander_selection(&data, &mut setup_selection);
 
     commands
         .spawn((
@@ -923,7 +993,7 @@ fn spawn_match_setup_menu(
                 },
             ));
             root.spawn(TextBundle::from_section(
-                "Choose faction and map before starting an offline run.",
+                "Choose faction, difficulty, commander, and map before starting an offline run.",
                 TextStyle {
                     font_size: 16.0,
                     color: MENU_BUTTON_TEXT_NORMAL,
@@ -963,6 +1033,64 @@ fn spawn_match_setup_menu(
                     .with_children(|row| {
                         spawn_match_setup_faction_button(row, PlayerFaction::Christian);
                         spawn_match_setup_faction_button(row, PlayerFaction::Muslim);
+                    });
+
+                panel.spawn(TextBundle::from_section(
+                    "Difficulty",
+                    TextStyle {
+                        font_size: 22.0,
+                        color: MENU_BUTTON_TEXT_NORMAL,
+                        ..default()
+                    },
+                ));
+                panel
+                    .spawn(NodeBundle {
+                        style: Style {
+                            flex_direction: FlexDirection::Row,
+                            column_gap: Val::Px(10.0),
+                            flex_wrap: FlexWrap::Wrap,
+                            row_gap: Val::Px(8.0),
+                            ..default()
+                        },
+                        background_color: BackgroundColor(Color::NONE),
+                        ..default()
+                    })
+                    .with_children(|row| {
+                        for difficulty in GameDifficulty::all() {
+                            spawn_match_setup_difficulty_button(row, difficulty);
+                        }
+                    });
+
+                panel.spawn(TextBundle::from_section(
+                    "Commander",
+                    TextStyle {
+                        font_size: 22.0,
+                        color: MENU_BUTTON_TEXT_NORMAL,
+                        ..default()
+                    },
+                ));
+                panel
+                    .spawn(NodeBundle {
+                        style: Style {
+                            flex_direction: FlexDirection::Row,
+                            column_gap: Val::Px(10.0),
+                            ..default()
+                        },
+                        background_color: BackgroundColor(Color::NONE),
+                        ..default()
+                    })
+                    .with_children(|row| {
+                        for faction in [PlayerFaction::Christian, PlayerFaction::Muslim] {
+                            for commander in data.units.commander_options_for_faction(faction) {
+                                spawn_match_setup_commander_button(
+                                    row,
+                                    faction,
+                                    &commander.id,
+                                    commander.name.as_str(),
+                                    commander_tooltip_text(&commander),
+                                );
+                            }
+                        }
                     });
 
                 panel.spawn(TextBundle::from_section(
@@ -1008,6 +1136,49 @@ fn spawn_match_setup_menu(
                 spawn_match_setup_action_button(actions, MatchSetupAction::Start, "START");
                 spawn_match_setup_action_button(actions, MatchSetupAction::Back, "BACK");
             });
+
+            root.spawn((
+                MatchSetupCommanderTooltipRoot,
+                NodeBundle {
+                    style: Style {
+                        position_type: PositionType::Absolute,
+                        left: Val::Px(0.0),
+                        top: Val::Px(0.0),
+                        width: Val::Px(420.0),
+                        min_height: Val::Px(130.0),
+                        max_height: Val::Px(320.0),
+                        border: UiRect::all(Val::Px(1.0)),
+                        padding: UiRect::all(Val::Px(8.0)),
+                        display: Display::None,
+                        ..default()
+                    },
+                    background_color: BackgroundColor(Color::srgba(0.06, 0.05, 0.05, 0.97)),
+                    border_color: BorderColor(Color::srgba(0.78, 0.72, 0.58, 0.36)),
+                    z_index: ZIndex::Global(118),
+                    ..default()
+                },
+            ))
+            .with_children(|tooltip| {
+                tooltip.spawn((
+                    MatchSetupCommanderTooltipText,
+                    TextBundle {
+                        style: Style {
+                            width: Val::Percent(100.0),
+                            ..default()
+                        },
+                        text: Text::from_section(
+                            "",
+                            TextStyle {
+                                font_size: 12.0,
+                                color: MENU_BUTTON_TEXT_DISABLED,
+                                ..default()
+                            },
+                        )
+                        .with_justify(JustifyText::Left),
+                        ..default()
+                    },
+                ));
+            });
         });
 }
 
@@ -1050,6 +1221,138 @@ fn spawn_match_setup_faction_button(parent: &mut ChildBuilder, faction: PlayerFa
             },
         ));
     });
+}
+
+fn spawn_match_setup_difficulty_button(parent: &mut ChildBuilder, difficulty: GameDifficulty) {
+    parent
+        .spawn((
+            ButtonBundle {
+                style: Style {
+                    width: Val::Px(240.0),
+                    height: Val::Px(48.0),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    border: UiRect::all(Val::Px(1.0)),
+                    ..default()
+                },
+                background_color: BackgroundColor(Color::NONE),
+                border_color: BorderColor(Color::NONE),
+                ..default()
+            },
+            MatchSetupDifficultyButton { difficulty },
+        ))
+        .with_children(|button| {
+            button.spawn(TextBundle::from_section(
+                difficulty.label(),
+                TextStyle {
+                    font_size: 20.0,
+                    color: MENU_BUTTON_TEXT_NORMAL,
+                    ..default()
+                },
+            ));
+        });
+}
+
+fn spawn_match_setup_commander_button(
+    parent: &mut ChildBuilder,
+    faction: PlayerFaction,
+    commander_id: &str,
+    label: &str,
+    tooltip: String,
+) {
+    parent
+        .spawn((
+            ButtonBundle {
+                style: Style {
+                    width: Val::Px(220.0),
+                    height: Val::Px(52.0),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    border: UiRect::all(Val::Px(1.0)),
+                    ..default()
+                },
+                background_color: BackgroundColor(Color::NONE),
+                border_color: BorderColor(Color::NONE),
+                ..default()
+            },
+            MatchSetupCommanderButton {
+                faction,
+                commander_id: commander_id.to_string(),
+                tooltip,
+            },
+        ))
+        .with_children(|button| {
+            button.spawn(TextBundle::from_section(
+                label,
+                TextStyle {
+                    font_size: 18.0,
+                    color: MENU_BUTTON_TEXT_NORMAL,
+                    ..default()
+                },
+            ));
+        });
+}
+
+fn commander_tooltip_text(commander: &CommanderOptionConfig) -> String {
+    let mut lines = vec![
+        commander.name.clone(),
+        commander.description.clone(),
+        String::new(),
+        "Base Stats:".to_string(),
+        format!(
+            "HP {:.0} | Armor {:.1} | Damage {:.1} | Move {:.0}",
+            commander.stats.max_hp,
+            commander.stats.armor,
+            commander.stats.damage,
+            commander.stats.move_speed
+        ),
+        format!(
+            "Melee: {:.2}s cd | {:.0} range | Aura {:.0}",
+            commander.stats.attack_cooldown_secs,
+            commander.stats.attack_range,
+            commander.stats.aura_radius
+        ),
+    ];
+    let mut bonus_lines = Vec::new();
+    if commander.run_bonuses.damage_multiplier_bonus > 0.0 {
+        bonus_lines.push(format!(
+            "Army Damage +{:.1}%",
+            commander.run_bonuses.damage_multiplier_bonus * 100.0
+        ));
+    }
+    if commander.run_bonuses.move_speed_bonus > 0.0 {
+        bonus_lines.push(format!(
+            "Army Move Speed +{:.0}",
+            commander.run_bonuses.move_speed_bonus
+        ));
+    }
+    if commander.run_bonuses.aura_radius_bonus > 0.0 {
+        bonus_lines.push(format!(
+            "Aura Radius +{:.0}",
+            commander.run_bonuses.aura_radius_bonus
+        ));
+    }
+    if commander.run_bonuses.pickup_radius_bonus > 0.0 {
+        bonus_lines.push(format!(
+            "Pickup Radius +{:.0}",
+            commander.run_bonuses.pickup_radius_bonus
+        ));
+    }
+    if !bonus_lines.is_empty() {
+        lines.push(String::new());
+        lines.push("Run Bonuses:".to_string());
+        for bonus in bonus_lines {
+            lines.push(format!("- {bonus}"));
+        }
+    }
+    if !commander.abilities.is_empty() {
+        lines.push(String::new());
+        lines.push("Abilities:".to_string());
+        for ability in &commander.abilities {
+            lines.push(format!("- {ability}"));
+        }
+    }
+    lines.join("\n")
 }
 
 fn spawn_match_setup_map_button(parent: &mut ChildBuilder, map_id: &str, label: &str) {
@@ -1969,32 +2272,17 @@ fn spawn_in_run_hud(
                             ),
                         ));
 
-                        center
-                            .spawn(NodeBundle {
-                                style: Style {
-                                    width: Val::Px(320.0),
-                                    height: Val::Px(14.0),
-                                    border: UiRect::all(Val::Px(1.0)),
+                        center.spawn((
+                            TreasuryHudText,
+                            TextBundle::from_section(
+                                "Treasury: 0.0g",
+                                TextStyle {
+                                    font_size: 18.0,
+                                    color: HUD_TEXT_COLOR,
                                     ..default()
                                 },
-                                background_color: BackgroundColor(HUD_BAR_BG),
-                                border_color: BorderColor(HUD_TEXT_COLOR),
-                                ..default()
-                            })
-                            .with_children(|bar| {
-                                bar.spawn((
-                                    XpBarFill,
-                                    NodeBundle {
-                                        style: Style {
-                                            width: Val::Percent(0.0),
-                                            height: Val::Percent(100.0),
-                                            ..default()
-                                        },
-                                        background_color: BackgroundColor(HUD_BAR_FILL),
-                                        ..default()
-                                    },
-                                ));
-                            });
+                            ),
+                        ));
 
                         center.spawn((
                             RescueProgressBarsRoot,
@@ -2100,6 +2388,7 @@ fn sync_run_modal_overlay(
                 && unit_upgrade_modal_should_refresh(
                     deps.roster_economy.is_changed(),
                     deps.roster_feedback.is_changed(),
+                    deps.upgrade_unlock_state.is_changed(),
                     deps.unit_upgrade_state.is_changed(),
                 );
             let should_refresh_inventory = false;
@@ -2140,6 +2429,7 @@ fn sync_run_modal_overlay(
             let unit_upgrade_panel = build_unit_upgrade_panel_data(
                 &deps.roster_economy,
                 &deps.progression,
+                &deps.upgrade_unlock_state,
                 &deps.unit_upgrade_state,
                 deps.setup_selection.faction,
             );
@@ -2163,9 +2453,13 @@ fn sync_run_modal_overlay(
 fn unit_upgrade_modal_should_refresh(
     roster_economy_changed: bool,
     roster_feedback_changed: bool,
+    upgrade_unlock_state_changed: bool,
     unit_upgrade_state_changed: bool,
 ) -> bool {
-    roster_economy_changed || roster_feedback_changed || unit_upgrade_state_changed
+    roster_economy_changed
+        || roster_feedback_changed
+        || upgrade_unlock_state_changed
+        || unit_upgrade_state_changed
 }
 
 fn despawn_run_modal_overlay(mut commands: Commands, roots: Query<Entity, With<RunModalRoot>>) {
@@ -2357,6 +2651,39 @@ fn spawn_run_modal_overlay(
                 .with_children(|tooltip| {
                     tooltip.spawn((InventoryTooltipText, build_inventory_tooltip_text_bundle()));
                 });
+                root.spawn((
+                    InventoryContextMenuRoot,
+                    NodeBundle {
+                        style: Style {
+                            position_type: PositionType::Absolute,
+                            left: Val::Px(0.0),
+                            top: Val::Px(0.0),
+                            width: Val::Px(132.0),
+                            border: UiRect::all(Val::Px(1.0)),
+                            padding: UiRect::all(Val::Px(5.0)),
+                            flex_direction: FlexDirection::Column,
+                            row_gap: Val::Px(4.0),
+                            display: Display::None,
+                            ..default()
+                        },
+                        background_color: BackgroundColor(Color::srgba(0.06, 0.05, 0.05, 0.97)),
+                        border_color: BorderColor(Color::srgba(0.78, 0.72, 0.58, 0.36)),
+                        z_index: ZIndex::Global(119),
+                        ..default()
+                    },
+                ))
+                .with_children(|menu| {
+                    spawn_inventory_context_menu_button(
+                        menu,
+                        InventoryContextMenuAction::Equip,
+                        "EQUIP",
+                    );
+                    spawn_inventory_context_menu_button(
+                        menu,
+                        InventoryContextMenuAction::Scrap,
+                        "SCRAP",
+                    );
+                });
             }
             if matches!(screen, RunModalScreen::UnitUpgrade) {
                 root.spawn((
@@ -2425,23 +2752,53 @@ fn run_modal_titles(screen: RunModalScreen) -> (&'static str, Option<&'static st
     }
 }
 
-fn friendly_unit_stats_for_kind(data: &GameData, kind: UnitKind) -> Option<&UnitStatsConfig> {
-    match kind {
-        UnitKind::ChristianPeasantInfantry => Some(&data.units.recruit_christian_peasant_infantry),
-        UnitKind::ChristianPeasantArcher => Some(&data.units.recruit_christian_peasant_archer),
-        UnitKind::ChristianPeasantPriest => Some(&data.units.recruit_christian_peasant_priest),
-        UnitKind::MuslimPeasantInfantry => Some(&data.units.recruit_muslim_peasant_infantry),
-        UnitKind::MuslimPeasantArcher => Some(&data.units.recruit_muslim_peasant_archer),
-        UnitKind::MuslimPeasantPriest => Some(&data.units.recruit_muslim_peasant_priest),
-        _ => None,
-    }
-}
-
 fn unit_role_label(kind: UnitKind) -> &'static str {
     match kind {
-        UnitKind::ChristianPeasantInfantry | UnitKind::MuslimPeasantInfantry => "Melee",
-        UnitKind::ChristianPeasantArcher | UnitKind::MuslimPeasantArcher => "Hybrid Ranged",
-        UnitKind::ChristianPeasantPriest | UnitKind::MuslimPeasantPriest => "Support",
+        UnitKind::ChristianPeasantInfantry | UnitKind::MuslimPeasantInfantry => "Tier 0 Melee",
+        UnitKind::ChristianMenAtArms | UnitKind::MuslimMenAtArms => "Tier 1 Frontline",
+        UnitKind::ChristianShieldInfantry | UnitKind::MuslimShieldInfantry => "Tier 2 Tank",
+        UnitKind::ChristianSpearman | UnitKind::MuslimSpearman => "Tier 2 Anti-Cavalry",
+        UnitKind::ChristianUnmountedKnight | UnitKind::MuslimUnmountedKnight => "Tier 2 Bruiser",
+        UnitKind::ChristianSquire | UnitKind::MuslimSquire => "Tier 2 Support",
+        UnitKind::ChristianExperiencedShieldInfantry
+        | UnitKind::MuslimExperiencedShieldInfantry => "Tier 3 Tank",
+        UnitKind::ChristianEliteShieldInfantry | UnitKind::MuslimEliteShieldInfantry => {
+            "Tier 4 Tank"
+        }
+        UnitKind::ChristianShieldedSpearman | UnitKind::MuslimShieldedSpearman => {
+            "Tier 3 Anti-Cavalry"
+        }
+        UnitKind::ChristianHalberdier | UnitKind::MuslimHalberdier => "Tier 4 Anti-Cavalry",
+        UnitKind::ChristianKnight | UnitKind::MuslimKnight => "Tier 3 Bruiser",
+        UnitKind::ChristianHeavyKnight | UnitKind::MuslimHeavyKnight => "Tier 4 Bruiser",
+        UnitKind::ChristianBannerman | UnitKind::MuslimBannerman => "Tier 3 Support",
+        UnitKind::ChristianEliteBannerman | UnitKind::MuslimEliteBannerman => "Tier 4 Support",
+        UnitKind::ChristianPeasantArcher | UnitKind::MuslimPeasantArcher => "Tier 0 Hybrid Ranged",
+        UnitKind::ChristianBowman | UnitKind::MuslimBowman => "Tier 1 Ranged",
+        UnitKind::ChristianExperiencedBowman | UnitKind::MuslimExperiencedBowman => "Tier 2 Ranged",
+        UnitKind::ChristianCrossbowman | UnitKind::MuslimCrossbowman => "Tier 2 Heavy Ranged",
+        UnitKind::ChristianTracker | UnitKind::MuslimTracker => "Tier 2 Skirmish Ranged",
+        UnitKind::ChristianScout | UnitKind::MuslimScout => "Tier 2 Raider",
+        UnitKind::ChristianEliteBowman | UnitKind::MuslimEliteBowman => "Tier 3 Ranged",
+        UnitKind::ChristianLongbowman | UnitKind::MuslimLongbowman => "Tier 4 Ranged",
+        UnitKind::ChristianArmoredCrossbowman | UnitKind::MuslimArmoredCrossbowman => {
+            "Tier 3 Heavy Ranged"
+        }
+        UnitKind::ChristianEliteCrossbowman | UnitKind::MuslimEliteCrossbowman => {
+            "Tier 4 Heavy Ranged"
+        }
+        UnitKind::ChristianPathfinder | UnitKind::MuslimPathfinder => "Tier 3 Skirmish Ranged",
+        UnitKind::ChristianHoundmaster | UnitKind::MuslimHoundmaster => "Tier 4 Skirmish Ranged",
+        UnitKind::ChristianMountedScout | UnitKind::MuslimMountedScout => "Tier 3 Raider",
+        UnitKind::ChristianShockCavalry | UnitKind::MuslimShockCavalry => "Tier 4 Raider",
+        UnitKind::ChristianPeasantPriest | UnitKind::MuslimPeasantPriest => "Tier 0 Support",
+        UnitKind::ChristianDevoted | UnitKind::MuslimDevoted => "Tier 1 Support",
+        UnitKind::ChristianDevotedOne | UnitKind::MuslimDevotedOne => "Tier 2 Support",
+        UnitKind::ChristianFanatic | UnitKind::MuslimFanatic => "Tier 2 Zealot",
+        UnitKind::ChristianCardinal | UnitKind::MuslimCardinal => "Tier 3 Support",
+        UnitKind::ChristianEliteCardinal | UnitKind::MuslimEliteCardinal => "Tier 4 Support",
+        UnitKind::ChristianFlagellant | UnitKind::MuslimFlagellant => "Tier 3 Zealot",
+        UnitKind::ChristianEliteFlagellant | UnitKind::MuslimEliteFlagellant => "Tier 4 Zealot",
         UnitKind::Commander => "Commander",
         _ => "Unit",
     }
@@ -2452,11 +2809,111 @@ fn unit_description(kind: UnitKind) -> &'static str {
         UnitKind::ChristianPeasantInfantry | UnitKind::MuslimPeasantInfantry => {
             "Frontline peasant infantry focused on close combat."
         }
+        UnitKind::ChristianMenAtArms | UnitKind::MuslimMenAtArms => {
+            "Heavier frontline infantry: more armor and stamina, slower tempo."
+        }
+        UnitKind::ChristianShieldInfantry | UnitKind::MuslimShieldInfantry => {
+            "Defensive branch with high durability and strong frontline hold."
+        }
+        UnitKind::ChristianSpearman | UnitKind::MuslimSpearman => {
+            "Reach-focused anti-cavalry branch with balanced armor and control."
+        }
+        UnitKind::ChristianUnmountedKnight | UnitKind::MuslimUnmountedKnight => {
+            "High-pressure melee branch with stronger offense and armor."
+        }
+        UnitKind::ChristianSquire | UnitKind::MuslimSquire => {
+            "Support branch that buffs allies and stabilizes morale."
+        }
+        UnitKind::ChristianExperiencedShieldInfantry
+        | UnitKind::MuslimExperiencedShieldInfantry => {
+            "Tier-3 defensive anchor: improved survivability and formation endurance."
+        }
+        UnitKind::ChristianEliteShieldInfantry | UnitKind::MuslimEliteShieldInfantry => {
+            "Tier-4 defensive anchor with superior durability and frontline staying power."
+        }
+        UnitKind::ChristianShieldedSpearman | UnitKind::MuslimShieldedSpearman => {
+            "Tier-3 anti-cavalry specialist with better reach and tougher defenses."
+        }
+        UnitKind::ChristianHalberdier | UnitKind::MuslimHalberdier => {
+            "Tier-4 anti-cavalry specialist with stronger reach pressure and armor."
+        }
+        UnitKind::ChristianKnight | UnitKind::MuslimKnight => {
+            "Tier-3 melee bruiser with stronger burst and sustained pressure."
+        }
+        UnitKind::ChristianHeavyKnight | UnitKind::MuslimHeavyKnight => {
+            "Tier-4 melee bruiser with stronger armor and sustained offense."
+        }
+        UnitKind::ChristianBannerman | UnitKind::MuslimBannerman => {
+            "Tier-3 support unit focused on durable aura uptime."
+        }
+        UnitKind::ChristianEliteBannerman | UnitKind::MuslimEliteBannerman => {
+            "Tier-4 support standard bearer with stronger resilience and uptime."
+        }
         UnitKind::ChristianPeasantArcher | UnitKind::MuslimPeasantArcher => {
             "Hybrid archer: strong ranged pressure with weak melee fallback."
         }
+        UnitKind::ChristianBowman | UnitKind::MuslimBowman => {
+            "Dedicated bow line: longer range and faster volleys with lighter armor."
+        }
+        UnitKind::ChristianExperiencedBowman | UnitKind::MuslimExperiencedBowman => {
+            "Tier-2 ranged upgrade with stronger sustained volleys."
+        }
+        UnitKind::ChristianCrossbowman | UnitKind::MuslimCrossbowman => {
+            "Tier-2 heavy ranged branch with slower but harder shots."
+        }
+        UnitKind::ChristianTracker | UnitKind::MuslimTracker => {
+            "Tier-2 skirmish branch that periodically summons hound strikes."
+        }
+        UnitKind::ChristianScout | UnitKind::MuslimScout => {
+            "Tier-2 raider branch that periodically breaks formation to strike."
+        }
+        UnitKind::ChristianEliteBowman | UnitKind::MuslimEliteBowman => {
+            "Tier-3 ranged branch with higher precision and sustained pressure."
+        }
+        UnitKind::ChristianLongbowman | UnitKind::MuslimLongbowman => {
+            "Tier-4 ranged branch with longer reach and stronger sustained volleys."
+        }
+        UnitKind::ChristianArmoredCrossbowman | UnitKind::MuslimArmoredCrossbowman => {
+            "Tier-3 heavy ranged branch with stronger bolts and improved armor."
+        }
+        UnitKind::ChristianEliteCrossbowman | UnitKind::MuslimEliteCrossbowman => {
+            "Tier-4 heavy ranged branch with higher bolt pressure and durability."
+        }
+        UnitKind::ChristianPathfinder | UnitKind::MuslimPathfinder => {
+            "Tier-3 skirmisher with improved hound pressure and mobility."
+        }
+        UnitKind::ChristianHoundmaster | UnitKind::MuslimHoundmaster => {
+            "Tier-4 skirmisher with stronger hound pressure and ranged pacing."
+        }
+        UnitKind::ChristianMountedScout | UnitKind::MuslimMountedScout => {
+            "Tier-3 raider with faster autonomous strike rotations."
+        }
+        UnitKind::ChristianShockCavalry | UnitKind::MuslimShockCavalry => {
+            "Tier-4 raider with stronger charge tempo and autonomous strike impact."
+        }
         UnitKind::ChristianPeasantPriest | UnitKind::MuslimPeasantPriest => {
             "Support priest that periodically buffs nearby allies."
+        }
+        UnitKind::ChristianDevoted | UnitKind::MuslimDevoted => {
+            "Tier-1 support priest with stronger survivability and morale stability."
+        }
+        UnitKind::ChristianDevotedOne | UnitKind::MuslimDevotedOne => {
+            "Tier-2 support upgrade with stronger blessing uptime."
+        }
+        UnitKind::ChristianFanatic | UnitKind::MuslimFanatic => {
+            "Tier-2 zealot branch with high damage, no armor growth, and life leech."
+        }
+        UnitKind::ChristianCardinal | UnitKind::MuslimCardinal => {
+            "Tier-3 support branch with stronger blessing durability."
+        }
+        UnitKind::ChristianEliteCardinal | UnitKind::MuslimEliteCardinal => {
+            "Tier-4 support branch with stronger survivability and aura uptime."
+        }
+        UnitKind::ChristianFlagellant | UnitKind::MuslimFlagellant => {
+            "Tier-3 zealot branch with stronger life leech pressure and no armor scaling."
+        }
+        UnitKind::ChristianEliteFlagellant | UnitKind::MuslimEliteFlagellant => {
+            "Tier-4 zealot branch with amplified life leech pressure and no armor scaling."
         }
         UnitKind::Commander => "Army command center with leadership-focused progression.",
         _ => "Inactive node for future roster expansion.",
@@ -2465,14 +2922,83 @@ fn unit_description(kind: UnitKind) -> &'static str {
 
 fn unit_abilities(kind: UnitKind) -> &'static str {
     match kind {
-        UnitKind::ChristianPeasantInfantry | UnitKind::MuslimPeasantInfantry => {
-            "Basic melee auto-attack."
-        }
-        UnitKind::ChristianPeasantArcher | UnitKind::MuslimPeasantArcher => {
+        UnitKind::ChristianPeasantInfantry
+        | UnitKind::ChristianMenAtArms
+        | UnitKind::ChristianShieldInfantry
+        | UnitKind::ChristianExperiencedShieldInfantry
+        | UnitKind::ChristianEliteShieldInfantry
+        | UnitKind::MuslimPeasantInfantry
+        | UnitKind::MuslimMenAtArms
+        | UnitKind::MuslimShieldInfantry
+        | UnitKind::MuslimExperiencedShieldInfantry
+        | UnitKind::MuslimEliteShieldInfantry => "Basic melee auto-attack.",
+        UnitKind::ChristianSpearman
+        | UnitKind::ChristianShieldedSpearman
+        | UnitKind::ChristianHalberdier
+        | UnitKind::MuslimSpearman
+        | UnitKind::MuslimShieldedSpearman
+        | UnitKind::MuslimHalberdier => "Melee auto-attack with extended reach.",
+        UnitKind::ChristianUnmountedKnight
+        | UnitKind::ChristianKnight
+        | UnitKind::ChristianHeavyKnight
+        | UnitKind::MuslimUnmountedKnight
+        | UnitKind::MuslimKnight
+        | UnitKind::MuslimHeavyKnight => "Aggressive melee auto-attack.",
+        UnitKind::ChristianPeasantArcher
+        | UnitKind::ChristianBowman
+        | UnitKind::ChristianExperiencedBowman
+        | UnitKind::ChristianEliteBowman
+        | UnitKind::ChristianLongbowman
+        | UnitKind::ChristianCrossbowman
+        | UnitKind::ChristianArmoredCrossbowman
+        | UnitKind::ChristianEliteCrossbowman
+        | UnitKind::MuslimPeasantArcher
+        | UnitKind::MuslimBowman
+        | UnitKind::MuslimExperiencedBowman
+        | UnitKind::MuslimEliteBowman
+        | UnitKind::MuslimLongbowman
+        | UnitKind::MuslimCrossbowman
+        | UnitKind::MuslimArmoredCrossbowman
+        | UnitKind::MuslimEliteCrossbowman => {
             "Auto-ranged attack; switches to melee at close range."
         }
-        UnitKind::ChristianPeasantPriest | UnitKind::MuslimPeasantPriest => {
+        UnitKind::ChristianTracker
+        | UnitKind::ChristianPathfinder
+        | UnitKind::ChristianHoundmaster
+        | UnitKind::MuslimTracker
+        | UnitKind::MuslimPathfinder
+        | UnitKind::MuslimHoundmaster => "Auto-ranged attack and periodic hound strike summons.",
+        UnitKind::ChristianScout
+        | UnitKind::ChristianMountedScout
+        | UnitKind::ChristianShockCavalry
+        | UnitKind::MuslimScout
+        | UnitKind::MuslimMountedScout
+        | UnitKind::MuslimShockCavalry => "Periodic autonomous raid movement and melee strikes.",
+        UnitKind::ChristianPeasantPriest
+        | UnitKind::ChristianDevoted
+        | UnitKind::ChristianSquire
+        | UnitKind::ChristianBannerman
+        | UnitKind::ChristianEliteBannerman
+        | UnitKind::ChristianDevotedOne
+        | UnitKind::ChristianCardinal
+        | UnitKind::ChristianEliteCardinal
+        | UnitKind::MuslimPeasantPriest
+        | UnitKind::MuslimDevoted
+        | UnitKind::MuslimSquire
+        | UnitKind::MuslimBannerman
+        | UnitKind::MuslimEliteBannerman
+        | UnitKind::MuslimDevotedOne
+        | UnitKind::MuslimCardinal
+        | UnitKind::MuslimEliteCardinal => {
             "Auto-cast priest blessing (attack speed buff aura pulse)."
+        }
+        UnitKind::ChristianFanatic
+        | UnitKind::ChristianFlagellant
+        | UnitKind::ChristianEliteFlagellant
+        | UnitKind::MuslimFanatic
+        | UnitKind::MuslimFlagellant
+        | UnitKind::MuslimEliteFlagellant => {
+            "Melee auto-attack with life leech and armor lock at zero."
         }
         UnitKind::Commander => "Auras, formations, battle-support combat.",
         _ => "No active ability.",
@@ -2482,13 +3008,13 @@ fn unit_abilities(kind: UnitKind) -> &'static str {
 fn unit_box_tooltip(kind: UnitKind, data: &GameData, swap_cost: Option<f32>) -> String {
     let swap_hint = if friendly_tier_for_kind(kind) == Some(0) {
         format!(
-            "\nSwap Cost: {:.1}\nHint: right-click unit to open swap menu.",
+            "\nSwap Cost: {:.1} gold\nHint: right-click unit to open swap menu.",
             swap_cost.unwrap_or(0.0)
         )
     } else {
         String::new()
     };
-    if let Some(stats) = friendly_unit_stats_for_kind(data, kind) {
+    if let Some(stats) = friendly_stats_for_kind(data, kind) {
         format!(
             "{}\nType: {}\nDescription: {}\nStats: HP {:.0}, Armor {:.1}, Damage {:.1}, AS {:.2}s, Range {:.1}, Move {:.1}, Morale {:.0}\nAbilities: {}{}",
             unit_kind_label(kind),
@@ -2514,6 +3040,28 @@ fn unit_box_tooltip(kind: UnitKind, data: &GameData, swap_cost: Option<f32>) -> 
             swap_hint
         )
     }
+}
+
+fn promotion_tooltip(option: &UnitPromotionOption, unlocked_tier: u8) -> String {
+    let step_cost = promotion_step_cost(option.from_kind, option.to_kind).unwrap_or(1);
+    let gold_cost = promotion_gold_cost(step_cost, option.unlock_tier);
+    let unlock_text = if unlocked_tier >= option.unlock_tier {
+        "Unlocked".to_string()
+    } else {
+        let wave = option.unlock_wave.unwrap_or(option.unlock_tier as u32 * 10);
+        format!("Locked until major army wave {wave} is defeated")
+    };
+    format!(
+        "{}\nType: Promotion\nDescription: Promote {} into {}.\nRequirements: {}\nCosts: {:.1} gold, +{} locked level\nAvailability: owned {}, affordable {}",
+        unit_kind_label(option.to_kind),
+        unit_kind_label(option.from_kind),
+        unit_kind_label(option.to_kind),
+        unlock_text,
+        gold_cost,
+        step_cost,
+        option.source_count,
+        option.max_affordable
+    )
 }
 
 fn tier_placeholder_tooltip(source_kind: UnitKind, tier: u8) -> String {
@@ -2597,10 +3145,7 @@ fn build_stats_panel_data(
     {
         active_buffs.push("Authority Aura".to_string());
     }
-    if buffs.hospitalier_hp_regen_per_sec > 0.0
-        || buffs.hospitalier_cohesion_regen_per_sec > 0.0
-        || buffs.hospitalier_morale_regen_per_sec > 0.0
-    {
+    if buffs.hospitalier_hp_regen_per_sec > 0.0 || buffs.hospitalier_morale_regen_per_sec > 0.0 {
         active_buffs.push("Hospitalier Aura".to_string());
     }
     if buffs.inside_formation_damage_multiplier > 1.0 {
@@ -2656,9 +3201,9 @@ fn build_stats_panel_data(
                 format_percent_bonus(passive_level_percent + attack_speed_upgrade_percent),
             ),
             stats_bonus_row(
-                "XP Gain",
-                (buffs.xp_gain_multiplier - 1.0) * 100.0,
-                format_percent_bonus((buffs.xp_gain_multiplier - 1.0) * 100.0),
+                "Gold Gain",
+                (buffs.gold_gain_multiplier - 1.0) * 100.0,
+                format_percent_bonus((buffs.gold_gain_multiplier - 1.0) * 100.0),
             ),
             stats_bonus_row(
                 "Crit Chance",
@@ -2694,11 +3239,6 @@ fn build_stats_panel_data(
                 format_percent_bonus(authority_resist_percent),
             ),
             stats_bonus_row(
-                "Cohesion Loss Resist",
-                authority_resist_percent,
-                format_percent_bonus(authority_resist_percent),
-            ),
-            stats_bonus_row(
                 "Health Regen/s",
                 buffs.hospitalier_hp_regen_per_sec,
                 format_raw_bonus(buffs.hospitalier_hp_regen_per_sec),
@@ -2707,11 +3247,6 @@ fn build_stats_panel_data(
                 "Morale Regen/s",
                 buffs.hospitalier_morale_regen_per_sec,
                 format_raw_bonus(buffs.hospitalier_morale_regen_per_sec),
-            ),
-            stats_bonus_row(
-                "Cohesion Regen/s",
-                buffs.hospitalier_cohesion_regen_per_sec,
-                format_raw_bonus(buffs.hospitalier_cohesion_regen_per_sec),
             ),
         ],
         active_buffs,
@@ -3784,6 +4319,40 @@ fn build_inventory_tooltip_text_bundle() -> TextBundle {
     }
 }
 
+fn spawn_inventory_context_menu_button(
+    parent: &mut ChildBuilder,
+    action: InventoryContextMenuAction,
+    label: &str,
+) {
+    parent
+        .spawn((
+            ButtonBundle {
+                style: Style {
+                    width: Val::Percent(100.0),
+                    height: Val::Px(28.0),
+                    border: UiRect::all(Val::Px(1.0)),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                background_color: BackgroundColor(Color::srgba(0.1, 0.085, 0.075, 0.74)),
+                border_color: BorderColor(Color::srgba(0.78, 0.72, 0.58, 0.24)),
+                ..default()
+            },
+            action,
+        ))
+        .with_children(|button| {
+            button.spawn(TextBundle::from_section(
+                label,
+                TextStyle {
+                    font_size: 12.0,
+                    color: HUD_TEXT_COLOR,
+                    ..default()
+                },
+            ));
+        });
+}
+
 fn inventory_slot_border_color(item: Option<&GearItemEntry>, selected: bool) -> Color {
     if selected {
         return MENU_BUTTON_BORDER_HOVERED;
@@ -3899,6 +4468,7 @@ fn equipment_unit_short_label(unit_type: EquipmentUnitType) -> &'static str {
 fn build_unit_upgrade_panel_data(
     economy: &RosterEconomy,
     progression: &Progression,
+    unlock_state: &UpgradeTierUnlockState,
     ui_state: &UnitUpgradeUiState,
     player_faction: PlayerFaction,
 ) -> UnitUpgradePanelData {
@@ -3910,7 +4480,7 @@ fn build_unit_upgrade_panel_data(
     let selected_source =
         resolve_selected_source(ui_state.selected_source, &roster_entries, roster_kinds[0]);
     let current_level = progression.level.max(1);
-    let conversion_xp_cost = tier0_conversion_xp_cost(progression.next_level_xp);
+    let conversion_gold_cost = tier0_conversion_gold_cost();
     let conversion_options = roster_kinds
         .iter()
         .map(|from_kind| {
@@ -3923,8 +4493,8 @@ fn build_unit_upgrade_panel_data(
                 to_kind: selected_target,
                 source_count,
                 max_affordable: max_affordable_tier0_conversions(
-                    progression.xp,
-                    conversion_xp_cost,
+                    progression.gold,
+                    conversion_gold_cost,
                     source_count,
                 ),
             }
@@ -3936,16 +4506,59 @@ fn build_unit_upgrade_panel_data(
             .find(|option| option.from_kind == source)
             .cloned()
     });
+    let mut promotion_sources = economy.kind_counts.keys().copied().collect::<Vec<_>>();
+    for tier0_kind in roster_kinds {
+        if !promotion_sources.contains(&tier0_kind) {
+            promotion_sources.push(tier0_kind);
+        }
+    }
+    promotion_sources.sort_by(|a, b| {
+        let tier_a = friendly_tier_for_kind(*a).unwrap_or(255);
+        let tier_b = friendly_tier_for_kind(*b).unwrap_or(255);
+        tier_a
+            .cmp(&tier_b)
+            .then_with(|| unit_kind_label(*a).cmp(unit_kind_label(*b)))
+    });
+
+    let promotions = promotion_sources
+        .iter()
+        .flat_map(|from_kind| {
+            let source_count = roster_count_for_kind(economy, *from_kind);
+            promotion_targets_for_kind(*from_kind)
+                .into_iter()
+                .filter_map(move |to_kind| {
+                    let step_cost = promotion_step_cost(*from_kind, to_kind)?;
+                    let unlock_tier = friendly_tier_for_kind(to_kind).unwrap_or(1);
+                    Some(UnitPromotionOption {
+                        from_kind: *from_kind,
+                        to_kind,
+                        source_count,
+                        max_affordable: max_affordable_promotions(
+                            source_count,
+                            progression.gold,
+                            economy.locked_levels,
+                            progression.level.max(1),
+                            step_cost,
+                            unlock_tier,
+                        ),
+                        unlock_tier,
+                        unlock_wave: unlock_boss_wave_for_tier(unlock_tier),
+                    })
+                })
+        })
+        .collect::<Vec<_>>();
     let graph_scroll_max_offset = unit_upgrade_graph_max_scroll_offset();
 
     UnitUpgradePanelData {
         commander_level: current_level,
         allowed_max_level: economy.allowed_max_level,
         locked_levels: economy.locked_levels,
+        unlocked_tier: unlock_state.unlocked_tier,
         selected_source,
         roster_entries,
-        current_xp: progression.xp,
-        conversion_xp_cost_per_unit: conversion_xp_cost,
+        promotions,
+        current_gold: progression.gold,
+        conversion_gold_cost_per_unit: conversion_gold_cost,
         context_swap_option,
         graph_scroll_offset: ui_state
             .graph_scroll_offset
@@ -3960,11 +4573,11 @@ fn spawn_unit_upgrade_modal_sections(
     data: &GameData,
 ) {
     let budget_text = format!(
-        "Commander Level Budget: {}/{}  |  Locked by Roster: {}  |  Exp Budget Available: {:.1}",
+        "Commander Level Budget: {}/{}  |  Locked by Roster: {}  |  Treasury: {:.1} gold",
         panel_data.commander_level,
         panel_data.allowed_max_level,
         panel_data.locked_levels,
-        panel_data.current_xp
+        panel_data.current_gold
     );
     let tier_headers = [
         ("I", "Tier 0"),
@@ -4296,6 +4909,66 @@ fn spawn_unit_upgrade_modal_sections(
                 for entry in &panel_data.roster_entries {
                     let is_selected = entry.kind == panel_data.selected_source;
                     let base_label = unit_kind_label(entry.kind);
+                    let source_tier = friendly_tier_for_kind(entry.kind).unwrap_or(0);
+                    let options_for_target_tier = |from_kind: UnitKind, target_tier: u8| {
+                        panel_data
+                            .promotions
+                            .iter()
+                            .filter(|option| {
+                                option.from_kind == from_kind
+                                    && friendly_tier_for_kind(option.to_kind) == Some(target_tier)
+                            })
+                            .cloned()
+                            .collect::<Vec<_>>()
+                    };
+                    let tier1_options = if source_tier == 0 {
+                        options_for_target_tier(entry.kind, 1)
+                    } else {
+                        Vec::new()
+                    };
+                    let tier1_option = tier1_options.first().cloned();
+                    let tier2_options = if source_tier == 1 {
+                        options_for_target_tier(entry.kind, 2)
+                    } else {
+                        tier1_options
+                            .iter()
+                            .flat_map(|tier1| options_for_target_tier(tier1.to_kind, 2))
+                            .collect::<Vec<_>>()
+                    };
+                    let mut tier3_options = if source_tier == 2 {
+                        options_for_target_tier(entry.kind, 3)
+                    } else {
+                        tier2_options
+                            .iter()
+                            .flat_map(|tier2| options_for_target_tier(tier2.to_kind, 3))
+                            .collect::<Vec<_>>()
+                    };
+                    tier3_options.sort_by(|a, b| {
+                        unit_kind_label(a.to_kind)
+                            .cmp(unit_kind_label(b.to_kind))
+                            .then_with(|| {
+                                unit_kind_label(a.from_kind).cmp(unit_kind_label(b.from_kind))
+                            })
+                    });
+                    tier3_options
+                        .dedup_by(|a, b| a.from_kind == b.from_kind && a.to_kind == b.to_kind);
+                    let mut tier4_options = if source_tier == 3 {
+                        options_for_target_tier(entry.kind, 4)
+                    } else {
+                        tier3_options
+                            .iter()
+                            .flat_map(|tier3| options_for_target_tier(tier3.to_kind, 4))
+                            .collect::<Vec<_>>()
+                    };
+                    tier4_options.sort_by(|a, b| {
+                        unit_kind_label(a.to_kind)
+                            .cmp(unit_kind_label(b.to_kind))
+                            .then_with(|| {
+                                unit_kind_label(a.from_kind).cmp(unit_kind_label(b.from_kind))
+                            })
+                    });
+                    tier4_options
+                        .dedup_by(|a, b| a.from_kind == b.from_kind && a.to_kind == b.to_kind);
                     scroll_root
                         .spawn((
                             UnitUpgradeGraphContent,
@@ -4362,7 +5035,7 @@ fn spawn_unit_upgrade_modal_sections(
                                         tooltip: unit_box_tooltip(
                                             entry.kind,
                                             data,
-                                            Some(panel_data.conversion_xp_cost_per_unit),
+                                            Some(panel_data.conversion_gold_cost_per_unit),
                                         ),
                                     },
                                 ))
@@ -4394,7 +5067,80 @@ fn spawn_unit_upgrade_modal_sections(
                                 ..default()
                             });
 
-                            for tier in 1..=5 {
+                            if let Some(promotion) = tier1_option {
+                                let tier1_unlocked =
+                                    promotion.unlock_tier <= panel_data.unlocked_tier;
+                                let tier1_enabled = tier1_unlocked && promotion.max_affordable > 0;
+                                let tier1_label = unit_kind_label(promotion.to_kind);
+                                row.spawn(NodeBundle {
+                                    style: Style {
+                                        width: Val::Px(UNIT_UPGRADE_GRAPH_CELL_WIDTH),
+                                        min_height: Val::Px(62.0),
+                                        border: UiRect::all(Val::Px(1.0)),
+                                        padding: UiRect::all(Val::Px(4.0)),
+                                        justify_content: JustifyContent::Center,
+                                        align_items: AlignItems::Center,
+                                        ..default()
+                                    },
+                                    background_color: BackgroundColor(Color::srgba(
+                                        0.05, 0.05, 0.05, 0.58,
+                                    )),
+                                    border_color: BorderColor(if tier1_enabled {
+                                        Color::srgba(0.78, 0.72, 0.58, 0.24)
+                                    } else {
+                                        Color::srgba(0.78, 0.72, 0.58, 0.2)
+                                    }),
+                                    ..default()
+                                })
+                                .with_children(|cell| {
+                                    cell.spawn((
+                                        ButtonBundle {
+                                            style: Style {
+                                                width: Val::Percent(100.0),
+                                                min_height: Val::Px(48.0),
+                                                border: UiRect::all(Val::Px(1.0)),
+                                                justify_content: JustifyContent::Center,
+                                                align_items: AlignItems::Center,
+                                                padding: UiRect::axes(Val::Px(6.0), Val::Px(4.0)),
+                                                ..default()
+                                            },
+                                            background_color: BackgroundColor(Color::srgba(
+                                                0.07, 0.07, 0.07, 0.6,
+                                            )),
+                                            border_color: BorderColor(if tier1_enabled {
+                                                Color::srgba(0.78, 0.72, 0.58, 0.24)
+                                            } else {
+                                                MENU_BUTTON_BORDER_DISABLED
+                                            }),
+                                            ..default()
+                                        },
+                                        UnitUpgradePromoteButton {
+                                            from: promotion.from_kind,
+                                            to: promotion.to_kind,
+                                        },
+                                        UnitUpgradeTooltipTarget {
+                                            tooltip: promotion_tooltip(
+                                                &promotion,
+                                                panel_data.unlocked_tier,
+                                            ),
+                                        },
+                                    ))
+                                    .with_children(|button| {
+                                        button.spawn(TextBundle::from_section(
+                                            tier1_label,
+                                            TextStyle {
+                                                font_size: 12.0,
+                                                color: if tier1_enabled {
+                                                    HUD_TEXT_COLOR
+                                                } else {
+                                                    MENU_BUTTON_TEXT_DISABLED
+                                                },
+                                                ..default()
+                                            },
+                                        ));
+                                    });
+                                });
+                            } else {
                                 row.spawn(NodeBundle {
                                     style: Style {
                                         width: Val::Px(UNIT_UPGRADE_GRAPH_CELL_WIDTH),
@@ -4430,7 +5176,7 @@ fn spawn_unit_upgrade_modal_sections(
                                             ..default()
                                         },
                                         UnitUpgradeTooltipTarget {
-                                            tooltip: tier_placeholder_tooltip(entry.kind, tier),
+                                            tooltip: tier_placeholder_tooltip(entry.kind, 1),
                                         },
                                     ))
                                     .with_children(|button| {
@@ -4443,6 +5189,304 @@ fn spawn_unit_upgrade_modal_sections(
                                             },
                                         ));
                                     });
+                                });
+                            }
+
+                            row.spawn(NodeBundle {
+                                style: Style {
+                                    width: Val::Px(UNIT_UPGRADE_GRAPH_CONNECTOR_WIDTH),
+                                    height: Val::Px(2.0),
+                                    ..default()
+                                },
+                                background_color: BackgroundColor(Color::srgba(
+                                    0.78, 0.72, 0.58, 0.18,
+                                )),
+                                ..default()
+                            });
+
+                            for tier in 2..=5 {
+                                row.spawn(NodeBundle {
+                                    style: Style {
+                                        width: Val::Px(UNIT_UPGRADE_GRAPH_CELL_WIDTH),
+                                        min_height: Val::Px(62.0),
+                                        border: UiRect::all(Val::Px(1.0)),
+                                        padding: UiRect::all(Val::Px(4.0)),
+                                        justify_content: JustifyContent::Center,
+                                        align_items: AlignItems::Center,
+                                        ..default()
+                                    },
+                                    background_color: BackgroundColor(Color::srgba(
+                                        0.05, 0.05, 0.05, 0.58,
+                                    )),
+                                    border_color: BorderColor(Color::srgba(0.78, 0.72, 0.58, 0.22)),
+                                    ..default()
+                                })
+                                .with_children(|cell| {
+                                    if tier == 2 && !tier2_options.is_empty() {
+                                        cell.spawn(NodeBundle {
+                                            style: Style {
+                                                width: Val::Percent(100.0),
+                                                flex_direction: FlexDirection::Column,
+                                                row_gap: Val::Px(2.0),
+                                                ..default()
+                                            },
+                                            background_color: BackgroundColor(Color::NONE),
+                                            ..default()
+                                        })
+                                        .with_children(
+                                            |list| {
+                                                for promotion in &tier2_options {
+                                                    let tier2_unlocked = promotion.unlock_tier
+                                                        <= panel_data.unlocked_tier;
+                                                    let tier2_enabled = tier2_unlocked
+                                                        && promotion.max_affordable > 0;
+                                                    list.spawn((
+                                                        ButtonBundle {
+                                                            style: Style {
+                                                                width: Val::Percent(100.0),
+                                                                min_height: Val::Px(18.0),
+                                                                border: UiRect::all(Val::Px(1.0)),
+                                                                justify_content:
+                                                                    JustifyContent::Center,
+                                                                align_items: AlignItems::Center,
+                                                                padding: UiRect::axes(
+                                                                    Val::Px(4.0),
+                                                                    Val::Px(2.0),
+                                                                ),
+                                                                ..default()
+                                                            },
+                                                            background_color: BackgroundColor(
+                                                                Color::srgba(0.07, 0.07, 0.07, 0.6),
+                                                            ),
+                                                            border_color: BorderColor(
+                                                                if tier2_enabled {
+                                                                    Color::srgba(
+                                                                        0.78, 0.72, 0.58, 0.24,
+                                                                    )
+                                                                } else {
+                                                                    MENU_BUTTON_BORDER_DISABLED
+                                                                },
+                                                            ),
+                                                            ..default()
+                                                        },
+                                                        UnitUpgradePromoteButton {
+                                                            from: promotion.from_kind,
+                                                            to: promotion.to_kind,
+                                                        },
+                                                        UnitUpgradeTooltipTarget {
+                                                            tooltip: promotion_tooltip(
+                                                                promotion,
+                                                                panel_data.unlocked_tier,
+                                                            ),
+                                                        },
+                                                    ))
+                                                    .with_children(|button| {
+                                                        button.spawn(TextBundle::from_section(
+                                                            unit_kind_label(promotion.to_kind),
+                                                            TextStyle {
+                                                                font_size: 10.0,
+                                                                color: if tier2_enabled {
+                                                                    HUD_TEXT_COLOR
+                                                                } else {
+                                                                    MENU_BUTTON_TEXT_DISABLED
+                                                                },
+                                                                ..default()
+                                                            },
+                                                        ));
+                                                    });
+                                                }
+                                            },
+                                        );
+                                    } else if tier == 3 && !tier3_options.is_empty() {
+                                        cell.spawn(NodeBundle {
+                                            style: Style {
+                                                width: Val::Percent(100.0),
+                                                flex_direction: FlexDirection::Column,
+                                                row_gap: Val::Px(2.0),
+                                                ..default()
+                                            },
+                                            background_color: BackgroundColor(Color::NONE),
+                                            ..default()
+                                        })
+                                        .with_children(
+                                            |list| {
+                                                for promotion in &tier3_options {
+                                                    let tier3_unlocked = promotion.unlock_tier
+                                                        <= panel_data.unlocked_tier;
+                                                    let tier3_enabled = tier3_unlocked
+                                                        && promotion.max_affordable > 0;
+                                                    list.spawn((
+                                                        ButtonBundle {
+                                                            style: Style {
+                                                                width: Val::Percent(100.0),
+                                                                min_height: Val::Px(18.0),
+                                                                border: UiRect::all(Val::Px(1.0)),
+                                                                justify_content:
+                                                                    JustifyContent::Center,
+                                                                align_items: AlignItems::Center,
+                                                                padding: UiRect::axes(
+                                                                    Val::Px(4.0),
+                                                                    Val::Px(2.0),
+                                                                ),
+                                                                ..default()
+                                                            },
+                                                            background_color: BackgroundColor(
+                                                                Color::srgba(0.07, 0.07, 0.07, 0.6),
+                                                            ),
+                                                            border_color: BorderColor(
+                                                                if tier3_enabled {
+                                                                    Color::srgba(
+                                                                        0.78, 0.72, 0.58, 0.24,
+                                                                    )
+                                                                } else {
+                                                                    MENU_BUTTON_BORDER_DISABLED
+                                                                },
+                                                            ),
+                                                            ..default()
+                                                        },
+                                                        UnitUpgradePromoteButton {
+                                                            from: promotion.from_kind,
+                                                            to: promotion.to_kind,
+                                                        },
+                                                        UnitUpgradeTooltipTarget {
+                                                            tooltip: promotion_tooltip(
+                                                                promotion,
+                                                                panel_data.unlocked_tier,
+                                                            ),
+                                                        },
+                                                    ))
+                                                    .with_children(|button| {
+                                                        button.spawn(TextBundle::from_section(
+                                                            unit_kind_label(promotion.to_kind),
+                                                            TextStyle {
+                                                                font_size: 10.0,
+                                                                color: if tier3_enabled {
+                                                                    HUD_TEXT_COLOR
+                                                                } else {
+                                                                    MENU_BUTTON_TEXT_DISABLED
+                                                                },
+                                                                ..default()
+                                                            },
+                                                        ));
+                                                    });
+                                                }
+                                            },
+                                        );
+                                    } else if tier == 4 && !tier4_options.is_empty() {
+                                        cell.spawn(NodeBundle {
+                                            style: Style {
+                                                width: Val::Percent(100.0),
+                                                flex_direction: FlexDirection::Column,
+                                                row_gap: Val::Px(2.0),
+                                                ..default()
+                                            },
+                                            background_color: BackgroundColor(Color::NONE),
+                                            ..default()
+                                        })
+                                        .with_children(
+                                            |list| {
+                                                for promotion in &tier4_options {
+                                                    let tier4_unlocked = promotion.unlock_tier
+                                                        <= panel_data.unlocked_tier;
+                                                    let tier4_enabled = tier4_unlocked
+                                                        && promotion.max_affordable > 0;
+                                                    list.spawn((
+                                                        ButtonBundle {
+                                                            style: Style {
+                                                                width: Val::Percent(100.0),
+                                                                min_height: Val::Px(18.0),
+                                                                border: UiRect::all(Val::Px(1.0)),
+                                                                justify_content:
+                                                                    JustifyContent::Center,
+                                                                align_items: AlignItems::Center,
+                                                                padding: UiRect::axes(
+                                                                    Val::Px(4.0),
+                                                                    Val::Px(2.0),
+                                                                ),
+                                                                ..default()
+                                                            },
+                                                            background_color: BackgroundColor(
+                                                                Color::srgba(0.07, 0.07, 0.07, 0.6),
+                                                            ),
+                                                            border_color: BorderColor(
+                                                                if tier4_enabled {
+                                                                    Color::srgba(
+                                                                        0.78, 0.72, 0.58, 0.24,
+                                                                    )
+                                                                } else {
+                                                                    MENU_BUTTON_BORDER_DISABLED
+                                                                },
+                                                            ),
+                                                            ..default()
+                                                        },
+                                                        UnitUpgradePromoteButton {
+                                                            from: promotion.from_kind,
+                                                            to: promotion.to_kind,
+                                                        },
+                                                        UnitUpgradeTooltipTarget {
+                                                            tooltip: promotion_tooltip(
+                                                                promotion,
+                                                                panel_data.unlocked_tier,
+                                                            ),
+                                                        },
+                                                    ))
+                                                    .with_children(|button| {
+                                                        button.spawn(TextBundle::from_section(
+                                                            unit_kind_label(promotion.to_kind),
+                                                            TextStyle {
+                                                                font_size: 10.0,
+                                                                color: if tier4_enabled {
+                                                                    HUD_TEXT_COLOR
+                                                                } else {
+                                                                    MENU_BUTTON_TEXT_DISABLED
+                                                                },
+                                                                ..default()
+                                                            },
+                                                        ));
+                                                    });
+                                                }
+                                            },
+                                        );
+                                    } else {
+                                        cell.spawn((
+                                            ButtonBundle {
+                                                style: Style {
+                                                    width: Val::Percent(100.0),
+                                                    min_height: Val::Px(48.0),
+                                                    border: UiRect::all(Val::Px(1.0)),
+                                                    justify_content: JustifyContent::Center,
+                                                    align_items: AlignItems::Center,
+                                                    padding: UiRect::axes(
+                                                        Val::Px(6.0),
+                                                        Val::Px(4.0),
+                                                    ),
+                                                    ..default()
+                                                },
+                                                background_color: BackgroundColor(Color::srgba(
+                                                    0.07, 0.07, 0.07, 0.6,
+                                                )),
+                                                border_color: BorderColor(
+                                                    MENU_BUTTON_BORDER_DISABLED,
+                                                ),
+                                                ..default()
+                                            },
+                                            UnitUpgradeTooltipTarget {
+                                                tooltip: tier_placeholder_tooltip(entry.kind, tier),
+                                            },
+                                        ))
+                                        .with_children(
+                                            |button| {
+                                                button.spawn(TextBundle::from_section(
+                                                    base_label,
+                                                    TextStyle {
+                                                        font_size: 12.0,
+                                                        color: MENU_BUTTON_TEXT_DISABLED,
+                                                        ..default()
+                                                    },
+                                                ));
+                                            },
+                                        );
+                                    }
                                 });
                                 if tier < 5 {
                                     row.spawn(NodeBundle {
@@ -4524,14 +5568,7 @@ fn spawn_unit_upgrade_modal_sections(
 }
 
 fn roster_count_for_kind(economy: &RosterEconomy, kind: UnitKind) -> u32 {
-    match kind {
-        UnitKind::ChristianPeasantInfantry | UnitKind::MuslimPeasantInfantry => {
-            economy.infantry_count
-        }
-        UnitKind::ChristianPeasantArcher | UnitKind::MuslimPeasantArcher => economy.archer_count,
-        UnitKind::ChristianPeasantPriest | UnitKind::MuslimPeasantPriest => economy.priest_count,
-        _ => 0,
-    }
+    economy.kind_counts.get(&kind).copied().unwrap_or(0)
 }
 
 fn roster_upgrade_kinds_for_faction(faction: PlayerFaction) -> [UnitKind; 3] {
@@ -4606,12 +5643,47 @@ fn resolve_selected_source(
         .unwrap_or(fallback)
 }
 
-fn max_affordable_tier0_conversions(current_xp: f32, cost_per_unit: f32, source_count: u32) -> u32 {
+fn max_affordable_tier0_conversions(
+    current_gold: f32,
+    cost_per_unit: f32,
+    source_count: u32,
+) -> u32 {
     if source_count == 0 || cost_per_unit <= 0.0 {
         return 0;
     }
-    let affordable_by_xp = (current_xp / cost_per_unit).floor().max(0.0) as u32;
-    affordable_by_xp.min(source_count)
+    let affordable_by_gold = (current_gold / cost_per_unit).floor().max(0.0) as u32;
+    affordable_by_gold.min(source_count)
+}
+
+fn max_affordable_promotions(
+    source_count: u32,
+    current_gold: f32,
+    locked_levels: u32,
+    commander_level: u32,
+    step_cost: u32,
+    target_tier: u8,
+) -> u32 {
+    if source_count == 0 || step_cost == 0 {
+        return 0;
+    }
+    let gold_cost = promotion_gold_cost(step_cost, target_tier);
+    if gold_cost <= 0.0 {
+        return 0;
+    }
+
+    let mut affordable = 0u32;
+    for candidate in 1..=source_count {
+        let predicted_locked = locked_levels.saturating_add(step_cost.saturating_mul(candidate));
+        if level_cap_from_locked_budget(predicted_locked) < commander_level {
+            break;
+        }
+        let required_gold = gold_cost * candidate as f32;
+        if current_gold + 0.001 < required_gold {
+            break;
+        }
+        affordable = candidate;
+    }
+    affordable
 }
 
 fn unit_upgrade_graph_content_width() -> f32 {
@@ -5035,6 +6107,33 @@ fn can_select_match_setup_faction(faction: PlayerFaction) -> bool {
     matches!(faction, PlayerFaction::Christian | PlayerFaction::Muslim)
 }
 
+fn can_select_match_setup_difficulty(difficulty: GameDifficulty) -> bool {
+    matches!(
+        difficulty,
+        GameDifficulty::Recruit
+            | GameDifficulty::Experienced
+            | GameDifficulty::AloneAgainstTheInfidels
+    )
+}
+
+fn ensure_valid_match_setup_commander_selection(
+    data: &GameData,
+    setup_selection: &mut MatchSetupSelection,
+) {
+    if data
+        .units
+        .commander_option_for_faction_and_id(
+            setup_selection.faction,
+            setup_selection.commander_id.as_str(),
+        )
+        .is_none()
+    {
+        setup_selection.commander_id =
+            crate::data::UnitsConfigFile::default_commander_id_for_faction(setup_selection.faction)
+                .to_string();
+    }
+}
+
 fn map_allows_faction(map: &crate::data::MapDefinitionConfig, faction: PlayerFaction) -> bool {
     map.allowed_factions
         .iter()
@@ -5043,6 +6142,19 @@ fn map_allows_faction(map: &crate::data::MapDefinitionConfig, faction: PlayerFac
 
 fn match_setup_can_start(data: &GameData, setup_selection: &MatchSetupSelection) -> bool {
     if !can_select_match_setup_faction(setup_selection.faction) {
+        return false;
+    }
+    if !can_select_match_setup_difficulty(setup_selection.difficulty) {
+        return false;
+    }
+    if data
+        .units
+        .commander_option_for_faction_and_id(
+            setup_selection.faction,
+            setup_selection.commander_id.as_str(),
+        )
+        .is_none()
+    {
         return false;
     }
     let Some(map) = data.map.find_map(&setup_selection.map_id) else {
@@ -5063,6 +6175,7 @@ fn handle_match_setup_faction_buttons(
         (Changed<Interaction>, With<Button>),
     >,
     mut text_query: Query<&mut Text>,
+    data: Res<GameData>,
     mut setup_selection: ResMut<MatchSetupSelection>,
 ) {
     for (interaction, faction_button, disabled, children) in &mut buttons {
@@ -5089,6 +6202,50 @@ fn handle_match_setup_faction_buttons(
             continue;
         }
         setup_selection.faction = faction_button.faction;
+        ensure_valid_match_setup_commander_selection(&data, &mut setup_selection);
+    }
+}
+
+#[allow(clippy::type_complexity)]
+fn handle_match_setup_difficulty_buttons(
+    mut buttons: Query<
+        (&Interaction, &MatchSetupDifficultyButton),
+        (Changed<Interaction>, With<Button>),
+    >,
+    mut setup_selection: ResMut<MatchSetupSelection>,
+) {
+    for (interaction, difficulty_button) in &mut buttons {
+        if *interaction != Interaction::Pressed {
+            continue;
+        }
+        if !can_select_match_setup_difficulty(difficulty_button.difficulty) {
+            continue;
+        }
+        setup_selection.difficulty = difficulty_button.difficulty;
+        info!(
+            "Selected difficulty '{}'.",
+            setup_selection.difficulty.label()
+        );
+    }
+}
+
+#[allow(clippy::type_complexity)]
+fn handle_match_setup_commander_buttons(
+    mut buttons: Query<
+        (&Interaction, &MatchSetupCommanderButton),
+        (Changed<Interaction>, With<Button>),
+    >,
+    mut setup_selection: ResMut<MatchSetupSelection>,
+) {
+    for (interaction, commander_button) in &mut buttons {
+        if *interaction != Interaction::Pressed {
+            continue;
+        }
+        if setup_selection.faction != commander_button.faction {
+            continue;
+        }
+        setup_selection.commander_id = commander_button.commander_id.clone();
+        info!("Selected commander '{}'.", setup_selection.commander_id);
     }
 }
 
@@ -5225,6 +6382,132 @@ fn refresh_match_setup_faction_button_visuals(
                 MENU_BUTTON_TEXT_NORMAL
             };
         }
+    }
+}
+
+#[allow(clippy::type_complexity)]
+fn refresh_match_setup_difficulty_button_visuals(
+    setup_selection: Res<MatchSetupSelection>,
+    mut difficulty_buttons: Query<
+        (
+            &Interaction,
+            &MatchSetupDifficultyButton,
+            &Children,
+            &mut BorderColor,
+            &mut BackgroundColor,
+        ),
+        (With<Button>, With<MatchSetupDifficultyButton>),
+    >,
+    mut text_query: Query<&mut Text>,
+) {
+    for (interaction, difficulty_button, children, mut border, mut background) in
+        &mut difficulty_buttons
+    {
+        let selected = setup_selection.difficulty == difficulty_button.difficulty;
+        let hovered = matches!(*interaction, Interaction::Hovered | Interaction::Pressed);
+        *border = BorderColor(if selected || hovered {
+            MENU_BUTTON_BORDER_HOVERED
+        } else {
+            Color::NONE
+        });
+        *background = BackgroundColor(Color::NONE);
+        if let Some(&text_entity) = children.first()
+            && let Ok(mut text) = text_query.get_mut(text_entity)
+        {
+            text.sections[0].style.color = if selected || hovered {
+                MENU_BUTTON_TEXT_HOVERED
+            } else {
+                MENU_BUTTON_TEXT_NORMAL
+            };
+        }
+    }
+}
+
+#[allow(clippy::type_complexity)]
+fn refresh_match_setup_commander_button_visuals(
+    setup_selection: Res<MatchSetupSelection>,
+    mut commander_buttons: Query<
+        (
+            &Interaction,
+            &MatchSetupCommanderButton,
+            &Children,
+            &mut Style,
+            &mut BorderColor,
+            &mut BackgroundColor,
+        ),
+        (With<Button>, With<MatchSetupCommanderButton>),
+    >,
+    mut text_query: Query<&mut Text>,
+) {
+    for (interaction, commander_button, children, mut style, mut border, mut background) in
+        &mut commander_buttons
+    {
+        let visible = setup_selection.faction == commander_button.faction;
+        style.display = if visible {
+            Display::Flex
+        } else {
+            Display::None
+        };
+        let selected =
+            visible && setup_selection.commander_id.as_str() == commander_button.commander_id;
+        let hovered =
+            visible && matches!(*interaction, Interaction::Hovered | Interaction::Pressed);
+        *border = BorderColor(if selected || hovered {
+            MENU_BUTTON_BORDER_HOVERED
+        } else {
+            Color::NONE
+        });
+        *background = BackgroundColor(Color::NONE);
+        if let Some(&text_entity) = children.first()
+            && let Ok(mut text) = text_query.get_mut(text_entity)
+        {
+            text.sections[0].style.color = if selected || hovered {
+                MENU_BUTTON_TEXT_HOVERED
+            } else {
+                MENU_BUTTON_TEXT_NORMAL
+            };
+        }
+    }
+}
+
+fn update_match_setup_commander_tooltip(
+    setup_selection: Res<MatchSetupSelection>,
+    commander_buttons: Query<(&Interaction, &MatchSetupCommanderButton)>,
+    primary_window: Query<&Window, With<PrimaryWindow>>,
+    mut tooltip_root: Query<&mut Style, With<MatchSetupCommanderTooltipRoot>>,
+    mut tooltip_text: Query<&mut Text, With<MatchSetupCommanderTooltipText>>,
+) {
+    let hovered_commander = commander_buttons.iter().find_map(|(interaction, button)| {
+        if button.faction != setup_selection.faction {
+            return None;
+        }
+        matches!(*interaction, Interaction::Hovered | Interaction::Pressed)
+            .then_some(button.tooltip.as_str())
+    });
+    let Ok(window) = primary_window.get_single() else {
+        return;
+    };
+    let cursor = window
+        .cursor_position()
+        .unwrap_or(Vec2::new(window.width() * 0.5, window.height() * 0.5));
+    let tooltip_position = inventory_tooltip_screen_position(
+        cursor,
+        Vec2::new(window.width(), window.height()),
+        Vec2::new(420.0, 220.0),
+    );
+    for mut style in &mut tooltip_root {
+        let show = hovered_commander.is_some();
+        style.display = if show { Display::Flex } else { Display::None };
+        style.left = Val::Px(tooltip_position.x);
+        style.top = Val::Px(tooltip_position.y);
+    }
+    for mut text in &mut tooltip_text {
+        text.sections[0].value = hovered_commander.unwrap_or("").to_string();
+        text.sections[0].style.color = if hovered_commander.is_some() {
+            HUD_TEXT_COLOR
+        } else {
+            MENU_BUTTON_TEXT_DISABLED
+        };
     }
 }
 
@@ -5656,6 +6939,7 @@ fn handle_unit_upgrade_buttons(
             With<UnitUpgradeSourceButton>,
             Without<UnitUpgradeSwapTargetCycleButton>,
             Without<UnitUpgradeConvertButton>,
+            Without<UnitUpgradePromoteButton>,
             Without<UnitUpgradeGraphScrollButton>,
         ),
     >,
@@ -5673,6 +6957,7 @@ fn handle_unit_upgrade_buttons(
             With<UnitUpgradeSwapTargetCycleButton>,
             Without<UnitUpgradeSourceButton>,
             Without<UnitUpgradeConvertButton>,
+            Without<UnitUpgradePromoteButton>,
             Without<UnitUpgradeGraphScrollButton>,
         ),
     >,
@@ -5689,6 +6974,26 @@ fn handle_unit_upgrade_buttons(
             With<Button>,
             With<UnitUpgradeConvertButton>,
             Without<UnitUpgradeSourceButton>,
+            Without<UnitUpgradeSwapTargetCycleButton>,
+            Without<UnitUpgradePromoteButton>,
+            Without<UnitUpgradeGraphScrollButton>,
+        ),
+    >,
+    mut promote_buttons: Query<
+        (
+            &Interaction,
+            &UnitUpgradePromoteButton,
+            &Children,
+            &mut BorderColor,
+            &mut BackgroundColor,
+        ),
+        (
+            Changed<Interaction>,
+            With<Button>,
+            With<UnitUpgradePromoteButton>,
+            Without<UnitUpgradeSourceButton>,
+            Without<UnitUpgradeSwapTargetCycleButton>,
+            Without<UnitUpgradeConvertButton>,
             Without<UnitUpgradeGraphScrollButton>,
         ),
     >,
@@ -5700,7 +7005,14 @@ fn handle_unit_upgrade_buttons(
             &mut BorderColor,
             &mut BackgroundColor,
         ),
-        (Changed<Interaction>, With<Button>),
+        (
+            Changed<Interaction>,
+            With<Button>,
+            Without<UnitUpgradeSourceButton>,
+            Without<UnitUpgradeSwapTargetCycleButton>,
+            Without<UnitUpgradeConvertButton>,
+            Without<UnitUpgradePromoteButton>,
+        ),
     >,
     mut graph_content: Query<
         &mut Style,
@@ -5718,10 +7030,7 @@ fn handle_unit_upgrade_buttons(
     >,
     mut text_query: Query<&mut Text>,
     mut ui_state: ResMut<UnitUpgradeUiState>,
-    economy: Res<RosterEconomy>,
-    progression: Res<Progression>,
-    mut economy_feedback: ResMut<RosterEconomyFeedback>,
-    mut convert_events: EventWriter<ConvertTierZeroUnitsEvent>,
+    mut runtime: UnitUpgradeRuntimeDeps,
 ) {
     if !matches!(
         *modal_state,
@@ -5823,10 +7132,10 @@ fn handle_unit_upgrade_buttons(
     for (interaction, button, children, mut border_color, mut background_color) in
         &mut convert_buttons
     {
-        let source_count = roster_count_for_kind(&economy, button.from);
-        let xp_cost = tier0_conversion_xp_cost(progression.next_level_xp);
+        let source_count = roster_count_for_kind(&runtime.economy, button.from);
+        let gold_cost = tier0_conversion_gold_cost();
         let max_affordable =
-            max_affordable_tier0_conversions(progression.xp, xp_cost, source_count);
+            max_affordable_tier0_conversions(runtime.progression.gold, gold_cost, source_count);
         let enabled = max_affordable > 0 && friendly_tier_for_kind(button.to) == Some(0);
 
         if let Some(&text_entity) = children.first()
@@ -5846,20 +7155,109 @@ fn handle_unit_upgrade_buttons(
         match *interaction {
             Interaction::Pressed => {
                 if enabled {
-                    convert_events.send(ConvertTierZeroUnitsEvent {
+                    runtime.convert_events.send(ConvertTierZeroUnitsEvent {
                         from_kind: button.from,
                         to_kind: button.to,
                         count: 1,
                     });
-                    economy_feedback.blocked_upgrade_reason = None;
+                    runtime.economy_feedback.blocked_upgrade_reason = None;
                     *border_color = BorderColor(MENU_BUTTON_BORDER_HOVERED);
                     *background_color = BackgroundColor(Color::srgba(0.11, 0.09, 0.08, 0.7));
                 } else {
-                    economy_feedback.blocked_upgrade_reason = Some(format!(
-                        "Tier-0 conversion blocked: requires {:.1} XP progress and at least one '{}' unit.",
-                        xp_cost,
+                    runtime.economy_feedback.blocked_upgrade_reason = Some(format!(
+                        "Tier-0 conversion blocked: requires {:.1} gold and at least one '{}' unit.",
+                        gold_cost,
                         unit_kind_label(button.from)
                     ));
+                    *border_color = BorderColor(MENU_BUTTON_BORDER_DISABLED);
+                    *background_color = BackgroundColor(Color::srgba(0.06, 0.055, 0.05, 0.64));
+                }
+            }
+            Interaction::Hovered => {
+                *border_color = BorderColor(if enabled {
+                    MENU_BUTTON_BORDER_HOVERED
+                } else {
+                    MENU_BUTTON_BORDER_DISABLED
+                });
+                *background_color = BackgroundColor(Color::srgba(0.1, 0.085, 0.075, 0.62));
+            }
+            Interaction::None => {
+                *border_color = BorderColor(if enabled {
+                    Color::srgba(0.78, 0.72, 0.58, 0.24)
+                } else {
+                    MENU_BUTTON_BORDER_DISABLED
+                });
+                *background_color = BackgroundColor(Color::srgba(0.08, 0.07, 0.06, 0.62));
+            }
+        }
+    }
+
+    for (interaction, button, children, mut border_color, mut background_color) in
+        &mut promote_buttons
+    {
+        let source_count = roster_count_for_kind(&runtime.economy, button.from);
+        let Some(step_cost) = promotion_step_cost(button.from, button.to) else {
+            continue;
+        };
+        let target_tier = friendly_tier_for_kind(button.to).unwrap_or(1);
+        let tier_unlocked = target_tier <= runtime.unlock_state.unlocked_tier;
+        let gold_cost = promotion_gold_cost(step_cost, target_tier);
+        let enough_gold = runtime.progression.gold + 0.001 >= gold_cost;
+        let next_locked = runtime.economy.locked_levels.saturating_add(step_cost);
+        let budget_ok =
+            level_cap_from_locked_budget(next_locked) >= runtime.progression.level.max(1);
+        let enabled = source_count > 0 && tier_unlocked && enough_gold && budget_ok;
+
+        if let Some(&text_entity) = children.first()
+            && let Ok(mut text) = text_query.get_mut(text_entity)
+        {
+            text.sections[0].style.color = if enabled {
+                if matches!(*interaction, Interaction::Hovered | Interaction::Pressed) {
+                    MENU_BUTTON_TEXT_HOVERED
+                } else {
+                    HUD_TEXT_COLOR
+                }
+            } else {
+                MENU_BUTTON_TEXT_DISABLED
+            };
+        }
+
+        match *interaction {
+            Interaction::Pressed => {
+                if enabled {
+                    runtime.promote_events.send(PromoteUnitsEvent {
+                        from_kind: button.from,
+                        to_kind: button.to,
+                        count: 1,
+                    });
+                    runtime.economy_feedback.blocked_upgrade_reason = None;
+                    *border_color = BorderColor(MENU_BUTTON_BORDER_HOVERED);
+                    *background_color = BackgroundColor(Color::srgba(0.11, 0.09, 0.08, 0.7));
+                } else {
+                    let reason = if source_count == 0 {
+                        format!(
+                            "Promotion blocked: no '{}' units available.",
+                            unit_kind_label(button.from)
+                        )
+                    } else if !tier_unlocked {
+                        let unlock_wave = unlock_boss_wave_for_tier(target_tier).unwrap_or(10);
+                        format!(
+                            "Promotion blocked: tier {} unlocks after defeating major army wave {}.",
+                            target_tier, unlock_wave
+                        )
+                    } else if !enough_gold {
+                        format!(
+                            "Promotion blocked: requires {:.1} gold, current treasury is {:.1}.",
+                            gold_cost, runtime.progression.gold
+                        )
+                    } else {
+                        format!(
+                            "Promotion blocked: '{}' -> '{}' would exceed level budget.",
+                            unit_kind_label(button.from),
+                            unit_kind_label(button.to)
+                        )
+                    };
+                    runtime.economy_feedback.blocked_upgrade_reason = Some(reason);
                     *border_color = BorderColor(MENU_BUTTON_BORDER_DISABLED);
                     *background_color = BackgroundColor(Color::srgba(0.06, 0.055, 0.05, 0.64));
                 }
@@ -5996,6 +7394,7 @@ fn handle_inventory_slot_buttons(
     >,
     mut slot_hints: Query<&mut Style, (With<InventorySlotHint>, Without<InventorySlotIcon>)>,
     mouse_buttons: Option<Res<ButtonInput<MouseButton>>>,
+    primary_window: Query<&Window, With<PrimaryWindow>>,
     time: Res<Time>,
     art: Res<ArtAssets>,
     modal_state: Res<RunModalState>,
@@ -6003,10 +7402,12 @@ fn handle_inventory_slot_buttons(
     mut chest: ResMut<EquipmentChestState>,
     mut selected_slot: ResMut<InventorySlotSelection>,
     mut double_click_state: ResMut<InventoryDoubleClickState>,
+    mut context_menu_state: ResMut<InventoryContextMenuState>,
 ) {
     let screen = match *modal_state {
         RunModalState::Open(screen @ (RunModalScreen::Inventory | RunModalScreen::Chest)) => screen,
         _ => {
+            context_menu_state.slot = None;
             return;
         }
     };
@@ -6026,6 +7427,13 @@ fn handle_inventory_slot_buttons(
         .as_deref()
         .map(|buttons| buttons.just_pressed(MouseButton::Left))
         .unwrap_or(false);
+    let right_pressed = mouse_buttons
+        .as_deref()
+        .map(|buttons| buttons.just_pressed(MouseButton::Right))
+        .unwrap_or(false);
+    if left_pressed {
+        context_menu_state.slot = None;
+    }
     if left_pressed && let Some(clicked_slot) = active_slot {
         let now = time.elapsed_seconds_f64();
         let is_double_click = double_click_state.last_slot == Some(clicked_slot)
@@ -6068,6 +7476,23 @@ fn handle_inventory_slot_buttons(
             }
         }
     }
+    if right_pressed {
+        let context_slot = active_slot
+            .filter(|slot| matches!(*slot, InventorySlotRef::Backpack(_)))
+            .filter(|slot| get_item_from_slot(&inventory, &chest, *slot).is_some());
+        if let Some(slot) = context_slot {
+            let position = primary_window
+                .get_single()
+                .ok()
+                .and_then(Window::cursor_position)
+                .unwrap_or(Vec2::new(0.0, 0.0));
+            context_menu_state.slot = Some(slot);
+            context_menu_state.position = position;
+            selected_slot.selected = Some(slot);
+        } else {
+            context_menu_state.slot = None;
+        }
+    }
 
     for (interaction, button, children, mut border_color, mut background_color) in &mut buttons {
         let maybe_item = get_item_from_slot(&inventory, &chest, button.slot);
@@ -6100,6 +7525,158 @@ fn handle_inventory_slot_buttons(
                 } else {
                     Display::Flex
                 };
+            }
+        }
+    }
+}
+
+fn update_inventory_context_menu_ui(
+    modal_state: Res<RunModalState>,
+    inventory: Res<InventoryState>,
+    chest: Res<EquipmentChestState>,
+    primary_window: Query<&Window, With<PrimaryWindow>>,
+    mut context_menu_state: ResMut<InventoryContextMenuState>,
+    mut menu_root: Query<&mut Style, With<InventoryContextMenuRoot>>,
+) {
+    let visible_screen = matches!(
+        *modal_state,
+        RunModalState::Open(RunModalScreen::Inventory | RunModalScreen::Chest)
+    );
+    let valid_slot = context_menu_state
+        .slot
+        .filter(|slot| matches!(*slot, InventorySlotRef::Backpack(_)))
+        .filter(|slot| get_item_from_slot(&inventory, &chest, *slot).is_some());
+    if valid_slot.is_none() {
+        context_menu_state.slot = None;
+    }
+    let show = visible_screen && valid_slot.is_some();
+    let Ok(window) = primary_window.get_single() else {
+        for mut style in &mut menu_root {
+            style.display = Display::None;
+        }
+        return;
+    };
+    let clamped_position = inventory_tooltip_screen_position(
+        context_menu_state.position,
+        Vec2::new(window.width(), window.height()),
+        Vec2::new(132.0, 84.0),
+    );
+    for mut style in &mut menu_root {
+        style.display = if show { Display::Flex } else { Display::None };
+        style.left = Val::Px(clamped_position.x);
+        style.top = Val::Px(clamped_position.y);
+    }
+}
+
+#[allow(clippy::type_complexity)]
+#[allow(clippy::too_many_arguments)]
+fn handle_inventory_context_menu_buttons(
+    modal_state: Res<RunModalState>,
+    mut buttons: Query<
+        (
+            &Interaction,
+            &InventoryContextMenuAction,
+            &Children,
+            &mut BorderColor,
+            &mut BackgroundColor,
+        ),
+        (Changed<Interaction>, With<Button>),
+    >,
+    mut text_query: Query<&mut Text>,
+    mut inventory: ResMut<InventoryState>,
+    mut chest: ResMut<EquipmentChestState>,
+    mut progression: ResMut<Progression>,
+    mut selected_slot: ResMut<InventorySlotSelection>,
+    mut context_menu_state: ResMut<InventoryContextMenuState>,
+) {
+    if !matches!(
+        *modal_state,
+        RunModalState::Open(RunModalScreen::Inventory | RunModalScreen::Chest)
+    ) {
+        return;
+    }
+    let context_slot = context_menu_state
+        .slot
+        .filter(|slot| matches!(*slot, InventorySlotRef::Backpack(_)));
+    let context_item = context_slot.and_then(|slot| get_item_from_slot(&inventory, &chest, slot));
+    let can_scrap = context_item.is_some();
+    let can_equip = context_item
+        .and_then(|item| first_compatible_empty_equipment_slot(&inventory, item))
+        .is_some();
+
+    for (interaction, action, children, mut border_color, mut background_color) in &mut buttons {
+        let enabled = match action {
+            InventoryContextMenuAction::Equip => can_equip,
+            InventoryContextMenuAction::Scrap => can_scrap,
+        };
+        if let Some(&text_entity) = children.first()
+            && let Ok(mut text) = text_query.get_mut(text_entity)
+        {
+            text.sections[0].style.color = if enabled {
+                match *interaction {
+                    Interaction::Hovered | Interaction::Pressed => MENU_BUTTON_TEXT_HOVERED,
+                    Interaction::None => HUD_TEXT_COLOR,
+                }
+            } else {
+                MENU_BUTTON_TEXT_DISABLED
+            };
+        }
+        match *interaction {
+            Interaction::Pressed => {
+                if enabled {
+                    if let Some(slot) = context_slot {
+                        match action {
+                            InventoryContextMenuAction::Equip => {
+                                if let Some(item) =
+                                    get_item_from_slot(&inventory, &chest, slot).cloned()
+                                    && let Some((unit_type, slot_index)) =
+                                        first_compatible_empty_equipment_slot(&inventory, &item)
+                                {
+                                    attempt_inventory_transfer(
+                                        &mut inventory,
+                                        &mut chest,
+                                        slot,
+                                        InventorySlotRef::Equipment {
+                                            unit_type,
+                                            slot_index,
+                                        },
+                                    );
+                                }
+                            }
+                            InventoryContextMenuAction::Scrap => {
+                                if let Some(item) =
+                                    take_item_from_slot(&mut inventory, &mut chest, slot)
+                                {
+                                    progression.gold =
+                                        (progression.gold + item_scrap_gold_value(&item)).max(0.0);
+                                }
+                            }
+                        }
+                    }
+                    context_menu_state.slot = None;
+                    selected_slot.selected = None;
+                    *border_color = BorderColor(MENU_BUTTON_BORDER_HOVERED);
+                    *background_color = BackgroundColor(Color::srgba(0.11, 0.09, 0.08, 0.72));
+                } else {
+                    *border_color = BorderColor(MENU_BUTTON_BORDER_DISABLED);
+                    *background_color = BackgroundColor(Color::srgba(0.06, 0.055, 0.05, 0.68));
+                }
+            }
+            Interaction::Hovered => {
+                *border_color = BorderColor(if enabled {
+                    MENU_BUTTON_BORDER_HOVERED
+                } else {
+                    MENU_BUTTON_BORDER_DISABLED
+                });
+                *background_color = BackgroundColor(Color::srgba(0.1, 0.085, 0.075, 0.68));
+            }
+            Interaction::None => {
+                *border_color = BorderColor(if enabled {
+                    Color::srgba(0.78, 0.72, 0.58, 0.24)
+                } else {
+                    MENU_BUTTON_BORDER_DISABLED
+                });
+                *background_color = BackgroundColor(Color::srgba(0.08, 0.07, 0.06, 0.72));
             }
         }
     }
@@ -6251,6 +7828,7 @@ fn clear_inventory_slot_selection(
     modal_state: Res<RunModalState>,
     mut selected_slot: ResMut<InventorySlotSelection>,
     mut double_click_state: ResMut<InventoryDoubleClickState>,
+    mut context_menu_state: ResMut<InventoryContextMenuState>,
 ) {
     if !modal_state.is_changed() {
         return;
@@ -6265,6 +7843,7 @@ fn clear_inventory_slot_selection(
     if !keep_selection {
         double_click_state.last_slot = None;
         double_click_state.last_click_time = f64::NEG_INFINITY;
+        context_menu_state.slot = None;
     }
 }
 
@@ -6610,8 +8189,7 @@ fn refresh_hud_snapshot(
         retinue_count: roster_economy.total_retinue_count as usize,
         level: progression.level,
         allowed_max_level: roster_economy.allowed_max_level,
-        xp: progression.xp,
-        next_level_xp: progression.next_level_xp,
+        gold: progression.gold,
         wave_index: waves.current_wave.saturating_sub(1) as usize,
         current_wave: displayed_wave_number(&waves),
         elapsed_seconds: run_session.survived_seconds,
@@ -6630,11 +8208,9 @@ fn update_in_run_hud(
         Query<&mut Text, With<EnemyCountHudText>>,
         Query<&mut Text, With<RetinueCountHudText>>,
         Query<&mut Text, With<CommanderLevelHudText>>,
+        Query<&mut Text, With<TreasuryHudText>>,
     )>,
-    mut bar_styles: ParamSet<(
-        Query<&mut Style, With<XpBarFill>>,
-        Query<&mut Style, With<MoraleBarFill>>,
-    )>,
+    mut morale_bar_styles: Query<&mut Style, With<MoraleBarFill>>,
 ) {
     if let Ok(mut text) = texts.p0().get_single_mut() {
         text.sections[0].value = format!("Wave {}", hud.current_wave);
@@ -6655,15 +8231,10 @@ fn update_in_run_hud(
             hud.progression_lock_reason.is_some(),
         );
     }
-    let xp_ratio = if hud.next_level_xp <= 0.0 {
-        0.0
-    } else {
-        (hud.xp / hud.next_level_xp).clamp(0.0, 1.0)
-    };
-    if let Ok(mut style) = bar_styles.p0().get_single_mut() {
-        style.width = Val::Percent(xp_ratio * 100.0);
+    if let Ok(mut text) = texts.p5().get_single_mut() {
+        text.sections[0].value = format!("Treasury: {:.1}g", hud.gold.max(0.0));
     }
-    if let Ok(mut style) = bar_styles.p1().get_single_mut() {
+    if let Ok(mut style) = morale_bar_styles.get_single_mut() {
         style.height = Val::Percent(hud.average_morale_ratio.clamp(0.0, 1.0) * 100.0);
     }
 }
@@ -6820,7 +8391,7 @@ fn update_minimap_hud(
     minimap_roots: Query<Entity, With<MinimapDotsRoot>>,
     units: Query<(&Unit, &Transform)>,
     rescuables: Query<&Transform, With<RescuableUnit>>,
-    exp_packs: Query<&Transform, With<ExpPack>>,
+    gold_packs: Query<&Transform, With<GoldPack>>,
     magnets: Query<(&Transform, &MagnetPickup)>,
     chests: Query<&Transform, With<EquipmentChestDrop>>,
 ) {
@@ -6844,7 +8415,7 @@ fn update_minimap_hud(
         let mut enemy_count = 0usize;
         let mut commander_seen = false;
         let mut rescuable_count = 0usize;
-        let mut exp_count = 0usize;
+        let mut gold_count = 0usize;
         let mut magnet_count = 0usize;
         let mut chest_count = 0usize;
         for (unit, transform) in &units {
@@ -6896,16 +8467,16 @@ fn update_minimap_hud(
             spawn_minimap_dot(parent, draw_pos, 2.7, MINIMAP_RESCUABLE_COLOR);
         }
 
-        for transform in &exp_packs {
-            if exp_count >= MINIMAP_MAX_EXP_BLIPS {
+        for transform in &gold_packs {
+            if gold_count >= MINIMAP_MAX_GOLD_BLIPS {
                 break;
             }
             let position = transform.translation.truncate();
             let Some(draw_pos) = world_to_minimap_pos(position, *bounds, MINIMAP_SIZE) else {
                 continue;
             };
-            exp_count += 1;
-            spawn_minimap_dot(parent, draw_pos, 2.1, MINIMAP_EXP_COLOR);
+            gold_count += 1;
+            spawn_minimap_dot(parent, draw_pos, 2.1, MINIMAP_GOLD_COLOR);
         }
 
         for (transform, magnet) in &magnets {
@@ -6985,7 +8556,6 @@ fn has_active_aura_footprint(buffs: &crate::model::GlobalBuffs) -> bool {
     buffs.authority_friendly_loss_resistance > 0.0
         || buffs.authority_enemy_morale_drain_per_sec > 0.0
         || buffs.hospitalier_hp_regen_per_sec > 0.0
-        || buffs.hospitalier_cohesion_regen_per_sec > 0.0
         || buffs.hospitalier_morale_regen_per_sec > 0.0
 }
 
@@ -7360,24 +8930,24 @@ mod tests {
     };
     use crate::map::MapBounds;
     use crate::model::{
-        DamageTextEvent, FrameRateCap, GlobalBuffs, PlayerFaction, RunModalAction, RunModalScreen,
-        Team, UnitKind,
+        DamageTextEvent, FrameRateCap, GameDifficulty, GlobalBuffs, PlayerFaction, RunModalAction,
+        RunModalScreen, Team, UnitKind,
     };
     use crate::ui::{
         FLOATING_DAMAGE_TEXT_CRIT_FONT_SIZE, FLOATING_DAMAGE_TEXT_FONT_SIZE, HudSnapshot,
         LEVEL_UP_TIER_LEGEND, MainMenuAction, MainMenuDispatch, UnitUpgradeUiState,
         active_inventory_slot_from_interactions, archive_entries_for_category,
-        build_skill_book_panel_data, build_stats_panel_data, can_select_match_setup_faction,
-        conditional_upgrade_hud_status_text, cycle_swap_target_for_source, displayed_wave_number,
-        find_skill_section, find_stats_row, floating_damage_text_alpha,
-        floating_damage_text_is_expired, floating_damage_text_spawn_data,
-        format_commander_level_text, format_elapsed_mm_ss, format_enemy_count,
-        format_retinue_count, frame_cap_label, health_bar_fill_width,
+        build_skill_book_panel_data, build_stats_panel_data, can_select_match_setup_difficulty,
+        can_select_match_setup_faction, conditional_upgrade_hud_status_text,
+        cycle_swap_target_for_source, displayed_wave_number, find_skill_section, find_stats_row,
+        floating_damage_text_alpha, floating_damage_text_is_expired,
+        floating_damage_text_spawn_data, format_commander_level_text, format_elapsed_mm_ss,
+        format_enemy_count, format_retinue_count, frame_cap_label, health_bar_fill_width,
         inventory_tooltip_screen_position, level_up_tier_border_color, main_menu_dispatch,
-        max_affordable_tier0_conversions, modal_action_for_utility_button, rescue_progress_ratio,
-        resolve_swap_target_for_source, responsive_ui_scale_for_resolution,
-        scroll_viewport_is_hovered, unit_box_tooltip, unit_upgrade_modal_should_refresh,
-        world_to_minimap_pos,
+        max_affordable_promotions, max_affordable_tier0_conversions,
+        modal_action_for_utility_button, rescue_progress_ratio, resolve_swap_target_for_source,
+        responsive_ui_scale_for_resolution, scroll_viewport_is_hovered, unit_box_tooltip,
+        unit_upgrade_modal_should_refresh, world_to_minimap_pos,
     };
     use crate::upgrades::{
         ConditionalUpgradeStatus, ConditionalUpgradeStatusEntry, OneTimeUpgradeTracker,
@@ -7392,8 +8962,7 @@ mod tests {
             retinue_count: 4,
             level: 2,
             allowed_max_level: 197,
-            xp: 12.0,
-            next_level_xp: 45.0,
+            gold: 12.0,
             wave_index: 2,
             current_wave: 2,
             elapsed_seconds: 61.0,
@@ -7609,10 +9178,13 @@ mod tests {
 
     #[test]
     fn unit_upgrade_modal_refresh_only_tracks_structural_inputs() {
-        assert!(!unit_upgrade_modal_should_refresh(false, false, false));
-        assert!(unit_upgrade_modal_should_refresh(true, false, false));
-        assert!(unit_upgrade_modal_should_refresh(false, true, false));
-        assert!(unit_upgrade_modal_should_refresh(false, false, true));
+        assert!(!unit_upgrade_modal_should_refresh(
+            false, false, false, false
+        ));
+        assert!(unit_upgrade_modal_should_refresh(true, false, false, false));
+        assert!(unit_upgrade_modal_should_refresh(false, true, false, false));
+        assert!(unit_upgrade_modal_should_refresh(false, false, true, false));
+        assert!(unit_upgrade_modal_should_refresh(false, false, false, true));
     }
 
     #[test]
@@ -7641,11 +9213,19 @@ mod tests {
     }
 
     #[test]
-    fn max_affordable_tier0_conversions_respects_xp_and_source_counts() {
+    fn max_affordable_tier0_conversions_respects_gold_and_source_counts() {
         assert_eq!(max_affordable_tier0_conversions(0.0, 10.0, 5), 0);
         assert_eq!(max_affordable_tier0_conversions(9.9, 10.0, 5), 0);
         assert_eq!(max_affordable_tier0_conversions(10.0, 10.0, 5), 1);
         assert_eq!(max_affordable_tier0_conversions(48.0, 10.0, 3), 3);
+    }
+
+    #[test]
+    fn max_affordable_promotions_respects_gold_and_budget() {
+        assert_eq!(max_affordable_promotions(0, 500.0, 0, 20, 1, 1), 0);
+        assert_eq!(max_affordable_promotions(3, 40.0, 0, 20, 1, 1), 0);
+        assert_eq!(max_affordable_promotions(3, 300.0, 80, 20, 1, 1), 0);
+        assert_eq!(max_affordable_promotions(3, 300.0, 0, 20, 1, 1), 3);
     }
 
     #[test]
@@ -7744,6 +9324,17 @@ mod tests {
     }
 
     #[test]
+    fn all_match_setup_difficulties_are_selectable() {
+        assert!(can_select_match_setup_difficulty(GameDifficulty::Recruit));
+        assert!(can_select_match_setup_difficulty(
+            GameDifficulty::Experienced
+        ));
+        assert!(can_select_match_setup_difficulty(
+            GameDifficulty::AloneAgainstTheInfidels
+        ));
+    }
+
+    #[test]
     fn stats_panel_defaults_show_zero_bonus_values_without_upgrades() {
         let data = GameData::load_from_dir(Path::new("assets/data")).expect("load data");
         let progression = Progression::default();
@@ -7773,15 +9364,15 @@ mod tests {
     fn stats_panel_applies_level_and_buff_bonuses() {
         let data = GameData::load_from_dir(Path::new("assets/data")).expect("load data");
         let progression = Progression {
-            xp: 0.0,
+            gold: 0.0,
             level: 8,
-            next_level_xp: 1.0,
+            pending_level_ups: 0,
         };
         let buffs = GlobalBuffs {
             damage_multiplier: 1.15,
             armor_bonus: 3.0,
             attack_speed_multiplier: 1.20,
-            xp_gain_multiplier: 1.10,
+            gold_gain_multiplier: 1.10,
             crit_chance_bonus: 0.08,
             crit_damage_multiplier: 1.75,
             pickup_radius_bonus: 12.0,
@@ -7791,7 +9382,6 @@ mod tests {
             authority_friendly_loss_resistance: 0.0,
             authority_enemy_morale_drain_per_sec: 0.0,
             hospitalier_hp_regen_per_sec: 0.0,
-            hospitalier_cohesion_regen_per_sec: 0.0,
             hospitalier_morale_regen_per_sec: 0.0,
         };
         let one_time_tracker = OneTimeUpgradeTracker::default();
@@ -7882,7 +9472,7 @@ mod tests {
             id: "authority_aura".to_string(),
             kind: "authority_aura".to_string(),
             title: "Authority Aura".to_string(),
-            description: "Reduce morale/cohesion losses.".to_string(),
+            description: "Reduce morale losses.".to_string(),
             total_value: 0.1,
             icon: UpgradeCardIcon::AuthorityAura,
             stacks: 1,

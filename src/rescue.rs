@@ -545,6 +545,29 @@ mod tests {
     }
 
     #[test]
+    fn rescue_spawn_selector_filters_mixed_pool_by_player_faction() {
+        let config = RescueConfig {
+            spawn_count: 3,
+            rescue_radius: 10.0,
+            rescue_duration_secs: 1.0,
+            recruit_pool: vec![
+                RescueRecruitKindConfig::ChristianPeasantInfantry,
+                RescueRecruitKindConfig::ChristianPeasantArcher,
+                RescueRecruitKindConfig::ChristianPeasantPriest,
+                RescueRecruitKindConfig::MuslimPeasantInfantry,
+                RescueRecruitKindConfig::MuslimPeasantArcher,
+                RescueRecruitKindConfig::MuslimPeasantPriest,
+            ],
+        };
+        let pity = RescueSpawnPity::default();
+        for sequence in 0..96 {
+            let muslim_kind =
+                recruit_kind_for_sequence(sequence, &config, pity, PlayerFaction::Muslim);
+            assert_eq!(muslim_kind.faction(), PlayerFaction::Muslim);
+        }
+    }
+
+    #[test]
     fn pity_counters_reset_spawned_kind_and_increase_others() {
         let config = RescueConfig {
             spawn_count: 3,

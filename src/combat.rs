@@ -9,14 +9,15 @@ use crate::inventory::{
     EquipmentArmyEffects, InventoryState, gear_bonuses_for_unit_with_banner_state,
 };
 use crate::model::{
-    AttackCooldown, AttackProfile, DamageEvent, DamageTextEvent, EnemyUnit, GameState, GlobalBuffs,
-    Health, Morale, SpawnExpPackEvent, Team, Unit, UnitDamagedEvent, UnitDiedEvent, UnitKind,
-    UnitTier,
+    AttackCooldown, AttackProfile, BaseMaxHealth, DamageEvent, DamageTextEvent, EnemyUnit,
+    GameDifficulty, GameState, GlobalBuffs, Health, MatchSetupSelection, Morale,
+    SpawnGoldPackEvent, Team, Unit, UnitDamagedEvent, UnitDiedEvent, UnitKind, UnitTier,
 };
 use crate::morale::{morale_armor_multiplier, morale_damage_multiplier};
 use crate::projectiles::Projectile;
 use crate::squad::{
-    CommanderMotionState, PriestAttackSpeedBlessing, priest_attack_speed_multiplier,
+    ArmorLockedZero, CommanderMotionState, PriestAttackSpeedBlessing,
+    priest_attack_speed_multiplier,
 };
 use crate::upgrades::{ConditionalUpgradeEffects, Progression};
 use crate::visuals::ArtAssets;
@@ -34,6 +35,7 @@ const ARMOR_DIMINISHING_SCALE: f32 = 90.0;
 const MAX_ARMOR_REDUCTION_RATIO: f32 = 0.90;
 const DEATH_HEALTH_EPSILON: f32 = 0.01;
 const PEASANT_INFANTRY_BLOCK_CHANCE: f32 = 0.15;
+const INFIDELS_BLOCK_CHANCE_BONUS: f32 = 0.08;
 
 #[derive(Clone, Copy, Debug)]
 struct CombatRngState {
@@ -454,6 +456,7 @@ fn emit_damage_events(
         &Health,
         Option<&UnitTier>,
         Option<&crate::model::Armor>,
+        Option<&ArmorLockedZero>,
         Option<&Morale>,
     )>,
 ) {
@@ -468,13 +471,15 @@ fn emit_damage_events(
     let target_snapshot: Vec<(Entity, Unit, Vec2, f32, f32, f32)> = targets
         .iter()
         .map(
-            |(entity, unit, transform, health, tier, armor, target_morale)| {
+            |(entity, unit, transform, health, tier, armor, armor_locked, target_morale)| {
                 let base_armor = armor.map(|value| value.0).unwrap_or(0.0);
                 let morale_defense_multiplier = target_morale
                     .copied()
                     .map(|value| morale_armor_multiplier(value.ratio()))
                     .unwrap_or(1.0);
-                let effective_armor = if unit.team == Team::Friendly {
+                let effective_armor = if armor_locked.is_some() {
+                    0.0
+                } else if unit.team == Team::Friendly {
                     let gear_armor_bonus = gear_bonuses_for_unit_with_banner_state(
                         &inventory,
                         unit.kind,
@@ -527,7 +532,7 @@ fn emit_damage_events(
         .unwrap_or(1.0);
 
     for (
-        _,
+        attacker_entity,
         attacker_unit,
         attacker_tier,
         attacker_morale,
@@ -688,6 +693,7 @@ fn emit_damage_events(
             damage_events.send(DamageEvent {
                 target: target_entity,
                 source_team: attacker_unit.team,
+                source_entity: Some(attacker_entity),
                 amount: damage,
                 execute,
                 critical: is_critical,
@@ -897,29 +903,92 @@ fn is_peasant_infantry_kind(kind: UnitKind) -> bool {
     matches!(
         kind,
         UnitKind::ChristianPeasantInfantry
+            | UnitKind::ChristianMenAtArms
+            | UnitKind::ChristianShieldInfantry
+            | UnitKind::ChristianExperiencedShieldInfantry
+            | UnitKind::ChristianEliteShieldInfantry
+            | UnitKind::ChristianSpearman
+            | UnitKind::ChristianShieldedSpearman
+            | UnitKind::ChristianHalberdier
+            | UnitKind::ChristianUnmountedKnight
+            | UnitKind::ChristianKnight
+            | UnitKind::ChristianHeavyKnight
+            | UnitKind::ChristianCitadelGuard
+            | UnitKind::ChristianArmoredHalberdier
+            | UnitKind::ChristianEliteHeavyKnight
             | UnitKind::MuslimPeasantInfantry
+            | UnitKind::MuslimMenAtArms
+            | UnitKind::MuslimShieldInfantry
+            | UnitKind::MuslimExperiencedShieldInfantry
+            | UnitKind::MuslimEliteShieldInfantry
+            | UnitKind::MuslimSpearman
+            | UnitKind::MuslimShieldedSpearman
+            | UnitKind::MuslimHalberdier
+            | UnitKind::MuslimUnmountedKnight
+            | UnitKind::MuslimKnight
+            | UnitKind::MuslimHeavyKnight
+            | UnitKind::MuslimCitadelGuard
+            | UnitKind::MuslimArmoredHalberdier
+            | UnitKind::MuslimEliteHeavyKnight
             | UnitKind::RescuableChristianPeasantInfantry
             | UnitKind::RescuableMuslimPeasantInfantry
     )
 }
 
-fn roll_full_block(kind: UnitKind, rng: &mut CombatRngState) -> bool {
-    is_peasant_infantry_kind(kind) && rng.next_f32() < PEASANT_INFANTRY_BLOCK_CHANCE
+fn enemy_block_chance_for_difficulty(difficulty: GameDifficulty, block_enabled: bool) -> f32 {
+    if !block_enabled {
+        return 0.0;
+    }
+    match difficulty {
+        GameDifficulty::Recruit => 0.0,
+        GameDifficulty::Experienced => PEASANT_INFANTRY_BLOCK_CHANCE,
+        GameDifficulty::AloneAgainstTheInfidels => {
+            (PEASANT_INFANTRY_BLOCK_CHANCE + INFIDELS_BLOCK_CHANCE_BONUS).clamp(0.0, 0.95)
+        }
+    }
+}
+
+fn should_enemy_block_hit(
+    target_team: Team,
+    target_kind: UnitKind,
+    block_chance: f32,
+    rng: &mut CombatRngState,
+) -> bool {
+    target_team == Team::Enemy
+        && block_chance > 0.0
+        && is_peasant_infantry_kind(target_kind)
+        && rng.next_f32() < block_chance
 }
 
 fn apply_damage_events(
+    data: Res<GameData>,
+    setup_selection: Option<Res<MatchSetupSelection>>,
     mut damage_events: EventReader<DamageEvent>,
     mut damage_text_events: EventWriter<DamageTextEvent>,
     mut damaged_events: EventWriter<UnitDamagedEvent>,
-    mut health_query: Query<(&mut Health, &Unit, &Transform)>,
+    mut health_query: Query<(&mut Health, &Unit, &Transform, Option<&BaseMaxHealth>)>,
     mut block_rng: Local<CombatRngState>,
 ) {
+    let difficulty = setup_selection
+        .as_deref()
+        .map(|selection| selection.difficulty)
+        .unwrap_or(GameDifficulty::Recruit);
+    let block_chance = enemy_block_chance_for_difficulty(
+        difficulty,
+        data.difficulties
+            .for_difficulty(difficulty)
+            .enemy_block_enabled,
+    );
     for event in damage_events.read() {
         if event.amount <= 0.0 {
             continue;
         }
-        if let Ok((mut health, unit, transform)) = health_query.get_mut(event.target) {
-            if roll_full_block(unit.kind, &mut block_rng) {
+        let mut pending_life_leech: Option<(Entity, f32)> = None;
+        {
+            let Ok((mut health, unit, transform, _)) = health_query.get_mut(event.target) else {
+                continue;
+            };
+            if should_enemy_block_hit(unit.team, unit.kind, block_chance, &mut block_rng) {
                 continue;
             }
 
@@ -943,14 +1012,59 @@ fn apply_damage_events(
                 execute: event.execute,
                 critical: event.critical,
             });
+            if let Some(source_entity) = event.source_entity {
+                pending_life_leech = Some((source_entity, applied_damage));
+            }
         }
+
+        if let Some((source_entity, applied_damage)) = pending_life_leech {
+            if source_entity == event.target {
+                continue;
+            }
+            let Ok((mut source_health, source_unit, _, source_base_max)) =
+                health_query.get_mut(source_entity)
+            else {
+                continue;
+            };
+            if source_health.current <= 0.0 {
+                continue;
+            }
+            let life_leech_ratio = fanatic_life_leech_ratio(source_unit.kind, &data);
+            if life_leech_ratio <= 0.0 {
+                continue;
+            }
+            let max_health = source_base_max
+                .map(|value| value.0)
+                .unwrap_or(source_health.max)
+                .max(1.0);
+            let heal = (applied_damage * life_leech_ratio).max(0.0);
+            source_health.current = (source_health.current + heal).clamp(0.0, max_health);
+        }
+    }
+}
+
+fn fanatic_life_leech_ratio(kind: UnitKind, data: &GameData) -> f32 {
+    if matches!(
+        kind,
+        UnitKind::ChristianFanatic
+            | UnitKind::ChristianFlagellant
+            | UnitKind::ChristianEliteFlagellant
+            | UnitKind::ChristianDivineJudge
+            | UnitKind::MuslimFanatic
+            | UnitKind::MuslimFlagellant
+            | UnitKind::MuslimEliteFlagellant
+            | UnitKind::MuslimDivineJudge
+    ) {
+        data.roster_tuning.behavior.fanatic_life_leech_ratio
+    } else {
+        0.0
     }
 }
 
 fn resolve_deaths(
     mut commands: Commands,
     mut death_events: EventWriter<UnitDiedEvent>,
-    mut exp_pack_events: EventWriter<SpawnExpPackEvent>,
+    mut gold_pack_events: EventWriter<SpawnGoldPackEvent>,
     dead_units: Query<(Entity, &Unit, &Health, &Transform)>,
 ) {
     for (entity, unit, health, transform) in &dead_units {
@@ -962,9 +1076,9 @@ fn resolve_deaths(
                 world_position: transform.translation.truncate(),
             });
             if unit.team == Team::Enemy {
-                exp_pack_events.send(SpawnExpPackEvent {
+                gold_pack_events.send(SpawnGoldPackEvent {
                     world_position: transform.translation.truncate(),
-                    xp_value_override: None,
+                    gold_value_override: None,
                     pickup_delay_secs: Some(ENEMY_DROP_PICKUP_DELAY_SECS),
                 });
             }
@@ -987,13 +1101,15 @@ mod tests {
     use crate::combat::{
         FriendlyFormationContext, apply_critical_multiplier, armor_reduction_ratio,
         commander_level_combat_multiplier, compute_damage, critical_hit,
-        effective_formation_offense_multiplier, enemy_target_allowed, friendly_critical_parameters,
+        effective_formation_offense_multiplier, enemy_block_chance_for_difficulty,
+        enemy_target_allowed, fanatic_life_leech_ratio, friendly_critical_parameters,
         friendly_formation_context, friendly_outgoing_multiplier, inside_active_formation_bounds,
         inside_formation_damage_multiplier, is_dead_health, ranged_target_in_window,
         should_execute_target, unit_is_non_damaging_support,
     };
+    use crate::data::GameData;
     use crate::formation::{ActiveFormation, FormationModifiers};
-    use crate::model::{GlobalBuffs, Team, Unit, UnitKind};
+    use crate::model::{GameDifficulty, GlobalBuffs, Team, Unit, UnitKind};
     use crate::squad::CommanderMotionState;
 
     #[test]
@@ -1279,5 +1395,40 @@ mod tests {
         assert!(unit_is_non_damaging_support(enemy_priest));
         assert!(!unit_is_non_damaging_support(enemy_raider));
         assert!(!unit_is_non_damaging_support(friendly_infantry));
+    }
+
+    #[test]
+    fn enemy_block_chance_scales_by_difficulty_when_enabled() {
+        assert_eq!(
+            enemy_block_chance_for_difficulty(GameDifficulty::Recruit, false),
+            0.0
+        );
+        assert_eq!(
+            enemy_block_chance_for_difficulty(GameDifficulty::Recruit, true),
+            0.0
+        );
+        let experienced = enemy_block_chance_for_difficulty(GameDifficulty::Experienced, true);
+        let infidels =
+            enemy_block_chance_for_difficulty(GameDifficulty::AloneAgainstTheInfidels, true);
+        assert!(experienced > 0.0);
+        assert!(infidels > experienced);
+    }
+
+    #[test]
+    fn fanatic_life_leech_ratio_is_defined_for_fanatic_branch_only() {
+        let data = GameData::load_from_dir(std::path::Path::new("assets/data")).expect("data");
+        let fanatic_ratio = fanatic_life_leech_ratio(UnitKind::ChristianFanatic, &data);
+        let flagellant_ratio = fanatic_life_leech_ratio(UnitKind::ChristianFlagellant, &data);
+        let elite_flagellant_ratio =
+            fanatic_life_leech_ratio(UnitKind::ChristianEliteFlagellant, &data);
+        let divine_judge_ratio = fanatic_life_leech_ratio(UnitKind::ChristianDivineJudge, &data);
+        assert!(fanatic_ratio > 0.0);
+        assert!(flagellant_ratio > 0.0);
+        assert!(elite_flagellant_ratio > 0.0);
+        assert!(divine_judge_ratio > 0.0);
+        assert_eq!(
+            fanatic_life_leech_ratio(UnitKind::ChristianPeasantInfantry, &data),
+            0.0
+        );
     }
 }

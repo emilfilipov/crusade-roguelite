@@ -51,10 +51,58 @@ impl PlayerFaction {
     }
 }
 
-#[derive(Resource, Clone, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GameDifficulty {
+    #[default]
+    Recruit,
+    Experienced,
+    AloneAgainstTheInfidels,
+}
+
+impl GameDifficulty {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Recruit => "Recruit",
+            Self::Experienced => "Experienced",
+            Self::AloneAgainstTheInfidels => "Alone Against the Infidels",
+        }
+    }
+
+    pub const fn config_key(self) -> &'static str {
+        match self {
+            Self::Recruit => "recruit",
+            Self::Experienced => "experienced",
+            Self::AloneAgainstTheInfidels => "alone_against_the_infidels",
+        }
+    }
+
+    pub const fn all() -> [GameDifficulty; 3] {
+        [
+            GameDifficulty::Recruit,
+            GameDifficulty::Experienced,
+            GameDifficulty::AloneAgainstTheInfidels,
+        ]
+    }
+}
+
+#[derive(Resource, Clone, Debug)]
 pub struct MatchSetupSelection {
     pub faction: PlayerFaction,
     pub map_id: String,
+    pub commander_id: String,
+    pub difficulty: GameDifficulty,
+}
+
+impl Default for MatchSetupSelection {
+    fn default() -> Self {
+        Self {
+            faction: PlayerFaction::Christian,
+            map_id: String::new(),
+            commander_id: "baldiun".to_string(),
+            difficulty: GameDifficulty::Recruit,
+        }
+    }
 }
 
 #[derive(Resource, Clone, Copy, Debug, Eq, PartialEq, Hash, Default, Serialize, Deserialize)]
@@ -99,9 +147,95 @@ pub enum UnitKind {
     ChristianPeasantInfantry,
     ChristianPeasantArcher,
     ChristianPeasantPriest,
+    ChristianMenAtArms,
+    ChristianBowman,
+    ChristianDevoted,
+    ChristianShieldInfantry,
+    ChristianSpearman,
+    ChristianUnmountedKnight,
+    ChristianSquire,
+    ChristianExperiencedBowman,
+    ChristianCrossbowman,
+    ChristianTracker,
+    ChristianScout,
+    ChristianDevotedOne,
+    ChristianFanatic,
+    ChristianExperiencedShieldInfantry,
+    ChristianShieldedSpearman,
+    ChristianKnight,
+    ChristianBannerman,
+    ChristianEliteBowman,
+    ChristianArmoredCrossbowman,
+    ChristianPathfinder,
+    ChristianMountedScout,
+    ChristianCardinal,
+    ChristianFlagellant,
+    ChristianEliteShieldInfantry,
+    ChristianHalberdier,
+    ChristianHeavyKnight,
+    ChristianEliteBannerman,
+    ChristianLongbowman,
+    ChristianEliteCrossbowman,
+    ChristianHoundmaster,
+    ChristianShockCavalry,
+    ChristianEliteCardinal,
+    ChristianEliteFlagellant,
+    ChristianCitadelGuard,
+    ChristianArmoredHalberdier,
+    ChristianEliteHeavyKnight,
+    ChristianGodsChosen,
+    ChristianEliteLongbowman,
+    ChristianSiegeCrossbowman,
+    ChristianEliteHoundmaster,
+    ChristianEliteShockCavalry,
+    ChristianDivineSpeaker,
+    ChristianDivineJudge,
     MuslimPeasantInfantry,
     MuslimPeasantArcher,
     MuslimPeasantPriest,
+    MuslimMenAtArms,
+    MuslimBowman,
+    MuslimDevoted,
+    MuslimShieldInfantry,
+    MuslimSpearman,
+    MuslimUnmountedKnight,
+    MuslimSquire,
+    MuslimExperiencedBowman,
+    MuslimCrossbowman,
+    MuslimTracker,
+    MuslimScout,
+    MuslimDevotedOne,
+    MuslimFanatic,
+    MuslimExperiencedShieldInfantry,
+    MuslimShieldedSpearman,
+    MuslimKnight,
+    MuslimBannerman,
+    MuslimEliteBowman,
+    MuslimArmoredCrossbowman,
+    MuslimPathfinder,
+    MuslimMountedScout,
+    MuslimCardinal,
+    MuslimFlagellant,
+    MuslimEliteShieldInfantry,
+    MuslimHalberdier,
+    MuslimHeavyKnight,
+    MuslimEliteBannerman,
+    MuslimLongbowman,
+    MuslimEliteCrossbowman,
+    MuslimHoundmaster,
+    MuslimShockCavalry,
+    MuslimEliteCardinal,
+    MuslimEliteFlagellant,
+    MuslimCitadelGuard,
+    MuslimArmoredHalberdier,
+    MuslimEliteHeavyKnight,
+    MuslimGodsChosen,
+    MuslimEliteLongbowman,
+    MuslimSiegeCrossbowman,
+    MuslimEliteHoundmaster,
+    MuslimEliteShockCavalry,
+    MuslimDivineSpeaker,
+    MuslimDivineJudge,
     RescuableChristianPeasantInfantry,
     RescuableChristianPeasantArcher,
     RescuableChristianPeasantPriest,
@@ -209,12 +343,98 @@ impl UnitKind {
             Self::ChristianPeasantInfantry
             | Self::ChristianPeasantArcher
             | Self::ChristianPeasantPriest
+            | Self::ChristianMenAtArms
+            | Self::ChristianBowman
+            | Self::ChristianDevoted
+            | Self::ChristianShieldInfantry
+            | Self::ChristianSpearman
+            | Self::ChristianUnmountedKnight
+            | Self::ChristianSquire
+            | Self::ChristianExperiencedBowman
+            | Self::ChristianCrossbowman
+            | Self::ChristianTracker
+            | Self::ChristianScout
+            | Self::ChristianDevotedOne
+            | Self::ChristianFanatic
+            | Self::ChristianExperiencedShieldInfantry
+            | Self::ChristianShieldedSpearman
+            | Self::ChristianKnight
+            | Self::ChristianBannerman
+            | Self::ChristianEliteBowman
+            | Self::ChristianArmoredCrossbowman
+            | Self::ChristianPathfinder
+            | Self::ChristianMountedScout
+            | Self::ChristianCardinal
+            | Self::ChristianFlagellant
+            | Self::ChristianEliteShieldInfantry
+            | Self::ChristianHalberdier
+            | Self::ChristianHeavyKnight
+            | Self::ChristianEliteBannerman
+            | Self::ChristianLongbowman
+            | Self::ChristianEliteCrossbowman
+            | Self::ChristianHoundmaster
+            | Self::ChristianShockCavalry
+            | Self::ChristianEliteCardinal
+            | Self::ChristianEliteFlagellant
+            | Self::ChristianCitadelGuard
+            | Self::ChristianArmoredHalberdier
+            | Self::ChristianEliteHeavyKnight
+            | Self::ChristianGodsChosen
+            | Self::ChristianEliteLongbowman
+            | Self::ChristianSiegeCrossbowman
+            | Self::ChristianEliteHoundmaster
+            | Self::ChristianEliteShockCavalry
+            | Self::ChristianDivineSpeaker
+            | Self::ChristianDivineJudge
             | Self::RescuableChristianPeasantInfantry
             | Self::RescuableChristianPeasantArcher
             | Self::RescuableChristianPeasantPriest => Some(PlayerFaction::Christian),
             Self::MuslimPeasantInfantry
             | Self::MuslimPeasantArcher
             | Self::MuslimPeasantPriest
+            | Self::MuslimMenAtArms
+            | Self::MuslimBowman
+            | Self::MuslimDevoted
+            | Self::MuslimShieldInfantry
+            | Self::MuslimSpearman
+            | Self::MuslimUnmountedKnight
+            | Self::MuslimSquire
+            | Self::MuslimExperiencedBowman
+            | Self::MuslimCrossbowman
+            | Self::MuslimTracker
+            | Self::MuslimScout
+            | Self::MuslimDevotedOne
+            | Self::MuslimFanatic
+            | Self::MuslimExperiencedShieldInfantry
+            | Self::MuslimShieldedSpearman
+            | Self::MuslimKnight
+            | Self::MuslimBannerman
+            | Self::MuslimEliteBowman
+            | Self::MuslimArmoredCrossbowman
+            | Self::MuslimPathfinder
+            | Self::MuslimMountedScout
+            | Self::MuslimCardinal
+            | Self::MuslimFlagellant
+            | Self::MuslimEliteShieldInfantry
+            | Self::MuslimHalberdier
+            | Self::MuslimHeavyKnight
+            | Self::MuslimEliteBannerman
+            | Self::MuslimLongbowman
+            | Self::MuslimEliteCrossbowman
+            | Self::MuslimHoundmaster
+            | Self::MuslimShockCavalry
+            | Self::MuslimEliteCardinal
+            | Self::MuslimEliteFlagellant
+            | Self::MuslimCitadelGuard
+            | Self::MuslimArmoredHalberdier
+            | Self::MuslimEliteHeavyKnight
+            | Self::MuslimGodsChosen
+            | Self::MuslimEliteLongbowman
+            | Self::MuslimSiegeCrossbowman
+            | Self::MuslimEliteHoundmaster
+            | Self::MuslimEliteShockCavalry
+            | Self::MuslimDivineSpeaker
+            | Self::MuslimDivineJudge
             | Self::RescuableMuslimPeasantInfantry
             | Self::RescuableMuslimPeasantArcher
             | Self::RescuableMuslimPeasantPriest => Some(PlayerFaction::Muslim),
@@ -228,16 +448,121 @@ impl UnitKind {
             Self::ChristianPeasantInfantry
                 | Self::ChristianPeasantArcher
                 | Self::ChristianPeasantPriest
+                | Self::ChristianMenAtArms
+                | Self::ChristianBowman
+                | Self::ChristianDevoted
+                | Self::ChristianShieldInfantry
+                | Self::ChristianSpearman
+                | Self::ChristianUnmountedKnight
+                | Self::ChristianSquire
+                | Self::ChristianExperiencedBowman
+                | Self::ChristianCrossbowman
+                | Self::ChristianTracker
+                | Self::ChristianScout
+                | Self::ChristianDevotedOne
+                | Self::ChristianFanatic
+                | Self::ChristianExperiencedShieldInfantry
+                | Self::ChristianShieldedSpearman
+                | Self::ChristianKnight
+                | Self::ChristianBannerman
+                | Self::ChristianEliteBowman
+                | Self::ChristianArmoredCrossbowman
+                | Self::ChristianPathfinder
+                | Self::ChristianMountedScout
+                | Self::ChristianCardinal
+                | Self::ChristianFlagellant
+                | Self::ChristianEliteShieldInfantry
+                | Self::ChristianHalberdier
+                | Self::ChristianHeavyKnight
+                | Self::ChristianEliteBannerman
+                | Self::ChristianLongbowman
+                | Self::ChristianEliteCrossbowman
+                | Self::ChristianHoundmaster
+                | Self::ChristianShockCavalry
+                | Self::ChristianEliteCardinal
+                | Self::ChristianEliteFlagellant
+                | Self::ChristianCitadelGuard
+                | Self::ChristianArmoredHalberdier
+                | Self::ChristianEliteHeavyKnight
+                | Self::ChristianGodsChosen
+                | Self::ChristianEliteLongbowman
+                | Self::ChristianSiegeCrossbowman
+                | Self::ChristianEliteHoundmaster
+                | Self::ChristianEliteShockCavalry
+                | Self::ChristianDivineSpeaker
+                | Self::ChristianDivineJudge
                 | Self::MuslimPeasantInfantry
                 | Self::MuslimPeasantArcher
                 | Self::MuslimPeasantPriest
+                | Self::MuslimMenAtArms
+                | Self::MuslimBowman
+                | Self::MuslimDevoted
+                | Self::MuslimShieldInfantry
+                | Self::MuslimSpearman
+                | Self::MuslimUnmountedKnight
+                | Self::MuslimSquire
+                | Self::MuslimExperiencedBowman
+                | Self::MuslimCrossbowman
+                | Self::MuslimTracker
+                | Self::MuslimScout
+                | Self::MuslimDevotedOne
+                | Self::MuslimFanatic
+                | Self::MuslimExperiencedShieldInfantry
+                | Self::MuslimShieldedSpearman
+                | Self::MuslimKnight
+                | Self::MuslimBannerman
+                | Self::MuslimEliteBowman
+                | Self::MuslimArmoredCrossbowman
+                | Self::MuslimPathfinder
+                | Self::MuslimMountedScout
+                | Self::MuslimCardinal
+                | Self::MuslimFlagellant
+                | Self::MuslimEliteShieldInfantry
+                | Self::MuslimHalberdier
+                | Self::MuslimHeavyKnight
+                | Self::MuslimEliteBannerman
+                | Self::MuslimLongbowman
+                | Self::MuslimEliteCrossbowman
+                | Self::MuslimHoundmaster
+                | Self::MuslimShockCavalry
+                | Self::MuslimEliteCardinal
+                | Self::MuslimEliteFlagellant
+                | Self::MuslimCitadelGuard
+                | Self::MuslimArmoredHalberdier
+                | Self::MuslimEliteHeavyKnight
+                | Self::MuslimGodsChosen
+                | Self::MuslimEliteLongbowman
+                | Self::MuslimSiegeCrossbowman
+                | Self::MuslimEliteHoundmaster
+                | Self::MuslimEliteShockCavalry
+                | Self::MuslimDivineSpeaker
+                | Self::MuslimDivineJudge
         )
     }
 
     pub const fn is_priest(self) -> bool {
         matches!(
             self,
-            Self::ChristianPeasantPriest | Self::MuslimPeasantPriest
+            Self::ChristianPeasantPriest
+                | Self::MuslimPeasantPriest
+                | Self::ChristianDevoted
+                | Self::MuslimDevoted
+                | Self::ChristianSquire
+                | Self::MuslimSquire
+                | Self::ChristianDevotedOne
+                | Self::MuslimDevotedOne
+                | Self::ChristianBannerman
+                | Self::MuslimBannerman
+                | Self::ChristianCardinal
+                | Self::MuslimCardinal
+                | Self::ChristianEliteBannerman
+                | Self::MuslimEliteBannerman
+                | Self::ChristianEliteCardinal
+                | Self::MuslimEliteCardinal
+                | Self::ChristianGodsChosen
+                | Self::MuslimGodsChosen
+                | Self::ChristianDivineSpeaker
+                | Self::MuslimDivineSpeaker
         )
     }
 
@@ -300,26 +625,6 @@ impl Morale {
 }
 
 #[derive(Component, Clone, Copy, Debug)]
-pub struct UnitCohesion {
-    pub current: f32,
-    pub max: f32,
-}
-
-impl UnitCohesion {
-    pub fn new(max: f32) -> Self {
-        Self { current: max, max }
-    }
-
-    pub fn ratio(self) -> f32 {
-        if self.max <= 0.0 {
-            0.0
-        } else {
-            (self.current / self.max).clamp(0.0, 1.0)
-        }
-    }
-}
-
-#[derive(Component, Clone, Copy, Debug)]
 pub struct Armor(pub f32);
 
 #[derive(Component, Clone, Copy, Debug)]
@@ -360,7 +665,7 @@ pub struct GlobalBuffs {
     pub damage_multiplier: f32,
     pub armor_bonus: f32,
     pub attack_speed_multiplier: f32,
-    pub xp_gain_multiplier: f32,
+    pub gold_gain_multiplier: f32,
     pub crit_chance_bonus: f32,
     pub crit_damage_multiplier: f32,
     pub pickup_radius_bonus: f32,
@@ -370,7 +675,6 @@ pub struct GlobalBuffs {
     pub authority_friendly_loss_resistance: f32,
     pub authority_enemy_morale_drain_per_sec: f32,
     pub hospitalier_hp_regen_per_sec: f32,
-    pub hospitalier_cohesion_regen_per_sec: f32,
     pub hospitalier_morale_regen_per_sec: f32,
 }
 
@@ -380,7 +684,7 @@ impl Default for GlobalBuffs {
             damage_multiplier: 1.0,
             armor_bonus: 0.0,
             attack_speed_multiplier: 1.0,
-            xp_gain_multiplier: 1.0,
+            gold_gain_multiplier: 1.0,
             crit_chance_bonus: 0.0,
             crit_damage_multiplier: 1.2,
             pickup_radius_bonus: 0.0,
@@ -390,7 +694,6 @@ impl Default for GlobalBuffs {
             authority_friendly_loss_resistance: 0.0,
             authority_enemy_morale_drain_per_sec: 0.0,
             hospitalier_hp_regen_per_sec: 0.0,
-            hospitalier_cohesion_regen_per_sec: 0.0,
             hospitalier_morale_regen_per_sec: 0.0,
         }
     }
@@ -409,6 +712,7 @@ pub struct RecruitEvent {
 pub struct DamageEvent {
     pub target: Entity,
     pub source_team: Team,
+    pub source_entity: Option<Entity>,
     pub amount: f32,
     pub execute: bool,
     pub critical: bool,
@@ -439,12 +743,15 @@ pub struct UnitDiedEvent {
 }
 
 #[derive(Event, Clone, Copy, Debug)]
-pub struct GainXpEvent(pub f32);
+pub struct GainGoldEvent(pub f32);
 
 #[derive(Event, Clone, Copy, Debug)]
-pub struct SpawnExpPackEvent {
+pub struct GainHearTheCallTokenEvent(pub u32);
+
+#[derive(Event, Clone, Copy, Debug)]
+pub struct SpawnGoldPackEvent {
     pub world_position: Vec2,
-    pub xp_value_override: Option<f32>,
+    pub gold_value_override: Option<f32>,
     pub pickup_delay_secs: Option<f32>,
 }
 

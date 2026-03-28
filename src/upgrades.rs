@@ -3,16 +3,18 @@ use std::collections::HashSet;
 use bevy::prelude::*;
 
 use crate::data::{GameData, UpgradeConfig};
+use crate::enemies::WaveCompletedEvent;
 use crate::formation::{ActiveFormation, FormationSkillBar};
 use crate::inventory::ItemRarityRollBonus;
 use crate::model::{
-    BaseMaxHealth, FriendlyUnit, GainXpEvent, GameState, GlobalBuffs, Health, MAX_COMMANDER_LEVEL,
-    StartRunEvent,
+    BaseMaxHealth, FriendlyUnit, GainGoldEvent, GameState, GlobalBuffs, Health,
+    MAX_COMMANDER_LEVEL, MatchSetupSelection, StartRunEvent,
 };
 use crate::random::runtime_entropy_seed_u64;
 use crate::squad::RosterEconomy;
 
 const LEVEL_UP_OPTION_COUNT: usize = 5;
+const MAJOR_REWARD_LEVEL_INTERVAL: u32 = 5;
 const DEFAULT_UPGRADE_WEIGHT_EXPONENT: f32 = 2.0;
 const UPGRADE_VALUE_TIER_COUNT: u32 = 5;
 const UPGRADE_HIGH_TIER_DROP_OFF_MULTIPLIER: f32 = 1.55;
@@ -22,10 +24,7 @@ const NORMAL_OPTION_WEIGHT: f32 = 1.0;
 const MAX_UNIQUE_UPGRADES: usize = 5;
 const AUTHORITY_ENEMY_MORALE_DRAIN_SCALE: f32 = 10.8;
 const MAX_AUTHORITY_LOSS_RESISTANCE: f32 = 0.75;
-const HOSPITALIER_COHESION_REGEN_SCALE: f32 = 0.2;
 const HOSPITALIER_MORALE_REGEN_SCALE: f32 = 0.1;
-const XP_BASE_REQUIREMENT: f32 = 100.0;
-const XP_GROWTH_PER_LEVEL: f32 = 1.061;
 
 const MOB_FURY_DAMAGE_BONUS: f32 = 0.18;
 const MOB_FURY_ATTACK_SPEED_BONUS: f32 = 0.18;
@@ -73,9 +72,9 @@ pub fn effective_max_unique_upgrades(tracker: &OneTimeUpgradeTracker) -> usize {
 
 #[derive(Resource, Clone, Debug)]
 pub struct Progression {
-    pub xp: f32,
+    pub gold: f32,
     pub level: u32,
-    pub next_level_xp: f32,
+    pub pending_level_ups: u32,
 }
 
 #[derive(Resource, Clone, Debug, Default)]
@@ -86,9 +85,9 @@ pub struct ProgressionLockFeedback {
 impl Default for Progression {
     fn default() -> Self {
         Self {
-            xp: 0.0,
+            gold: 0.0,
             level: 1,
-            next_level_xp: xp_required_for_level(1),
+            pending_level_ups: 0,
         }
     }
 }
@@ -96,7 +95,15 @@ impl Default for Progression {
 #[derive(Resource, Clone, Debug, Default)]
 pub struct UpgradeDraft {
     pub active: bool,
+    pub reward_kind: UpgradeRewardKind,
     pub options: Vec<UpgradeConfig>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum UpgradeRewardKind {
+    #[default]
+    Minor,
+    Major,
 }
 
 #[derive(Resource, Clone, Debug, Default)]
@@ -185,7 +192,6 @@ pub struct ConditionalUpgradeEffects {
     pub friendly_attack_speed_multiplier: f32,
     pub friendly_move_speed_bonus: f32,
     pub friendly_morale_loss_multiplier: f32,
-    pub friendly_cohesion_loss_multiplier: f32,
     pub execute_below_health_ratio: f32,
     pub rescue_time_multiplier: f32,
 }
@@ -197,7 +203,6 @@ impl Default for ConditionalUpgradeEffects {
             friendly_attack_speed_multiplier: 1.0,
             friendly_move_speed_bonus: 0.0,
             friendly_morale_loss_multiplier: 1.0,
-            friendly_cohesion_loss_multiplier: 1.0,
             execute_below_health_ratio: 0.0,
             rescue_time_multiplier: 1.0,
         }
@@ -316,12 +321,20 @@ impl Plugin for UpgradePlugin {
             .init_resource::<UpgradeRngState>()
             .init_resource::<GlobalBuffs>()
             .add_event::<SelectUpgradeEvent>()
-            .add_systems(Update, reset_progress_on_run_start)
             .add_systems(
                 Update,
                 (
-                    gain_xp,
-                    open_draft_on_level_up,
+                    reset_progress_on_run_start,
+                    reset_progress_lock_feedback_on_run_start,
+                )
+                    .chain(),
+            )
+            .add_systems(
+                Update,
+                (
+                    gain_gold,
+                    queue_level_rewards_from_wave_completions,
+                    open_draft_on_pending_levels,
                     sync_friendly_level_health_caps,
                     refresh_conditional_upgrade_effects,
                 )
@@ -343,8 +356,9 @@ impl Plugin for UpgradePlugin {
 #[allow(clippy::too_many_arguments)]
 fn reset_progress_on_run_start(
     mut start_events: EventReader<StartRunEvent>,
+    data: Res<GameData>,
+    setup_selection: Option<Res<MatchSetupSelection>>,
     mut progression: ResMut<Progression>,
-    mut lock_feedback: ResMut<ProgressionLockFeedback>,
     mut draft: ResMut<UpgradeDraft>,
     mut one_time_tracker: ResMut<OneTimeUpgradeTracker>,
     mut skill_book: ResMut<SkillBookLog>,
@@ -363,7 +377,6 @@ fn reset_progress_on_run_start(
     }
     for _ in start_events.read() {}
     *progression = Progression::default();
-    *lock_feedback = ProgressionLockFeedback::default();
     *draft = UpgradeDraft::default();
     *one_time_tracker = OneTimeUpgradeTracker::default();
     *skill_book = SkillBookLog::default();
@@ -375,17 +388,58 @@ fn reset_progress_on_run_start(
     *item_rarity_bonus = ItemRarityRollBonus::default();
     *upgrade_rarity_bonus = UpgradeRarityRollBonus::default();
     *skill_timing = SkillTimingBuffs::default();
+    let player_faction = setup_selection
+        .as_deref()
+        .map(|selection| selection.faction)
+        .unwrap_or(crate::model::PlayerFaction::Christian);
+    let selected_commander_id = setup_selection
+        .as_deref()
+        .map(|selection| selection.commander_id.as_str())
+        .unwrap_or_else(|| {
+            crate::data::UnitsConfigFile::default_commander_id_for_faction(player_faction)
+        });
+    if let Some(commander) = data
+        .units
+        .commander_option_for_faction_and_id(player_faction, selected_commander_id)
+    {
+        buffs.damage_multiplier += commander.run_bonuses.damage_multiplier_bonus;
+        buffs.move_speed_bonus += commander.run_bonuses.move_speed_bonus;
+        buffs.commander_aura_radius_bonus += commander.run_bonuses.aura_radius_bonus;
+        buffs.pickup_radius_bonus += commander.run_bonuses.pickup_radius_bonus;
+    }
     rng.reseed_from_time();
 }
 
-fn gain_xp(mut progression: ResMut<Progression>, mut xp_events: EventReader<GainXpEvent>) {
-    for event in xp_events.read() {
-        progression.xp += event.0;
+fn reset_progress_lock_feedback_on_run_start(
+    mut start_events: EventReader<StartRunEvent>,
+    mut lock_feedback: ResMut<ProgressionLockFeedback>,
+) {
+    if start_events.is_empty() {
+        return;
+    }
+    for _ in start_events.read() {}
+    *lock_feedback = ProgressionLockFeedback::default();
+}
+
+fn gain_gold(mut progression: ResMut<Progression>, mut gold_events: EventReader<GainGoldEvent>) {
+    for event in gold_events.read() {
+        progression.gold = (progression.gold + event.0).max(0.0);
+    }
+}
+
+fn queue_level_rewards_from_wave_completions(
+    mut progression: ResMut<Progression>,
+    mut wave_completed_events: EventReader<WaveCompletedEvent>,
+) {
+    for event in wave_completed_events.read() {
+        progression.pending_level_ups = progression
+            .pending_level_ups
+            .saturating_add(level_rewards_for_wave_completion(event.wave_number));
     }
 }
 
 #[allow(clippy::too_many_arguments)]
-fn open_draft_on_level_up(
+fn open_draft_on_pending_levels(
     mut progression: ResMut<Progression>,
     mut lock_feedback: ResMut<ProgressionLockFeedback>,
     mut draft: ResMut<UpgradeDraft>,
@@ -418,26 +472,28 @@ fn open_draft_on_level_up(
         return;
     }
 
-    if progression.xp >= progression.next_level_xp {
-        progression.level += 1;
-        progression.level = progression
-            .level
-            .min(allowed_max_level)
-            .min(MAX_COMMANDER_LEVEL);
-        progression.xp -= progression.next_level_xp;
-        progression.next_level_xp = xp_required_for_level(progression.level);
-        draft.options = roll_upgrade_options(
-            &data.upgrades.upgrades,
-            &mut rng,
-            LEVEL_UP_OPTION_COUNT,
-            upgrade_rarity_bonus.percent,
-            &one_time_tracker,
-            &skillbar,
-        );
-        draft.active = !draft.options.is_empty();
-        if draft.active {
-            next_state.set(GameState::LevelUp);
-        }
+    if progression.pending_level_ups == 0 {
+        return;
+    }
+
+    progression.pending_level_ups = progression.pending_level_ups.saturating_sub(1);
+    progression.level += 1;
+    progression.level = progression
+        .level
+        .min(allowed_max_level)
+        .min(MAX_COMMANDER_LEVEL);
+    draft.reward_kind = reward_kind_for_level(progression.level);
+    draft.options = roll_upgrade_options(
+        &data.upgrades.upgrades,
+        &mut rng,
+        LEVEL_UP_OPTION_COUNT,
+        upgrade_rarity_bonus.percent,
+        &one_time_tracker,
+        &skillbar,
+    );
+    draft.active = !draft.options.is_empty();
+    if draft.active {
+        next_state.set(GameState::LevelUp);
     }
 }
 
@@ -452,13 +508,25 @@ pub fn progression_lock_reason(level: u32, allowed_max_level: u32) -> Option<Str
     }
 }
 
-pub fn xp_required_for_level(level: u32) -> f32 {
-    if level >= MAX_COMMANDER_LEVEL {
-        return f32::INFINITY;
+pub fn level_rewards_for_wave_completion(wave_number: u32) -> u32 {
+    if wave_number == 0 {
+        return 0;
     }
-    let safe_level = level.max(1);
-    let index = safe_level.saturating_sub(1);
-    XP_BASE_REQUIREMENT * XP_GROWTH_PER_LEVEL.powf(index as f32)
+    if wave_number == 98 { 2 } else { 1 }
+}
+
+pub fn reward_kind_for_level(level: u32) -> UpgradeRewardKind {
+    if level > 0 && level.is_multiple_of(MAJOR_REWARD_LEVEL_INTERVAL) {
+        UpgradeRewardKind::Major
+    } else {
+        UpgradeRewardKind::Minor
+    }
+}
+
+pub fn major_minor_reward_counts_for_level(level: u32) -> (u32, u32) {
+    let major = level / MAJOR_REWARD_LEVEL_INTERVAL;
+    let minor = level.saturating_sub(major);
+    (major, minor)
 }
 
 pub fn commander_level_hp_bonus(level: u32) -> f32 {
@@ -604,7 +672,7 @@ pub fn skill_book_entry_cumulative_description(entry: &SkillBookEntry) -> String
             (entry.total_value.max(0.0) * 100.0)
         ),
         "fast_learner" => format!(
-            "Total experience gain bonus from XP packs: +{:.0}%.",
+            "Total gold gain bonus from pickups: +{:.0}%.",
             entry.total_value.max(0.0) * 100.0
         ),
         "crit_chance" => format!(
@@ -653,9 +721,8 @@ pub fn skill_book_entry_cumulative_description(entry: &SkillBookEntry) -> String
             entry.total_value.max(0.0) * 100.0
         ),
         "hospitalier_aura" => format!(
-            "Aura regen totals: +{:.1} HP/s, +{:.2} cohesion/s, +{:.2} morale/s for friendlies in aura.",
+            "Aura regen totals: +{:.1} HP/s and +{:.2} morale/s for friendlies in aura.",
             entry.total_value.max(0.0),
-            entry.total_value.max(0.0) * HOSPITALIER_COHESION_REGEN_SCALE,
             entry.total_value.max(0.0) * HOSPITALIER_MORALE_REGEN_SCALE
         ),
         "formation_breach" => format!(
@@ -940,7 +1007,7 @@ pub fn upgrade_display_description(upgrade: &UpgradeConfig) -> String {
             upgrade.value * 100.0
         ),
         "fast_learner" => format!(
-            "Increase XP gained from all XP packs by +{:.0}%.",
+            "Increase gold gained from all gold pickups by +{:.0}%.",
             upgrade.value * 100.0
         ),
         "crit_chance" => format!(
@@ -955,7 +1022,7 @@ pub fn upgrade_display_description(upgrade: &UpgradeConfig) -> String {
         "pickup_radius" => format!("Increase pickup radius by +{:.0}.", upgrade.value),
         "aura_radius" => format!("Increase commander aura radius by +{:.0}.", upgrade.value),
         "authority_aura" => format!(
-            "Friendlies in aura lose {:.0}% less morale/cohesion; enemies in aura lose {:.2} morale/s.",
+            "Friendlies in aura lose {:.0}% less morale; enemies in aura lose {:.2} morale/s.",
             upgrade.value * 100.0,
             upgrade.value * AUTHORITY_ENEMY_MORALE_DRAIN_SCALE
         ),
@@ -977,9 +1044,8 @@ pub fn upgrade_display_description(upgrade: &UpgradeConfig) -> String {
             upgrade.value * 100.0
         ),
         "hospitalier_aura" => format!(
-            "Friendlies in aura regen +{:.1} HP/s, +{:.2} cohesion/s, +{:.2} morale/s.",
+            "Friendlies in aura regen +{:.1} HP/s and +{:.2} morale/s.",
             upgrade.value,
-            upgrade.value * HOSPITALIER_COHESION_REGEN_SCALE,
             upgrade.value * HOSPITALIER_MORALE_REGEN_SCALE
         ),
         "unique_slot_tradeoff" => format!(
@@ -990,7 +1056,7 @@ pub fn upgrade_display_description(upgrade: &UpgradeConfig) -> String {
             "Enemies inside your active formation footprint take +{:.0}% damage.",
             upgrade.value
         ),
-        "mob_fury" => "If tier-0 share requirement is met, friendlies gain +25% morale/cohesion loss mitigation and bonus damage, attack speed, and movement speed.".to_string(),
+        "mob_fury" => "If tier-0 share requirement is met, friendlies gain +25% morale loss mitigation and bonus damage, attack speed, and movement speed.".to_string(),
         "mob_justice" => "If tier-0 share requirement is met, hits execute enemies below 10% HP.".to_string(),
         "mob_mercy" => "If tier-0 share requirement is met, rescue channel time is reduced by 50%.".to_string(),
         "unlock_formation" => match upgrade.formation_id.as_deref() {
@@ -1019,7 +1085,7 @@ fn apply_upgrade(
             buffs.attack_speed_multiplier += upgrade.value;
         }
         "fast_learner" => {
-            buffs.xp_gain_multiplier += upgrade.value;
+            buffs.gold_gain_multiplier += upgrade.value;
         }
         "crit_chance" => {
             buffs.crit_chance_bonus = (buffs.crit_chance_bonus + upgrade.value).clamp(0.0, 0.95);
@@ -1062,8 +1128,6 @@ fn apply_upgrade(
         }
         "hospitalier_aura" => {
             buffs.hospitalier_hp_regen_per_sec += upgrade.value;
-            buffs.hospitalier_cohesion_regen_per_sec +=
-                upgrade.value * HOSPITALIER_COHESION_REGEN_SCALE;
             buffs.hospitalier_morale_regen_per_sec +=
                 upgrade.value * HOSPITALIER_MORALE_REGEN_SCALE;
         }
@@ -1191,7 +1255,6 @@ fn conditional_effects_from_owned(
                 effects.friendly_move_speed_bonus += MOB_FURY_MOVE_SPEED_BONUS;
                 let mitigation_multiplier = 1.0 - MOB_FURY_LOSS_MITIGATION;
                 effects.friendly_morale_loss_multiplier *= mitigation_multiplier;
-                effects.friendly_cohesion_loss_multiplier *= mitigation_multiplier;
             }
             "mob_justice" => {
                 effects.execute_below_health_ratio = effects
@@ -1272,7 +1335,6 @@ mod tests {
         UpgradeRarityRollBonus, UpgradeRngState, UpgradeValueTier, commander_level_hp_bonus,
         progression_lock_reason, roll_upgrade_options, roll_upgrade_value, upgrade_card_icon,
         upgrade_display_description, upgrade_display_title, upgrade_value_tier,
-        xp_required_for_level,
     };
 
     fn upgrade(kind: &str, id: &str) -> UpgradeConfig {
@@ -1695,7 +1757,7 @@ mod tests {
     }
 
     #[test]
-    fn fast_learner_upgrade_stacks_xp_gain_multiplier() {
+    fn fast_learner_upgrade_stacks_gold_gain_multiplier() {
         let mut buffs = GlobalBuffs::default();
         let (mut item_rarity, mut upgrade_rarity, mut skill_timing) = empty_upgrade_bonus_state();
         let mut conditional = super::ConditionalUpgradeOwnership::default();
@@ -1734,7 +1796,7 @@ mod tests {
             &mut conditional,
             &mut skillbar,
         );
-        assert!((buffs.xp_gain_multiplier - 1.16).abs() < 0.001);
+        assert!((buffs.gold_gain_multiplier - 1.16).abs() < 0.001);
     }
 
     #[test]
@@ -1847,20 +1909,53 @@ mod tests {
     }
 
     #[test]
-    fn xp_requirements_increase_each_level() {
-        assert!((xp_required_for_level(1) - 100.0).abs() < 0.001);
-        assert!(xp_required_for_level(2) > xp_required_for_level(1));
-        assert!(xp_required_for_level(5) > xp_required_for_level(4));
-        assert!(xp_required_for_level(11) > xp_required_for_level(10));
-        assert!(xp_required_for_level(21) > xp_required_for_level(20));
+    fn wave_98_grants_double_level_reward() {
+        assert_eq!(super::level_rewards_for_wave_completion(0), 0);
+        assert_eq!(super::level_rewards_for_wave_completion(1), 1);
+        assert_eq!(super::level_rewards_for_wave_completion(97), 1);
+        assert_eq!(super::level_rewards_for_wave_completion(98), 2);
+        assert_eq!(super::level_rewards_for_wave_completion(99), 1);
     }
 
     #[test]
-    fn xp_requirements_use_uniform_per_level_growth() {
-        let early_ratio = xp_required_for_level(11) / xp_required_for_level(10);
-        let late_ratio = xp_required_for_level(91) / xp_required_for_level(90);
-        assert!((early_ratio - super::XP_GROWTH_PER_LEVEL).abs() < 0.0001);
-        assert!((late_ratio - super::XP_GROWTH_PER_LEVEL).abs() < 0.0001);
+    fn wave_98_reward_reaches_level_100_by_end_of_wave_98() {
+        let mut level = 1u32;
+        for wave in 1..=98 {
+            level += super::level_rewards_for_wave_completion(wave);
+        }
+        assert_eq!(level, 100);
+    }
+
+    #[test]
+    fn reward_kind_switches_to_major_on_every_fifth_level() {
+        assert_eq!(
+            super::reward_kind_for_level(1),
+            super::UpgradeRewardKind::Minor
+        );
+        assert_eq!(
+            super::reward_kind_for_level(4),
+            super::UpgradeRewardKind::Minor
+        );
+        assert_eq!(
+            super::reward_kind_for_level(5),
+            super::UpgradeRewardKind::Major
+        );
+        assert_eq!(
+            super::reward_kind_for_level(10),
+            super::UpgradeRewardKind::Major
+        );
+        assert_eq!(
+            super::reward_kind_for_level(11),
+            super::UpgradeRewardKind::Minor
+        );
+    }
+
+    #[test]
+    fn major_minor_counts_follow_shared_level_parity_formula() {
+        assert_eq!(super::major_minor_reward_counts_for_level(1), (0, 1));
+        assert_eq!(super::major_minor_reward_counts_for_level(5), (1, 4));
+        assert_eq!(super::major_minor_reward_counts_for_level(30), (6, 24));
+        assert_eq!(super::major_minor_reward_counts_for_level(100), (20, 80));
     }
 
     #[test]
@@ -1929,7 +2024,6 @@ mod tests {
         let (active_effects, active_status) =
             super::conditional_effects_from_owned(&entries, 1.0, ActiveFormation::Square);
         assert!((active_effects.friendly_morale_loss_multiplier - 0.75).abs() < 0.001);
-        assert!((active_effects.friendly_cohesion_loss_multiplier - 0.75).abs() < 0.001);
         assert!((active_effects.friendly_damage_multiplier - 1.18).abs() < 0.001);
         assert_eq!(active_status.len(), 2);
         assert!(active_status.iter().all(|entry| entry.active));
@@ -1937,7 +2031,6 @@ mod tests {
         let (inactive_effects, inactive_status) =
             super::conditional_effects_from_owned(&entries, 0.2, ActiveFormation::Square);
         assert!((inactive_effects.friendly_morale_loss_multiplier - 1.0).abs() < 0.001);
-        assert!((inactive_effects.friendly_cohesion_loss_multiplier - 1.0).abs() < 0.001);
         assert!((inactive_effects.friendly_damage_multiplier - 1.0).abs() < 0.001);
         assert!(inactive_status.iter().all(|entry| !entry.active));
     }
@@ -1991,7 +2084,6 @@ mod tests {
         let (effects, status) =
             super::conditional_effects_from_owned(&entries, 1.0, ActiveFormation::Square);
         assert!((effects.friendly_morale_loss_multiplier - 0.75).abs() < 0.001);
-        assert!((effects.friendly_cohesion_loss_multiplier - 0.75).abs() < 0.001);
         assert!((effects.friendly_damage_multiplier - 1.18).abs() < 0.001);
         assert!((effects.rescue_time_multiplier - 0.5).abs() < 0.001);
         assert_eq!(effects.execute_below_health_ratio, 0.0);
@@ -2041,7 +2133,11 @@ mod tests {
             UpgradeCardIcon::FastLearner
         );
         assert_eq!(upgrade_display_title(&fast_learner_upgrade), "Fast Learner");
-        assert!(upgrade_display_description(&fast_learner_upgrade).contains("XP"));
+        assert!(
+            upgrade_display_description(&fast_learner_upgrade)
+                .to_lowercase()
+                .contains("gold")
+        );
 
         let unique_slots_upgrade = UpgradeConfig {
             id: "war_council_edict".to_string(),

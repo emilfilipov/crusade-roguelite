@@ -3,6 +3,7 @@ use bevy::prelude::*;
 use crate::banner::BannerMovementPenalty;
 use crate::data::{FormationConfig, GameData};
 use crate::model::{CommanderUnit, FriendlyUnit, GameState, StartRunEvent, Unit, UnitKind};
+use crate::squad::OutOfFormation;
 
 pub const SKILL_BAR_CAPACITY: usize = 10;
 
@@ -258,7 +259,19 @@ fn apply_active_formation(
     commanders: Query<&Transform, With<CommanderUnit>>,
     mut friendlies: Query<
         (Entity, &Unit, &mut Transform),
-        (With<FriendlyUnit>, Without<CommanderUnit>),
+        (
+            With<FriendlyUnit>,
+            Without<CommanderUnit>,
+            Without<OutOfFormation>,
+        ),
+    >,
+    out_of_formation: Query<
+        Entity,
+        (
+            With<FriendlyUnit>,
+            Without<CommanderUnit>,
+            With<OutOfFormation>,
+        ),
     >,
 ) {
     let Ok(commander_transform) = commanders.get_single() else {
@@ -271,7 +284,8 @@ fn apply_active_formation(
         .iter_mut()
         .map(|(entity, unit, transform)| (entity, unit.kind, transform))
         .collect();
-    let offsets = offsets_for_formation(*formation, members.len(), spacing);
+    let total_recruits = members.len() + out_of_formation.iter().count();
+    let offsets = offsets_for_formation(*formation, total_recruits, spacing);
     let ordered_offsets = role_ordered_offsets(offsets);
     members.sort_by_key(|(entity, kind, _)| (formation_slot_role_priority(*kind), entity.index()));
     let speed_multiplier = banner_penalty
@@ -316,9 +330,78 @@ fn offset_outer_first_cmp(a: &Vec2, b: &Vec2) -> std::cmp::Ordering {
 
 fn formation_slot_role_priority(kind: UnitKind) -> u8 {
     match kind {
-        UnitKind::ChristianPeasantInfantry | UnitKind::MuslimPeasantInfantry => 0, // outer frontline
-        UnitKind::ChristianPeasantArcher | UnitKind::MuslimPeasantArcher => 1,     // inner ring
-        UnitKind::ChristianPeasantPriest | UnitKind::MuslimPeasantPriest => 2, // innermost support
+        UnitKind::ChristianPeasantInfantry
+        | UnitKind::ChristianMenAtArms
+        | UnitKind::ChristianShieldInfantry
+        | UnitKind::ChristianExperiencedShieldInfantry
+        | UnitKind::ChristianEliteShieldInfantry
+        | UnitKind::ChristianSpearman
+        | UnitKind::ChristianShieldedSpearman
+        | UnitKind::ChristianHalberdier
+        | UnitKind::ChristianUnmountedKnight
+        | UnitKind::ChristianKnight
+        | UnitKind::ChristianHeavyKnight
+        | UnitKind::ChristianScout
+        | UnitKind::ChristianMountedScout
+        | UnitKind::ChristianShockCavalry
+        | UnitKind::ChristianFanatic
+        | UnitKind::ChristianFlagellant
+        | UnitKind::ChristianEliteFlagellant
+        | UnitKind::MuslimPeasantInfantry
+        | UnitKind::MuslimMenAtArms
+        | UnitKind::MuslimShieldInfantry
+        | UnitKind::MuslimExperiencedShieldInfantry
+        | UnitKind::MuslimEliteShieldInfantry
+        | UnitKind::MuslimSpearman
+        | UnitKind::MuslimShieldedSpearman
+        | UnitKind::MuslimHalberdier
+        | UnitKind::MuslimUnmountedKnight
+        | UnitKind::MuslimKnight
+        | UnitKind::MuslimHeavyKnight
+        | UnitKind::MuslimScout
+        | UnitKind::MuslimMountedScout
+        | UnitKind::MuslimShockCavalry
+        | UnitKind::MuslimFanatic
+        | UnitKind::MuslimFlagellant
+        | UnitKind::MuslimEliteFlagellant => 0, // outer frontline
+        UnitKind::ChristianPeasantArcher
+        | UnitKind::ChristianBowman
+        | UnitKind::ChristianExperiencedBowman
+        | UnitKind::ChristianEliteBowman
+        | UnitKind::ChristianLongbowman
+        | UnitKind::ChristianCrossbowman
+        | UnitKind::ChristianEliteCrossbowman
+        | UnitKind::ChristianTracker
+        | UnitKind::ChristianArmoredCrossbowman
+        | UnitKind::ChristianPathfinder
+        | UnitKind::ChristianHoundmaster
+        | UnitKind::MuslimPeasantArcher
+        | UnitKind::MuslimBowman
+        | UnitKind::MuslimExperiencedBowman
+        | UnitKind::MuslimCrossbowman
+        | UnitKind::MuslimEliteBowman
+        | UnitKind::MuslimLongbowman
+        | UnitKind::MuslimArmoredCrossbowman
+        | UnitKind::MuslimEliteCrossbowman
+        | UnitKind::MuslimTracker
+        | UnitKind::MuslimPathfinder
+        | UnitKind::MuslimHoundmaster => 1, // middle ring
+        UnitKind::ChristianPeasantPriest
+        | UnitKind::ChristianDevoted
+        | UnitKind::ChristianSquire
+        | UnitKind::ChristianBannerman
+        | UnitKind::ChristianEliteBannerman
+        | UnitKind::ChristianDevotedOne
+        | UnitKind::ChristianCardinal
+        | UnitKind::ChristianEliteCardinal
+        | UnitKind::MuslimPeasantPriest
+        | UnitKind::MuslimDevoted
+        | UnitKind::MuslimSquire
+        | UnitKind::MuslimBannerman
+        | UnitKind::MuslimEliteBannerman
+        | UnitKind::MuslimDevotedOne
+        | UnitKind::MuslimCardinal
+        | UnitKind::MuslimEliteCardinal => 2, // innermost support
         _ => 1,
     }
 }

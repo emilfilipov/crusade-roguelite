@@ -1,9 +1,11 @@
 use bevy::prelude::*;
 
+use crate::banner::BannerState;
 use crate::data::GameData;
 use crate::formation::{ActiveFormation, active_formation_config, formation_contains_position};
 use crate::inventory::{
-    InventoryState, UnitCombatRole, commander_armywide_bonuses_with_banner_state,
+    EquipmentArmyEffects, InventoryState, UnitCombatRole,
+    commander_armywide_bonuses_with_banner_state,
 };
 use crate::model::{
     CommanderUnit, EnemyUnit, FriendlyUnit, GameState, GlobalBuffs, Health, MatchSetupSelection,
@@ -41,38 +43,6 @@ const MAX_AUTHORITY_LOSS_RESISTANCE: f32 = 0.75;
 // Threshold edges for UX notifications.
 // We treat these as "crossing points" in [0, 1] morale ratio space.
 const MORALE_THRESHOLD_EDGES: [f32; 4] = [0.25, 0.50, 0.80, 1.00];
-
-// --- Compatibility shims (kept to avoid breaking other modules during refactor) --------------
-
-#[derive(Resource, Clone, Copy, Debug)]
-pub struct Cohesion {
-    pub value: f32,
-}
-
-impl Default for Cohesion {
-    fn default() -> Self {
-        Self { value: 100.0 }
-    }
-}
-
-#[derive(Resource, Clone, Copy, Debug)]
-pub struct CohesionCombatModifiers {
-    pub damage_multiplier: f32,
-    pub defense_multiplier: f32,
-    pub attack_speed_multiplier: f32,
-    pub collapse_risk: bool,
-}
-
-impl Default for CohesionCombatModifiers {
-    fn default() -> Self {
-        Self {
-            damage_multiplier: 1.0,
-            defense_multiplier: 1.0,
-            attack_speed_multiplier: 1.0,
-            collapse_risk: false,
-        }
-    }
-}
 
 // --- Events ----------------------------------------------------------------------------------
 
@@ -115,9 +85,7 @@ pub struct MoralePlugin;
 
 impl Plugin for MoralePlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Cohesion>() // compatibility mirror
-            .init_resource::<CohesionCombatModifiers>() // compatibility mirror
-            .init_resource::<MoralePressureState>()
+        app.init_resource::<MoralePressureState>()
             .init_resource::<MoraleCollapseState>()
             .init_resource::<MoraleThresholdTracker>()
             .add_event::<MoraleThresholdCrossedEvent>()
@@ -128,7 +96,6 @@ impl Plugin for MoralePlugin {
                     apply_encirclement_morale_pressure,
                     apply_full_morale_regen,
                     apply_morale_collapse,
-                    refresh_compat_modifiers_and_mirror,
                     emit_player_morale_threshold_events,
                 )
                     .chain()
@@ -142,8 +109,6 @@ fn reset_morale_state_on_run_start(
     mut pressure: ResMut<MoralePressureState>,
     mut collapse: ResMut<MoraleCollapseState>,
     mut threshold_tracker: ResMut<MoraleThresholdTracker>,
-    mut cohesion: ResMut<Cohesion>,
-    mut cohesion_mods: ResMut<CohesionCombatModifiers>,
 ) {
     if start_events.is_empty() {
         return;
@@ -157,25 +122,28 @@ fn reset_morale_state_on_run_start(
 
     threshold_tracker.initialized = false;
     threshold_tracker.bucket = 0;
-
-    cohesion.value = 100.0;
-    *cohesion_mods = cohesion_modifiers(100.0);
 }
 
 // --- Main systems ----------------------------------------------------------------------------
 
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::type_complexity)]
 fn apply_encirclement_morale_pressure(
     time: Res<Time>,
     data: Res<GameData>,
     active_formation: Res<ActiveFormation>,
     setup_selection: Option<Res<MatchSetupSelection>>,
+    inventory: Option<Res<InventoryState>>,
+    buffs: Option<Res<GlobalBuffs>>,
+    equipment_effects: Option<Res<EquipmentArmyEffects>>,
+    banner_state: Option<Res<BannerState>>,
     conditional_effects: Option<Res<ConditionalUpgradeEffects>>,
     commanders: Query<&Transform, With<CommanderUnit>>,
-    enemies: Query<&Transform, With<EnemyUnit>>,
+    enemies_for_pressure: Query<&Transform, (With<EnemyUnit>, Without<FriendlyUnit>)>,
+    mut enemies: Query<(&Transform, &mut Morale), (With<EnemyUnit>, Without<FriendlyUnit>)>,
     retinue: Query<&Transform, (With<FriendlyUnit>, Without<CommanderUnit>)>,
     mut pressure: ResMut<MoralePressureState>,
-    mut friendlies: Query<&mut Morale, With<FriendlyUnit>>,
+    mut friendlies: Query<(&Transform, &mut Morale), (With<FriendlyUnit>, Without<EnemyUnit>)>,
 ) {
     let Ok(commander_transform) = commanders.get_single() else {
         return;
@@ -189,7 +157,7 @@ fn apply_encirclement_morale_pressure(
     let commander_pos = commander_transform.translation.truncate();
     let retinue_count = retinue.iter().count();
     let slot_spacing = active_formation_config(&data, *active_formation).slot_spacing;
-    let inside_enemy_count = enemies
+    let inside_enemy_count = enemies_for_pressure
         .iter()
         .filter(|enemy| {
             formation_contains_position(
@@ -217,31 +185,88 @@ fn apply_encirclement_morale_pressure(
 
     let player_faction = selected_player_faction(setup_selection.as_deref());
     let faction_mods = data.factions.for_faction(player_faction);
+    let banner_item_active = !banner_state
+        .as_deref()
+        .map(|state| state.is_dropped)
+        .unwrap_or(false);
+    let commander_bonuses = inventory
+        .as_deref()
+        .map(|inv| {
+            commander_armywide_bonuses_with_banner_state(
+                inv,
+                UnitCombatRole::Commander,
+                banner_item_active,
+            )
+        })
+        .unwrap_or_default();
+    let aura_radius = commander_aura_radius(
+        &data,
+        buffs.as_deref(),
+        inventory.as_deref(),
+        player_faction,
+        banner_item_active,
+    );
+    let aura_context = (aura_radius > 0.0).then_some((commander_pos, aura_radius));
     let conditional_loss = conditional_effects
         .as_deref()
         .map(|v| v.friendly_morale_loss_multiplier)
         .unwrap_or(1.0)
         .clamp(0.0, 1.0);
+    let has_pressure = pressure_ratio > 0.0;
+    let pressure_drain_active = has_pressure && pressure.pressure_secs >= PRESSURE_DELAY_SECS;
 
-    let morale_delta_per_sec =
-        if pressure_ratio > 0.0 && pressure.pressure_secs >= PRESSURE_DELAY_SECS {
-            -PRESSURE_MORALE_DRAIN_PER_SEC_MAX
-                * pressure_ratio
-                * conditional_loss
-                * faction_mods.friendly_morale_loss_multiplier
-        } else if pressure_ratio <= 0.0 {
-            SAFE_MORALE_RECOVERY_PER_SEC * faction_mods.friendly_morale_gain_multiplier
+    let enemy_aura_drain_per_sec = authority_enemy_morale_drain_per_sec(
+        buffs.as_deref(),
+        faction_mods.authority_enemy_morale_drain_multiplier,
+        commander_bonuses.aura_enemy_effect_bonus_multiplier,
+    );
+    if enemy_aura_drain_per_sec > f32::EPSILON {
+        let enemy_delta = enemy_aura_drain_per_sec * dt;
+        for (enemy_transform, mut enemy_morale) in &mut enemies {
+            if !in_commander_aura(enemy_transform.translation.truncate(), aura_context) {
+                continue;
+            }
+            enemy_morale.current =
+                (enemy_morale.current - enemy_delta).clamp(0.0, enemy_morale.max);
+        }
+    }
+
+    for (friendly_transform, mut morale) in &mut friendlies {
+        let in_aura = in_commander_aura(friendly_transform.translation.truncate(), aura_context);
+        let authority_loss_multiplier =
+            friendly_loss_multiplier_from_authority(in_aura, buffs.as_deref());
+        let hospitalier_morale_regen_per_sec = if in_aura {
+            buffs
+                .as_deref()
+                .map(|value| value.hospitalier_morale_regen_per_sec)
+                .unwrap_or(0.0)
         } else {
             0.0
         };
-
-    if morale_delta_per_sec.abs() <= f32::EPSILON {
-        return;
-    }
-
-    let delta = morale_delta_per_sec * dt;
-    for mut morale in &mut friendlies {
-        morale.current = (morale.current + delta).clamp(0.0, morale.max);
+        let effective_loss_multiplier = effective_friendly_morale_loss_multiplier(
+            conditional_loss,
+            faction_mods.friendly_morale_loss_multiplier,
+            authority_loss_multiplier,
+            commander_bonuses.morale_loss_resistance,
+            equipment_effects
+                .as_deref()
+                .map(|effects| effects.morale_loss_immunity)
+                .unwrap_or(false),
+        );
+        let passive_regen_per_sec =
+            commander_bonuses.morale_regen_per_sec + hospitalier_morale_regen_per_sec;
+        let morale_delta_per_sec = encirclement_morale_delta_per_sec(
+            pressure_ratio,
+            has_pressure,
+            pressure_drain_active,
+            faction_mods.friendly_morale_gain_multiplier,
+            passive_regen_per_sec,
+            effective_loss_multiplier,
+        );
+        if morale_delta_per_sec.abs() <= f32::EPSILON {
+            continue;
+        }
+        morale.current = (morale.current + morale_delta_per_sec * dt).clamp(0.0, morale.max);
     }
 }
 
@@ -289,15 +314,11 @@ fn apply_morale_collapse(
         return;
     }
 
-    let mut avg_ratio = 1.0;
-    let mut count = 0usize;
-    for morale in &all_friendlies_morale {
-        avg_ratio += morale.ratio();
-        count += 1;
-    }
-    if count > 0 {
-        avg_ratio /= count as f32 + 1.0;
-    }
+    let morale_ratios: Vec<f32> = all_friendlies_morale
+        .iter()
+        .map(|morale| morale.ratio())
+        .collect();
+    let avg_ratio = average_morale_ratio(&morale_ratios).clamp(0.0, 1.0);
 
     if avg_ratio > 0.0 || collapse.grace_remaining > 0.0 {
         return;
@@ -333,24 +354,6 @@ fn apply_morale_collapse(
 
     collapse.reset_pending = true;
     collapse.reset_delay_remaining = COLLAPSE_RESET_DELAY_SECS;
-}
-
-// Compatibility mirror for modules that still read `Cohesion`/`CohesionCombatModifiers`.
-fn refresh_compat_modifiers_and_mirror(
-    friendlies: Query<&Morale, With<FriendlyUnit>>,
-    mut cohesion: ResMut<Cohesion>,
-    mut modifiers: ResMut<CohesionCombatModifiers>,
-) {
-    let ratios: Vec<f32> = friendlies.iter().map(|m| m.ratio()).collect();
-    let avg_ratio = average_morale_ratio(&ratios).clamp(0.0, 1.0);
-
-    cohesion.value = avg_ratio * 100.0;
-    *modifiers = CohesionCombatModifiers {
-        damage_multiplier: morale_damage_multiplier(avg_ratio),
-        defense_multiplier: morale_armor_multiplier(avg_ratio),
-        attack_speed_multiplier: 1.0,
-        collapse_risk: avg_ratio <= 0.0,
-    };
 }
 
 fn emit_player_morale_threshold_events(
@@ -437,16 +440,6 @@ pub fn low_morale_ratio(morale_ratios: &[f32], threshold: f32) -> f32 {
     low_count as f32 / morale_ratios.len() as f32
 }
 
-pub fn cohesion_modifiers(value: f32) -> CohesionCombatModifiers {
-    let ratio = (value / 100.0).clamp(0.0, 1.0);
-    CohesionCombatModifiers {
-        damage_multiplier: morale_damage_multiplier(ratio),
-        defense_multiplier: morale_armor_multiplier(ratio),
-        attack_speed_multiplier: 1.0,
-        collapse_risk: ratio <= 0.0,
-    }
-}
-
 pub fn morale_threshold_message(
     threshold_ratio: f32,
     direction: MoraleThresholdDirection,
@@ -526,6 +519,59 @@ pub fn friendly_loss_multiplier_from_authority(in_aura: bool, buffs: Option<&Glo
         .unwrap_or(0.0)
         .clamp(0.0, MAX_AUTHORITY_LOSS_RESISTANCE);
     (1.0 - resistance).clamp(0.1, 1.0)
+}
+
+pub fn effective_friendly_morale_loss_multiplier(
+    conditional_loss_multiplier: f32,
+    faction_loss_multiplier: f32,
+    authority_loss_multiplier: f32,
+    gear_morale_loss_resistance: f32,
+    morale_loss_immunity: bool,
+) -> f32 {
+    if morale_loss_immunity {
+        return 0.0;
+    }
+    let gear_loss_multiplier =
+        (1.0 - gear_morale_loss_resistance.clamp(0.0, 0.95)).clamp(0.05, 1.0);
+    conditional_loss_multiplier.clamp(0.0, 1.0)
+        * faction_loss_multiplier.max(0.0)
+        * authority_loss_multiplier.max(0.0)
+        * gear_loss_multiplier
+}
+
+pub fn encirclement_morale_delta_per_sec(
+    pressure_ratio: f32,
+    has_pressure: bool,
+    pressure_drain_active: bool,
+    faction_gain_multiplier: f32,
+    passive_regen_per_sec: f32,
+    effective_loss_multiplier: f32,
+) -> f32 {
+    let pressure = pressure_ratio.clamp(0.0, 1.0);
+    let safe_recovery_per_sec = if !has_pressure {
+        SAFE_MORALE_RECOVERY_PER_SEC * faction_gain_multiplier.max(0.0)
+    } else {
+        0.0
+    };
+    let pressure_loss_per_sec = if pressure_drain_active && pressure > 0.0 {
+        PRESSURE_MORALE_DRAIN_PER_SEC_MAX * pressure * effective_loss_multiplier.max(0.0)
+    } else {
+        0.0
+    };
+    safe_recovery_per_sec + passive_regen_per_sec.max(0.0) - pressure_loss_per_sec
+}
+
+pub fn authority_enemy_morale_drain_per_sec(
+    buffs: Option<&GlobalBuffs>,
+    faction_authority_multiplier: f32,
+    aura_enemy_effect_bonus_multiplier: f32,
+) -> f32 {
+    let base_drain_per_sec = buffs
+        .map(|value| value.authority_enemy_morale_drain_per_sec)
+        .unwrap_or(0.0)
+        .max(0.0);
+    let aura_multiplier = (1.0 + aura_enemy_effect_bonus_multiplier).max(0.0);
+    base_drain_per_sec * faction_authority_multiplier.max(0.0) * aura_multiplier
 }
 
 // --- Threshold helpers -----------------------------------------------------------------------
@@ -632,5 +678,38 @@ mod tests {
         assert_eq!(collapse_casualty_count(1), 1);
         assert_eq!(collapse_casualty_count(10), 1);
         assert_eq!(collapse_casualty_count(40), 4);
+    }
+
+    #[test]
+    fn average_ratio_can_reach_zero() {
+        assert!((average_morale_ratio(&[0.0, 0.0, 0.0]) - 0.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn friendly_loss_multiplier_respects_resistance_and_immunity() {
+        let reduced = effective_friendly_morale_loss_multiplier(0.8, 1.1, 0.9, 0.2, false);
+        assert!((reduced - 0.6336).abs() < 0.001);
+
+        let immune = effective_friendly_morale_loss_multiplier(1.0, 1.0, 1.0, 0.0, true);
+        assert_eq!(immune, 0.0);
+    }
+
+    #[test]
+    fn encirclement_delta_combines_recovery_regen_and_drain() {
+        let safe = encirclement_morale_delta_per_sec(0.0, false, false, 1.1, 0.2, 1.0);
+        assert!((safe - 0.53).abs() < 0.001);
+
+        let draining = encirclement_morale_delta_per_sec(1.0, true, true, 1.1, 0.2, 0.6);
+        assert!((draining + 0.46).abs() < 0.001);
+    }
+
+    #[test]
+    fn authority_enemy_drain_scales_with_faction_and_aura_bonus() {
+        let buffs = GlobalBuffs {
+            authority_enemy_morale_drain_per_sec: 2.0,
+            ..GlobalBuffs::default()
+        };
+        let drain = authority_enemy_morale_drain_per_sec(Some(&buffs), 1.2, 0.25);
+        assert!((drain - 3.0).abs() < 0.001);
     }
 }

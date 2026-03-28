@@ -6,10 +6,10 @@ UI element art is intentionally excluded for now (basic programmatic shapes are 
 
 ## Scope Assumptions (MVP)
 - Top-down or slightly angled 2D battlefield.
-- One commander at run start (`Baldiun`).
-- Two recruitable soldier types (`Christian Peasant Infantry`, `Christian Peasant Archer`).
-- One enemy type (melee infantry).
-- One formation in use (`Square`).
+- One commander at run start, selected by faction (`Baldiun` or `Saladin`).
+- Six recruitable soldier variants across two factions (`Peasant Infantry`, `Peasant Archer`, `Peasant Priest` per faction).
+- Three enemy archetypes (infantry, archer, priest) mirrored across factions.
+- Two formations in active use (`Square`, `Diamond`).
 - One map biome (desert).
 - Oasis POI assets are optional/deferred until oasis gameplay is re-enabled.
 - Banner drop/recovery and rescue recruitment are included.
@@ -30,6 +30,12 @@ UI element art is intentionally excluded for now (basic programmatic shapes are 
 4. `commander_baldiun_hit_react`
 5. `commander_baldiun_death`
 6. `commander_baldiun_battle_cry_cast` (simple cast/readability pose)
+7. `commander_saladin_idle` (loop)
+8. `commander_saladin_move` (loop)
+9. `commander_saladin_attack_melee`
+10. `commander_saladin_hit_react`
+11. `commander_saladin_death`
+12. `commander_saladin_battle_cry_cast` (simple cast/readability pose)
 
 ### 2) Characters - Friendly Units
 1. `friendly_christian_peasant_infantry_idle` (loop)
@@ -44,13 +50,29 @@ UI element art is intentionally excluded for now (basic programmatic shapes are 
 10. `friendly_christian_peasant_archer_hit_react`
 11. `friendly_christian_peasant_archer_death`
 12. `friendly_christian_peasant_archer_rescuable_variant`
+13. `friendly_christian_peasant_priest_idle` (loop)
+14. `friendly_christian_peasant_priest_move` (loop)
+15. `friendly_christian_peasant_priest_cast_support`
+16. `friendly_christian_peasant_priest_hit_react`
+17. `friendly_christian_peasant_priest_death`
+18. `friendly_christian_peasant_priest_rescuable_variant`
+19. `friendly_muslim_peasant_infantry_idle` (loop)
+20. `friendly_muslim_peasant_archer_idle` (loop)
+21. `friendly_muslim_peasant_priest_idle` (loop)
+22. `friendly_muslim_rescuable_variants` (infantry/archer/priest)
 
 ### 3) Characters - Enemies
-1. `enemy_bandit_raider_idle` (loop)
-2. `enemy_bandit_raider_move` (loop)
-3. `enemy_bandit_raider_attack`
-4. `enemy_bandit_raider_hit_react`
-5. `enemy_bandit_raider_death`
+1. `enemy_peasant_infantry_idle` (loop)
+2. `enemy_peasant_infantry_move` (loop)
+3. `enemy_peasant_infantry_attack`
+4. `enemy_peasant_archer_idle` (loop)
+5. `enemy_peasant_archer_move` (loop)
+6. `enemy_peasant_archer_attack_ranged`
+7. `enemy_peasant_priest_idle` (loop)
+8. `enemy_peasant_priest_move` (loop)
+9. `enemy_peasant_priest_cast_support`
+10. `enemy_shared_hit_react`
+11. `enemy_shared_death`
 
 ### 4) Shared Character Support
 1. `unit_shadow_blob_small`
@@ -63,7 +85,9 @@ UI element art is intentionally excluded for now (basic programmatic shapes are 
 2. `banner_dropped`
 3. `banner_recover_fx_marker` (simple marker for interaction readability)
 4. `rescue_marker_neutral` (icon/beacon above rescuable unit)
-5. `xp_coin_stack_pickup`
+5. `gold_coin_stack_pickup`
+6. `wave_magnet_pickup` (cross/crescent variants)
+7. `equipment_chest_drop_closed`
 
 ### 6) Environment - Terrain and Foliage
 1. `terrain_desert_base_tile_a`
@@ -108,18 +132,18 @@ UI element art is intentionally excluded for now (basic programmatic shapes are 
 2. `bg_haze_gradient`
 
 ## Recommended First-Pass Quantities
-- Fully animated unit sets: 4 total (commander, friendly peasant infantry, friendly peasant archer, enemy bandit raider).
+- Fully animated unit sets: 8 total (2 commanders, 3 friendly archetypes, 3 enemy archetypes; faction variants can start as palette/gear swaps).
 - Terrain/foliage sprites: 14 base pieces (enough for visual variation without overproduction).
-- Gameplay object sprites: 5.
+- Gameplay object sprites: 7 (include magnet and chest pickups).
 - VFX sprites/flipbooks: 9.
 - Decals/background: 5.
 
 ## Not Required for MVP (Do Not Produce Yet)
 - UI frame art, buttons, portraits, inventory panels.
-- Additional enemy families (archer/cavalry/elites).
-- Additional recruit classes (spearman/support).
+- Additional enemy families beyond current infantry/archer/priest (for example cavalry/elites).
+- Additional recruit classes beyond current peasant infantry/archer/priest (for example spearman, engineer).
 - Additional map biomes.
-- Formation-specific art variants beyond square-first gameplay.
+- Formation-specific art variants beyond current square/diamond gameplay.
 
 ## Expansion Hooks (Post-MVP)
 - Add per-faction material swaps for units.

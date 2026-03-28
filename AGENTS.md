@@ -36,7 +36,7 @@ The tone should be grounded, dusty, historical-inspired, and readable rather tha
 6. Retinue size is unlimited in design intent (practically constrained only by performance/balance during implementation).
 7. Formation and positioning matter more than twitch combat.
 8. Upgrades should feel like building an army, not leveling a lone hero.
-9. Morale, cohesion, and banner survival are central to the game feel.
+9. Morale and banner survival are central to the game feel.
 10. Keep scope small and prototype-friendly.
 
 ## MVP Scope
@@ -72,7 +72,7 @@ Build the smallest playable version first.
 - Improve armor
 - Improve damage
 - Improve attack speed
-- Improve morale/cohesion
+- Improve morale
 
 ### Recruitment loop
 - Neutral/rescuable soldiers appear in the level
@@ -84,9 +84,9 @@ Build the smallest playable version first.
 ### Squad health model
 Prefer a combination of:
 - Individual soldiers can die
-- The squad also has morale/cohesion
+- The squad also has morale
 
-Low cohesion should reduce effectiveness, such as:
+Low morale should reduce effectiveness, such as:
 - slower attacks
 - looser formation
 - weaker defense
@@ -134,7 +134,7 @@ When contributing to this project, follow these rules:
    - squad formation logic
    - enemy spawning
    - upgrade selection
-   - morale/cohesion systems
+   - morale systems
 5. Do not introduce unnecessary engine complexity.
 6. Prefer readable, modular code over clever abstractions.
 7. Add new mechanics only if they support the main loop of squad survival and growth.
@@ -175,7 +175,7 @@ These steps are mandatory for every meaningful code change.
 5. Enemy waves
 6. Unit death
 7. Upgrade selection between level-ups
-8. Morale/cohesion
+8. Morale
 9. Banner failure/recovery
 
 ## Post-MVP Ideas
