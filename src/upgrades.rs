@@ -7,8 +7,8 @@ use crate::enemies::WaveCompletedEvent;
 use crate::formation::{ActiveFormation, FormationSkillBar};
 use crate::inventory::ItemRarityRollBonus;
 use crate::model::{
-    BaseMaxHealth, FriendlyUnit, GainGoldEvent, GameState, GlobalBuffs, Health,
-    MAX_COMMANDER_LEVEL, MatchSetupSelection, StartRunEvent,
+    BaseMaxHealth, FriendlyUnit, GainGoldEvent, GainHearTheCallTokenEvent, GameState, GlobalBuffs,
+    Health, MAX_COMMANDER_LEVEL, MatchSetupSelection, StartRunEvent,
 };
 use crate::random::runtime_entropy_seed_u64;
 use crate::squad::RosterEconomy;
@@ -70,9 +70,18 @@ pub fn effective_max_unique_upgrades(tracker: &OneTimeUpgradeTracker) -> usize {
     MAX_UNIQUE_UPGRADES.saturating_add(tracker.extra_slots)
 }
 
+pub fn consume_hear_the_call_for_hero_recruit(progression: &mut Progression) -> bool {
+    if progression.hear_the_call_tokens == 0 {
+        return false;
+    }
+    progression.hear_the_call_tokens = progression.hear_the_call_tokens.saturating_sub(1);
+    true
+}
+
 #[derive(Resource, Clone, Debug)]
 pub struct Progression {
     pub gold: f32,
+    pub hear_the_call_tokens: u32,
     pub level: u32,
     pub pending_level_ups: u32,
 }
@@ -86,6 +95,7 @@ impl Default for Progression {
     fn default() -> Self {
         Self {
             gold: 0.0,
+            hear_the_call_tokens: 0,
             level: 1,
             pending_level_ups: 0,
         }
@@ -333,6 +343,7 @@ impl Plugin for UpgradePlugin {
                 Update,
                 (
                     gain_gold,
+                    gain_hear_the_call_tokens,
                     queue_level_rewards_from_wave_completions,
                     open_draft_on_pending_levels,
                     sync_friendly_level_health_caps,
@@ -424,6 +435,17 @@ fn reset_progress_lock_feedback_on_run_start(
 fn gain_gold(mut progression: ResMut<Progression>, mut gold_events: EventReader<GainGoldEvent>) {
     for event in gold_events.read() {
         progression.gold = (progression.gold + event.0).max(0.0);
+    }
+}
+
+fn gain_hear_the_call_tokens(
+    mut progression: ResMut<Progression>,
+    mut token_events: EventReader<GainHearTheCallTokenEvent>,
+) {
+    for event in token_events.read() {
+        progression.hear_the_call_tokens = progression
+            .hear_the_call_tokens
+            .saturating_add(event.0.max(1));
     }
 }
 
@@ -1333,8 +1355,9 @@ mod tests {
     use crate::upgrades::{
         OneTimeUpgradeTracker, SkillBookLog, SkillTimingBuffs, UpgradeCardIcon,
         UpgradeRarityRollBonus, UpgradeRngState, UpgradeValueTier, commander_level_hp_bonus,
-        progression_lock_reason, roll_upgrade_options, roll_upgrade_value, upgrade_card_icon,
-        upgrade_display_description, upgrade_display_title, upgrade_value_tier,
+        consume_hear_the_call_for_hero_recruit, progression_lock_reason, roll_upgrade_options,
+        roll_upgrade_value, upgrade_card_icon, upgrade_display_description, upgrade_display_title,
+        upgrade_value_tier,
     };
 
     fn upgrade(kind: &str, id: &str) -> UpgradeConfig {
@@ -1366,6 +1389,20 @@ mod tests {
             UpgradeRarityRollBonus::default(),
             SkillTimingBuffs::default(),
         )
+    }
+
+    #[test]
+    fn hero_recruit_consumes_exactly_one_hear_the_call_token() {
+        let mut progression = super::Progression {
+            hear_the_call_tokens: 2,
+            ..Default::default()
+        };
+        assert!(consume_hear_the_call_for_hero_recruit(&mut progression));
+        assert_eq!(progression.hear_the_call_tokens, 1);
+        assert!(consume_hear_the_call_for_hero_recruit(&mut progression));
+        assert_eq!(progression.hear_the_call_tokens, 0);
+        assert!(!consume_hear_the_call_for_hero_recruit(&mut progression));
+        assert_eq!(progression.hear_the_call_tokens, 0);
     }
 
     #[test]

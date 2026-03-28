@@ -35,9 +35,9 @@ use image::imageops::FilterType;
 use tracing_appender::non_blocking::WorkerGuard;
 
 use crate::model::{
-    DamageEvent, DamageTextEvent, GainGoldEvent, GameState, MatchSetupSelection, RecruitEvent,
-    RunModalRequestEvent, RunModalState, RunSession, SpawnGoldPackEvent, StartRunEvent,
-    UnitDamagedEvent, UnitDiedEvent,
+    DamageEvent, DamageTextEvent, GainGoldEvent, GainHearTheCallTokenEvent, GameState,
+    MatchSetupSelection, RecruitEvent, RunModalRequestEvent, RunModalState, RunSession,
+    SpawnGoldPackEvent, StartRunEvent, UnitDamagedEvent, UnitDiedEvent,
 };
 
 #[derive(Resource)]
@@ -99,6 +99,7 @@ pub fn configure_game_app(app: &mut App) {
         .add_event::<DamageTextEvent>()
         .add_event::<UnitDiedEvent>()
         .add_event::<GainGoldEvent>()
+        .add_event::<GainHearTheCallTokenEvent>()
         .add_event::<SpawnGoldPackEvent>()
         .add_event::<enemies::WaveCompletedEvent>()
         .add_event::<RunModalRequestEvent>()

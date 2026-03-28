@@ -533,7 +533,7 @@
 ## Army/Unit Expansion Backlog
 
 ### Army/Tier Expansion Track: Adaptive Enemy Armies + Tiered Roster + Hero Recruitment
-- Execution order (high level): `CRU-218 -> CRU-219 -> CRU-220 -> CRU-221 -> (CRU-222 + CRU-223 + CRU-224) -> CRU-225 -> (CRU-226 -> CRU-227 -> CRU-228 -> CRU-229 -> CRU-230) -> CRU-231 -> (CRU-232 + CRU-233) -> CRU-234`.
+- Execution order (high level): `CRU-218 -> CRU-219 -> CRU-220 -> CRU-221 -> (CRU-222 + CRU-223 + CRU-224) -> CRU-225 -> (CRU-226 -> CRU-227 -> CRU-228 -> CRU-229 -> CRU-230) -> CRU-231 -> CRU-232 -> (CRU-235 -> CRU-236 -> CRU-237 -> CRU-238 -> CRU-239 -> CRU-240 -> CRU-243 -> CRU-244 -> CRU-241 -> CRU-242) -> CRU-233 -> CRU-234`.
 - Scope intent: add wave-army escalation, difficulty-specific enemy doctrines, boss-gated tier unlocks, and hero-tier recruitment while staying compatible with deterministic major/minor and item revamp systems.
 
 ### CRU-218 - Major/Minor Count Parity Contract (Player and Enemy Armies)
@@ -878,7 +878,7 @@
   - `docs/ASSET_SOURCES.md`
 
 ### CRU-231 - Tier 5 + Hero Tier Unlock Scaffold and Hear the Call Resource
-- Status: `TODO`
+- Status: `DONE`
 - Type: `Gameplay`
 - Priority: `P0`
 - Depends on: `CRU-230, CRU-220, CRU-221`
@@ -904,7 +904,7 @@
   - `docs/ASSET_SOURCES.md`
 
 ### CRU-232 - Unit Upgrade UI Expansion: Horizontal Subtype Boxes + Hero Recruit Actions
-- Status: `TODO`
+- Status: `DONE`
 - Type: `UI`
 - Priority: `P0`
 - Depends on: `CRU-231, CRU-226`
@@ -929,13 +929,334 @@
   - `docs/SYSTEM_SCOPE_MAP.md`
   - `docs/ASSET_SOURCES.md`
 
-### CRU-233 - Faction-Specific Hero Pools and Name Rosters
+### CRU-235 - Faction-Agnostic Identity Contract (UnitRef/HeroRef/ItemRef Data Ownership)
+- Status: `IN PROGRESS`
+- Type: `Docs`
+- Priority: `P0`
+- Depends on: `CRU-232`
+- Goal: Freeze a canonical identity model where runtime systems use generic unit/hero/item IDs with faction context instead of faction-duplicated definitions.
+- Context:
+  - Current runtime still carries faction-duplicated identifiers (`Christian*`, `Muslim*`) across combat, UI, promotion, and archive paths.
+  - The refactor target is config-extensible onboarding of new factions without re-wiring core systems.
+  - Files expected to change: `docs/SYSTEMS_REFERENCE.md`, `docs/SYSTEM_SCOPE_MAP.md`, `docs/requirements.md`.
+- Implementation:
+  1. Define canonical runtime identity structs (`UnitRef { faction_id, unit_id }`, `HeroRef { faction_id, hero_id }`, `ItemRef { faction_id, item_id }`) and naming conventions.
+  2. Define ownership boundaries for base data vs faction override data (`display`, `stats`, `abilities`, `visuals`, `promotion`, `hero pools`, `item drop tables`, `item icons`).
+  3. Define merge/fallback contract for unresolved override fields and validation failures.
+  4. Define migration guardrails and explicit cutover criteria (no backwards compatibility layer after cutover).
+- Unit Tests Required:
+  - `none (design/docs task)`
+  - `none (design/docs task)`
+- Acceptance Criteria:
+  - One approved identity contract exists for units/heroes/items that is faction-agnostic.
+  - Core/runtime/content tasks can implement against this contract without unresolved ambiguity.
+- Documentation Updates Required:
+  - `docs/SYSTEMS_REFERENCE.md`
+  - `docs/SYSTEM_SCOPE_MAP.md`
+  - `docs/requirements.md`
+
+### CRU-236 - Data Schema Migration: Generic Unit/Hero/Item IDs + Faction Overrides
+- Status: `IN PROGRESS`
+- Type: `Core`
+- Priority: `P0`
+- Depends on: `CRU-235`
+- Goal: Replace faction-duplicated content schema with base catalogs plus faction override schema for units, heroes, and items.
+- Context:
+  - Current JSON/data and enum wiring duplicates per-faction roster entries.
+  - New schema must support adding a new faction through data files without gameplay-code branch explosion.
+  - Files expected to change: `src/data.rs`, `assets/data/units*.json`, `assets/data/heroes*.json`, `assets/data/items*.json`, drop-table configs, validators.
+- Implementation:
+  1. Add generic base catalogs (`unit_id`, `hero_id`, `hero_subtype_id`, `item_id`) and faction override sections keyed by generic IDs.
+  2. Add data loader merge logic (base -> faction override) with strict validation and clear error reporting.
+  3. Migrate existing Christian/Muslim data into override files while preserving current behavior parity.
+  4. Reject legacy faction-duplicated schema forms after migration cutover.
+- Unit Tests Required:
+  - Loader/validator tests for base+override merge success and invalid override failure.
+  - Migration parity tests verifying representative unit/hero/item entries preserve expected resolved runtime values.
+- Acceptance Criteria:
+  - Runtime loads generic unit/hero/item catalogs with faction overrides only.
+  - Invalid faction overrides fail fast with actionable validation messages.
+- Documentation Updates Required:
+  - `docs/SYSTEMS_REFERENCE.md`
+  - `docs/SYSTEM_SCOPE_MAP.md`
+  - `docs/ASSET_SOURCES.md`
+
+### CRU-237 - Runtime Identity Refactor Across ECS (UnitKind -> UnitRef)
+- Status: `IN PROGRESS`
+- Type: `Core`
+- Priority: `P0`
+- Depends on: `CRU-236`
+- Goal: Refactor runtime entity identity and decision logic to consume generic `UnitRef`/`HeroRef` instead of faction-specific unit enums.
+- Context:
+  - Systems currently key behavior through long `match` blocks on faction-specific `UnitKind` variants.
+  - This card is the core mechanical cutover and must maintain deterministic gameplay behavior.
+  - Files expected to change: `src/model.rs`, `src/squad.rs`, `src/combat.rs`, `src/enemies.rs`, `src/inventory.rs`, `src/formation.rs`, `src/morale.rs`.
+- Implementation:
+  1. Introduce `UnitRef`/`HeroRef` runtime types and replace entity identity usage in combat/squad/enemy/formation loops.
+  2. Replace faction-specific trait checks (ranged/support/tracker/scout/etc.) with resolved catalog traits/tags.
+  3. Replace label/stat/profile lookup helpers with catalog-driven resolvers.
+  4. Remove dead branch logic that depended on faction-specific enum names.
+- Unit Tests Required:
+  - Identity resolution tests covering role/trait lookup parity for representative units.
+  - Deterministic regression tests for combat/squad behavior equivalence under fixed seeds.
+- Acceptance Criteria:
+  - Core runtime no longer requires faction-specific unit enum variants to resolve behavior.
+  - Existing runs remain behaviorally stable under deterministic replay checks.
+- Documentation Updates Required:
+  - `docs/SYSTEMS_REFERENCE.md`
+  - `docs/SYSTEM_SCOPE_MAP.md`
+  - `docs/ASSET_SOURCES.md`
+
+### CRU-238 - Generic Promotion/Rescue/Wave Pipeline Refactor
+- Status: `IN PROGRESS`
+- Type: `Gameplay`
+- Priority: `P0`
+- Depends on: `CRU-237`
+- Goal: Rebuild promotion trees, rescue recruitment, and wave composition on generic IDs with faction-scoped content resolution.
+- Context:
+  - Promotion graph and rescue/wave paths still rely on faction-specific unit naming and branch duplication.
+  - The target is one generic progression graph with faction-level content overrides where needed.
+  - Files expected to change: `src/squad.rs`, `src/rescue.rs`, `src/enemies.rs`, roster/promotion data assets.
+- Implementation:
+  1. Move promotion graph definitions to generic IDs with faction override support for branches or exclusions.
+  2. Refactor rescue pool generation to select generic IDs plus faction context.
+  3. Implement wave-tier composition ramp:
+     - waves `1..10` spawn `100%` tier-0 units,
+     - after each major-army unlock, regular waves blend previous/current unlocked tiers so current-tier share ramps to `100%` by the next major wave (`20/30/40/50/60`),
+     - major-army lane includes a difficulty-scaled preview slice of the next tier (when available).
+  4. Keep boss-gated unlock and economy constraints intact under generic IDs.
+  5. Add migration checks ensuring no orphaned promotion edges or invalid pool references.
+- Unit Tests Required:
+  - Promotion graph integrity tests (no illegal edges, no orphan nodes) across all factions.
+  - Rescue/wave selection tests verifying faction-correct resolution from generic IDs.
+  - Wave-tier mix tests verifying ramp milestones (`wave 11`, `wave 20`, `wave 21`) and major-wave preview behavior by difficulty.
+- Acceptance Criteria:
+  - Promotion/rescue/wave systems operate from one generic content model.
+  - Regular-wave tier composition follows unlock-ramp contract and reaches `100%` unlocked-tier composition by the next major wave.
+  - Major-army waves include a measurable next-tier preview share when a higher tier exists.
+  - Faction differences are data overrides, not duplicated system logic.
+- Documentation Updates Required:
+  - `docs/SYSTEMS_REFERENCE.md`
+  - `docs/SYSTEM_SCOPE_MAP.md`
+  - `docs/ASSET_SOURCES.md`
+
+### CRU-239 - UI/Archive Naming Refactor (Generic Names + Faction Presentation Layer)
+- Status: `DONE`
+- Type: `UI`
+- Priority: `P1`
+- Depends on: `CRU-237, CRU-238`
+- Goal: Remove hardcoded faction prefixes from unit/hero/item display paths and route naming through resolved catalog display data.
+- Context:
+  - UI currently displays names through hardcoded label maps (`Christian ...`, `Muslim ...`).
+  - Design intent is reusable generic names with faction-specific presentation via icons/colors/optional override names.
+  - Files expected to change: `src/ui.rs`, `src/archive.rs`, `src/inventory.rs`, related data assets.
+- Implementation:
+  1. Replace hardcoded label maps in UI/archive with catalog display-name resolvers.
+  2. Add faction presentation metadata (badge/icon/tint/optional display override) without duplicating unit definitions.
+  3. Update tooltips, upgrade graphs, inventory/chest item cards, and archive entries to use resolved names.
+  4. Remove stale tests that rely on hardcoded faction-prefixed labels and replace with resolver-based assertions.
+- Unit Tests Required:
+  - UI/archive/inventory name resolution tests for generic names with faction presentation tags.
+  - Tooltip regression tests verifying role/stats/ability sections remain intact after resolver cutover.
+- Acceptance Criteria:
+  - Display naming is generic-first and faction-aware through presentation metadata.
+  - No hardcoded faction-prefixed unit labels remain in runtime UI code paths.
+- Documentation Updates Required:
+  - `docs/SYSTEMS_REFERENCE.md`
+  - `docs/SYSTEM_SCOPE_MAP.md`
+  - `docs/ASSET_SOURCES.md`
+
+### CRU-240 - Hero System Genericization (Subtype Pools + Faction Overrides)
 - Status: `TODO`
 - Type: `Gameplay`
 - Priority: `P0`
-- Depends on: `CRU-231`
+- Depends on: `CRU-236, CRU-237, CRU-238`
+- Goal: Convert hero recruitment and hero content to generic hero IDs/subtypes with faction override pools and data-driven rolls.
+- Context:
+  - Current hero recruit scaffolding maps subtype clicks to faction-specific placeholder unit kinds.
+  - This card prepares robust hero architecture so content tickets can become pure data authoring.
+  - Files expected to change: `src/squad.rs`, `src/data.rs`, `src/ui.rs`, hero data assets.
+- Implementation:
+  1. Define generic hero subtype pools and recruit resolver using `FactionId + HeroSubtypeId`.
+  2. Add faction override hooks for hero stats/abilities/display names per hero entry.
+  3. Replace placeholder subtype-to-unit mapping with data-resolved hero selection.
+  4. Keep token spend and wave-60 unlock gates unchanged.
+- Unit Tests Required:
+  - Hero recruit resolver tests for subtype/faction correctness and duplicate-allowed policy.
+  - Runtime recruit tests ensuring token/unlock gating still works after generic hero cutover.
+- Acceptance Criteria:
+  - Hero recruitment is fully data-driven on generic IDs.
+  - Adding a new faction hero pool requires data changes only.
+- Documentation Updates Required:
+  - `docs/SYSTEMS_REFERENCE.md`
+  - `docs/SYSTEM_SCOPE_MAP.md`
+  - `docs/ASSET_SOURCES.md`
+
+### CRU-243 - Item Catalog + Drop Table Genericization (ItemRef + Faction Overrides)
+- Status: `DONE`
+- Type: `Gameplay`
+- Priority: `P0`
+- Depends on: `CRU-236, CRU-237`
+- Goal: Convert item definitions and drop tables to generic `ItemRef` with faction-specific overrides for item behavior, visuals, and availability.
+- Context:
+  - Current item/drop behavior still assumes fixed two-faction wiring in several runtime paths.
+  - We need new factions to onboard through data-only item/drop configuration.
+  - Files expected to change: `src/data.rs`, `src/inventory.rs`, `src/drops.rs`, `assets/data/items*.json`, `assets/data/drops*.json`.
+- Implementation:
+  1. Add generic item catalog IDs and faction override sections for stats/effects/availability rules.
+  2. Add faction-aware drop-table schema for ambient packs, enemy drops, and chest pools.
+  3. Add merge and validation rules so unresolved faction item references fail fast.
+  4. Migrate current Christian/Muslim item/drop behavior into override data with parity checks.
+- Unit Tests Required:
+  - Item/drop schema validation tests (valid/invalid faction override references).
+  - Drop table parity tests verifying existing faction behavior remains unchanged after migration.
+- Acceptance Criteria:
+  - Item definitions and drop pools resolve through `ItemRef + faction_id`.
+  - New faction item/drop onboarding is data-only with no new gameplay branch code.
+- Documentation Updates Required:
+  - `docs/SYSTEMS_REFERENCE.md`
+  - `docs/SYSTEM_SCOPE_MAP.md`
+  - `docs/ASSET_SOURCES.md`
+
+### CRU-244 - Item Icon/Presentation Resolver + Runtime Drop Integration
+- Status: `DONE`
+- Type: `UI`
+- Priority: `P1`
+- Depends on: `CRU-239, CRU-243`
+- Goal: Route inventory/chest/drop icon selection and item presentation through faction-aware data resolvers instead of hardcoded icon picks.
+- Context:
+  - Some item icons already vary by faction (for example symbol/magnet assets), but this needs to be fully data-driven and generalized.
+  - Visual and drop presentation parity must hold for existing factions after cutover.
+  - Files expected to change: `src/ui.rs`, `src/inventory.rs`, `src/drops.rs`, icon mapping data assets.
+- Implementation:
+  1. Replace hardcoded icon-selection branches with resolver lookup (`item_id + faction_id`).
+  2. Apply resolver path to inventory slots, chest cards, drop pickups, and tooltips.
+  3. Add fallback icon policy and explicit validation for missing faction icon mappings.
+  4. Add fixture coverage for faction-specific icon swaps and drop-surface consistency.
+- Unit Tests Required:
+  - Icon resolver tests for faction-specific and fallback icon selection.
+  - UI/runtime tests confirming chest/drop/inventory surfaces use resolved icon mappings.
+- Acceptance Criteria:
+  - Item icon/presentation differences are fully data-driven by faction override config.
+  - No hardcoded faction-specific item icon branches remain in runtime UI logic.
+- Documentation Updates Required:
+  - `docs/SYSTEMS_REFERENCE.md`
+  - `docs/SYSTEM_SCOPE_MAP.md`
+  - `docs/ASSET_SOURCES.md`
+
+### CRU-245 - Hear the Call Chest Drop Refactor (All Waves, Lane-Scaled RNG)
+- Status: `IN PROGRESS`
+- Type: `Gameplay`
+- Priority: `P0`
+- Depends on: `CRU-238, CRU-244`
+- Goal: Move `Hear the Call` into chest-based pickups and source drops from all enemy lanes with very low, wave-scaled probability.
+- Context:
+  - Current token flow is deterministic major-wave gated and uses direct pickup behavior.
+  - Design update requires tiny RNG drops from all waves/enemies (`small`, `minor`, `major`) with gentle wave scaling and anti-hoard controls.
+  - Existing periodic random world chest cadence must remain intact (every 3 waves).
+  - Files expected to change: `src/drops.rs`, `src/combat.rs`, `src/enemies.rs`, `src/model.rs`.
+- Implementation:
+  1. Add enemy death metadata so drop logic can distinguish lane size (`small`, `minor`, `major`) at runtime.
+  2. Add lane-specific base/cap probabilities with slight wave scaling and stash-damping based on unspent tokens.
+  3. Trigger `Hear the Call` chest spawn rolls on enemy deaths across all waves.
+  4. Remove direct deterministic token spawn assumptions from major-wave handlers.
+- Unit Tests Required:
+  - Drop chance contract test verifies lane ordering (`major > minor > small`), wave scaling, and stash damping.
+  - Death metadata propagation test verifies enemy lane source survives into drop-eligible death events.
+- Acceptance Criteria:
+  - `Hear the Call` can drop before wave 60 with very low chance and scales modestly by lane/wave.
+  - Higher-size lanes are measurably more likely than small lane, while stash damping reduces hoarding.
+- Documentation Updates Required:
+  - `docs/SYSTEMS_REFERENCE.md`
+  - `docs/SYSTEM_SCOPE_MAP.md`
+  - `docs/ASSET_SOURCES.md`
+
+### CRU-246 - Hear the Call Single-Item Chest Pickup Flow
+- Status: `IN PROGRESS`
+- Type: `UI`
+- Priority: `P1`
+- Depends on: `CRU-245`
+- Goal: Ensure `Hear the Call` is collected via dedicated chest interaction (single-item reward), not auto-pickup.
+- Context:
+  - Player request is chest-based token collection with intentional pickup time, distinct from ambient gold behavior.
+  - `Hear the Call` chest should grant exactly one token and should not open the equipment chest inventory modal.
+  - Files expected to change: `src/drops.rs`, optional HUD/tooltip surfaces in `src/ui.rs`.
+- Implementation:
+  1. Convert `Hear the Call` world drop entity to chest-style presentation and channel pickup behavior.
+  2. Keep token chest reward payload single-item (`+1 Hear the Call`) and immediate consume on completion.
+  3. Preserve equipment chest flow for item rewards without cross-contaminating chest payload logic.
+  4. Add/adjust visual/readability hints so token chests are distinguishable from item chests.
+- Unit Tests Required:
+  - Pickup timing test verifies token chest requires channel completion and is not auto-collected.
+  - Reward payload test verifies one chest grants exactly one token and no equipment modal opening.
+- Acceptance Criteria:
+  - `Hear the Call` drops are picked up through chest interaction and cannot be vacuumed like gold packs.
+  - Token chests grant only token currency and do not inject equipment chest state.
+- Documentation Updates Required:
+  - `docs/SYSTEMS_REFERENCE.md`
+  - `docs/SYSTEM_SCOPE_MAP.md`
+  - `docs/ASSET_SOURCES.md`
+
+### CRU-241 - New-Faction Onboarding Harness (Config-Only Expansion Gate)
+- Status: `TODO`
+- Type: `QA`
+- Priority: `P1`
+- Depends on: `CRU-239, CRU-240, CRU-244`
+- Goal: Add automated validation proving that adding a faction is configuration-first and does not require system rewiring.
+- Context:
+  - Primary business outcome for this refactor is scalable faction onboarding.
+  - Need a CI gate that catches hidden code assumptions tied to old faction-duplicated enums.
+  - Files expected to change: tests in `src/*`, validation fixtures under `assets/data/test`.
+- Implementation:
+  1. Add synthetic third-faction fixture data using generic unit/hero IDs and override files.
+  2. Add loader/validation tests that pass with fixture faction and fail with deliberately broken references.
+  3. Add smoke runtime test to ensure core systems can resolve roster/wave/recruit/tooltips and item drops/icons for fixture faction.
+  4. Add checklist docs for future faction onboarding.
+- Unit Tests Required:
+  - Third-faction fixture load test (valid configuration).
+  - Third-faction failure tests (missing overrides, bad IDs, broken promotion/drop references).
+- Acceptance Criteria:
+  - CI proves a new faction can be introduced via data only.
+  - No hidden hardcoded two-faction assumptions remain in tested runtime paths.
+- Documentation Updates Required:
+  - `docs/SYSTEMS_REFERENCE.md`
+  - `docs/SYSTEM_SCOPE_MAP.md`
+  - `docs/ASSET_SOURCES.md`
+
+### CRU-242 - Legacy Cleanup Cutover (Remove Faction-Duplicated Unit/Hero/Item Definitions)
+- Status: `TODO`
+- Type: `Core`
+- Priority: `P0`
+- Depends on: `CRU-241`
+- Goal: Remove legacy faction-duplicated unit/hero/item code paths and finalize migration to generic IDs only.
+- Context:
+  - User direction is no backwards compatibility for cohesion-like legacy paths; the same applies here after migration is validated.
+  - Keeping dual-path code increases maintenance and regression risk.
+  - Files expected to change: `src/model.rs`, `src/data.rs`, `src/squad.rs`, `src/ui.rs`, `src/inventory.rs`, `src/drops.rs`, old data files.
+- Implementation:
+  1. Delete deprecated faction-specific unit/hero/item identity definitions and dead adapters.
+  2. Remove legacy config loaders and stale JSON fields.
+  3. Update all docs/tests to reference only generic ID architecture.
+  4. Run full regression loop and fix remaining migration issues.
+- Unit Tests Required:
+  - Compile-time/routing tests ensure no legacy identity path is referenced.
+  - Regression suite verifies gameplay parity after legacy-path removal.
+- Acceptance Criteria:
+  - Repository has one identity model: generic IDs with faction overrides.
+  - No runtime path depends on faction-duplicated unit definitions.
+- Documentation Updates Required:
+  - `docs/SYSTEMS_REFERENCE.md`
+  - `docs/SYSTEM_SCOPE_MAP.md`
+  - `docs/ASSET_SOURCES.md`
+
+### CRU-233 - Faction-Specific Hero Pools and Name Rosters
+- Status: `BLOCKED`
+- Type: `Gameplay`
+- Priority: `P0`
+- Depends on: `CRU-240, CRU-242`
 - Goal: Add faction-specific hero pools with random recruit selection per chosen subtype, including `10` names per subtype per faction.
 - Context:
+  - This card now becomes a content-authoring pass on top of the generic hero runtime.
   - Hero recruit action selects hero type/subtype, then rolls one hero from that faction's subtype pool.
   - Duplicate heroes are allowed by design.
   - Required subtype pools per faction: melee (`sword_shield`, `spear`, `two_handed_sword`), ranged (`bow`, `javelin`, `beast_master`), support (`super_priest`, `super_fanatic`), cavalry (`super_knight`).
@@ -960,20 +1281,20 @@
 - Status: `TODO`
 - Type: `QA`
 - Priority: `P0`
-- Depends on: `CRU-223, CRU-224, CRU-225, CRU-232, CRU-233`
+- Depends on: `CRU-223, CRU-224, CRU-225, CRU-232, CRU-233, CRU-242, CRU-244`
 - Goal: Validate end-to-end stability and balance for difficulty modes, wave-army cadence, tier unlock flow, hero recruitment, and deterministic progression parity.
 - Context:
-  - Expansion touches wave scheduler, AI, progression unlocks, roster graph, resources, and UI.
+  - Expansion touches wave scheduler, AI, progression unlocks, roster graph, resources, item-drop/icon resolvers, and UI.
   - Requires deterministic replay coverage across all three difficulty profiles and both factions.
   - Files expected to change: tests in `src/*`, QA docs/checklists.
 - Implementation:
   1. Add end-to-end replay tests for waves `1..60` and `1..98` per difficulty profile.
   2. Validate tier unlock milestones are boss-defeat gated and never wave-index-only.
   3. Validate hero unlock/token flows and faction-specific hero pool integrity in live run paths.
-  4. Run balance sweeps to ensure no single difficulty strategy or unit branch trivially dominates.
+  4. Validate faction-aware item drops/icons and run balance sweeps to ensure no single difficulty strategy or unit branch trivially dominates.
 - Unit Tests Required:
   - End-to-end progression test verifying major/minor parity and boss-gated tier unlock progression.
-  - End-to-end hero test verifying wave-60 unlock gate, token consumption, and faction pool correctness.
+  - End-to-end hero/item test verifying wave-60 unlock gate, token consumption, faction pool correctness, and faction item-drop/icon resolution.
 - Acceptance Criteria:
   - Army/difficulty/tier/hero systems are stable under automated and manual QA matrices.
   - Expansion is ready for release packaging without regression against revamp foundations.

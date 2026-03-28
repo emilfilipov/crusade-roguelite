@@ -83,3 +83,5 @@ Track external art sources, licenses, and current runtime mapping.
 ## Notes
 - Keep source pack license files in-repo for any active runtime pack.
 - Update this file in the same commit as runtime asset mapping changes.
+- Item/drop presentation now resolves through data in `assets/data/items.json` (icon keys + optional faction-specific entries) on top of the runtime icon handles listed above.
+- Enemy wave tier/role composition now resolves through `assets/data/enemy_tier_pools.json` (data-driven tier buckets instead of hardcoded pools).

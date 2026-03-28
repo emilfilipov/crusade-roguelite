@@ -9,8 +9,8 @@ use crate::inventory::{
     EquipmentArmyEffects, InventoryState, gear_bonuses_for_unit_with_banner_state,
 };
 use crate::model::{
-    AttackCooldown, AttackProfile, BaseMaxHealth, DamageEvent, DamageTextEvent, EnemyUnit,
-    GameDifficulty, GameState, GlobalBuffs, Health, MatchSetupSelection, Morale,
+    AttackCooldown, AttackProfile, BaseMaxHealth, DamageEvent, DamageTextEvent, EnemySpawnSource,
+    EnemyUnit, GameDifficulty, GameState, GlobalBuffs, Health, MatchSetupSelection, Morale,
     SpawnGoldPackEvent, Team, Unit, UnitDamagedEvent, UnitDiedEvent, UnitKind, UnitTier,
 };
 use crate::morale::{morale_armor_multiplier, morale_damage_multiplier};
@@ -900,39 +900,7 @@ pub fn inside_active_formation_bounds(
 }
 
 fn is_peasant_infantry_kind(kind: UnitKind) -> bool {
-    matches!(
-        kind,
-        UnitKind::ChristianPeasantInfantry
-            | UnitKind::ChristianMenAtArms
-            | UnitKind::ChristianShieldInfantry
-            | UnitKind::ChristianExperiencedShieldInfantry
-            | UnitKind::ChristianEliteShieldInfantry
-            | UnitKind::ChristianSpearman
-            | UnitKind::ChristianShieldedSpearman
-            | UnitKind::ChristianHalberdier
-            | UnitKind::ChristianUnmountedKnight
-            | UnitKind::ChristianKnight
-            | UnitKind::ChristianHeavyKnight
-            | UnitKind::ChristianCitadelGuard
-            | UnitKind::ChristianArmoredHalberdier
-            | UnitKind::ChristianEliteHeavyKnight
-            | UnitKind::MuslimPeasantInfantry
-            | UnitKind::MuslimMenAtArms
-            | UnitKind::MuslimShieldInfantry
-            | UnitKind::MuslimExperiencedShieldInfantry
-            | UnitKind::MuslimEliteShieldInfantry
-            | UnitKind::MuslimSpearman
-            | UnitKind::MuslimShieldedSpearman
-            | UnitKind::MuslimHalberdier
-            | UnitKind::MuslimUnmountedKnight
-            | UnitKind::MuslimKnight
-            | UnitKind::MuslimHeavyKnight
-            | UnitKind::MuslimCitadelGuard
-            | UnitKind::MuslimArmoredHalberdier
-            | UnitKind::MuslimEliteHeavyKnight
-            | UnitKind::RescuableChristianPeasantInfantry
-            | UnitKind::RescuableMuslimPeasantInfantry
-    )
+    kind.is_block_infantry_line()
 }
 
 fn enemy_block_chance_for_difficulty(difficulty: GameDifficulty, block_enabled: bool) -> f32 {
@@ -1044,17 +1012,7 @@ fn apply_damage_events(
 }
 
 fn fanatic_life_leech_ratio(kind: UnitKind, data: &GameData) -> f32 {
-    if matches!(
-        kind,
-        UnitKind::ChristianFanatic
-            | UnitKind::ChristianFlagellant
-            | UnitKind::ChristianEliteFlagellant
-            | UnitKind::ChristianDivineJudge
-            | UnitKind::MuslimFanatic
-            | UnitKind::MuslimFlagellant
-            | UnitKind::MuslimEliteFlagellant
-            | UnitKind::MuslimDivineJudge
-    ) {
+    if kind.is_fanatic_line() {
         data.roster_tuning.behavior.fanatic_life_leech_ratio
     } else {
         0.0
@@ -1065,15 +1023,22 @@ fn resolve_deaths(
     mut commands: Commands,
     mut death_events: EventWriter<UnitDiedEvent>,
     mut gold_pack_events: EventWriter<SpawnGoldPackEvent>,
-    dead_units: Query<(Entity, &Unit, &Health, &Transform)>,
+    dead_units: Query<(
+        Entity,
+        &Unit,
+        &Health,
+        &Transform,
+        Option<&EnemySpawnSource>,
+    )>,
 ) {
-    for (entity, unit, health, transform) in &dead_units {
+    for (entity, unit, health, transform, enemy_spawn_source) in &dead_units {
         if is_dead_health(health.current) {
             death_events.send(UnitDiedEvent {
                 team: unit.team,
                 kind: unit.kind,
                 max_health: health.max,
                 world_position: transform.translation.truncate(),
+                enemy_spawn_lane: enemy_spawn_lane_from_source(enemy_spawn_source),
             });
             if unit.team == Team::Enemy {
                 gold_pack_events.send(SpawnGoldPackEvent {
@@ -1085,6 +1050,12 @@ fn resolve_deaths(
             commands.entity(entity).despawn_recursive();
         }
     }
+}
+
+fn enemy_spawn_lane_from_source(
+    source: Option<&EnemySpawnSource>,
+) -> Option<crate::model::EnemySpawnLane> {
+    source.map(|value| value.lane)
 }
 
 fn is_dead_health(current_health: f32) -> bool {
@@ -1109,7 +1080,9 @@ mod tests {
     };
     use crate::data::GameData;
     use crate::formation::{ActiveFormation, FormationModifiers};
-    use crate::model::{GameDifficulty, GlobalBuffs, Team, Unit, UnitKind};
+    use crate::model::{
+        EnemySpawnLane, EnemySpawnSource, GameDifficulty, GlobalBuffs, Team, Unit, UnitKind,
+    };
     use crate::squad::CommanderMotionState;
 
     #[test]
@@ -1144,6 +1117,18 @@ mod tests {
         assert!(is_dead_health(0.0));
         assert!(is_dead_health(0.009));
         assert!(!is_dead_health(0.02));
+    }
+
+    #[test]
+    fn enemy_spawn_lane_mapping_passes_through_optional_source() {
+        let source = EnemySpawnSource {
+            lane: EnemySpawnLane::Major,
+        };
+        assert_eq!(
+            super::enemy_spawn_lane_from_source(Some(&source)),
+            Some(EnemySpawnLane::Major)
+        );
+        assert_eq!(super::enemy_spawn_lane_from_source(None), None);
     }
 
     #[test]

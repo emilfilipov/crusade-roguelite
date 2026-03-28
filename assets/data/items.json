@@ -1,0 +1,89 @@
+{
+  "templates": [
+    {
+      "id": "banner_sturdy_pole",
+      "name": "Banner on Sturdy Pole",
+      "description": "Army banner boosting pace and command reach.",
+      "icon_key": "item_banner",
+      "item_type": "Banner",
+      "stats": ["MoveSpeedFlat", "AuraRangeFlat"],
+      "drop_weight": 1.0
+    },
+    {
+      "id": "instrument_drum",
+      "name": "War Drum",
+      "description": "Triggers a periodic armor pulse for the army.",
+      "icon_key": "item_instrument",
+      "item_type": "Instrument",
+      "stats": ["ArmorPulseFlat", "CommanderMaxHealthFlat"],
+      "special_effect": "DrumArmorPulse",
+      "drop_weight": 1.0
+    },
+    {
+      "id": "chant_battle_song",
+      "name": "Battle Song",
+      "description": "Periodically grants temporary morale-loss immunity.",
+      "icon_key": "item_chant",
+      "item_type": "Chant",
+      "stats": ["CooldownReductionSecs", "CommanderMaxHealthFlat"],
+      "special_effect": "BattleChantMoraleImmunity",
+      "drop_weight": 1.0
+    },
+    {
+      "id": "squire_young",
+      "name": "Young Squire",
+      "description": "Role-based support stats for the assigned setup.",
+      "icon_key": "item_squire",
+      "item_type": "Squire",
+      "stats": ["SquirePrimary", "SquireSecondary"],
+      "drop_weight": 1.0
+    },
+    {
+      "id": "symbol_faction",
+      "name": "Faction Symbol",
+      "description": "Empowers aura effects against enemies and extends aura reach.",
+      "icon_key": "item_symbol_faction",
+      "item_type": "Symbol",
+      "stats": ["AuraEnemyEffectPercent", "AuraRangeFlat"],
+      "faction": "Christian",
+      "drop_weight": 1.0
+    },
+    {
+      "id": "symbol_faction",
+      "name": "Faction Symbol",
+      "description": "Empowers aura effects against enemies and extends aura reach.",
+      "icon_key": "item_symbol_faction",
+      "item_type": "Symbol",
+      "stats": ["AuraEnemyEffectPercent", "AuraRangeFlat"],
+      "faction": "Muslim",
+      "drop_weight": 1.0
+    },
+    {
+      "id": "sword_simple",
+      "name": "Simple Sword",
+      "description": "Tradeoff roll between damage and attack speed.",
+      "icon_key": "item_sword",
+      "item_type": "MeleeWeapon",
+      "stats": ["DamagePercent", "AttackSpeedPercent"],
+      "drop_weight": 1.0
+    },
+    {
+      "id": "bow_simple",
+      "name": "Simple Bow",
+      "description": "Tradeoff roll between ranged damage and range.",
+      "icon_key": "item_bow",
+      "item_type": "RangedWeapon",
+      "stats": ["DamagePercent", "RangedRangeFlat"],
+      "drop_weight": 1.0
+    },
+    {
+      "id": "armor_simple",
+      "name": "Simple Chestpiece",
+      "description": "Tradeoff roll between armor and movement speed.",
+      "icon_key": "item_armor",
+      "item_type": "Armor",
+      "stats": ["ArmorFlat", "MoveSpeedFlat"],
+      "drop_weight": 1.0
+    }
+  ]
+}

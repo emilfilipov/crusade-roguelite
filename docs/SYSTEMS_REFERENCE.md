@@ -5,6 +5,43 @@ Single-file technical reference for current MVP runtime behavior.
 Use this for entity/component/system lookup without scanning all source files.
 
 ## Latest Update (2026-03-28)
+- Added faction-agnostic identity scaffold in runtime model:
+  - `UnitRef { faction, unit_id, rescuable }` is now derivable from any `UnitKind`,
+  - shared `unit_id` strings now map Christian/Muslim/rescuable variants into one generic ID space (for example both faction peasant infantry variants resolve to `peasant_infantry`).
+- Completed naming/presentation cutover for roster-facing labels:
+  - `unit_kind_label` now returns generic unit names (no hardcoded `Christian`/`Muslim` prefixes),
+  - rescuable variants now display explicit generic rescuable labels (`Rescuable Peasant Infantry/Archer/Priest`),
+  - archive unit/enemy entries now use generic-first naming with profile variants in descriptions.
+- Completed item/drop catalog + icon resolver cutover:
+  - added data-driven item catalog at `assets/data/items.json` loaded on boot into `ItemTemplateCatalog`,
+  - catalog loader now allows duplicate `item_id` values when scoped to different factions (for override-style entries),
+  - chest rolls now use catalog templates via faction-aware weighted selection,
+  - UI icon fallback now resolves through `icon_key` + faction (`item_symbol_faction`) instead of hardcoded symbol branches.
+- Added generic archetype resolver pass in core data/runtime paths:
+  - `UnitsConfigFile` now resolves recruit stats via `faction + archetype`,
+  - `EnemiesConfigFile` now resolves enemy profiles via `faction + archetype`,
+  - opposing tier-0 enemy pools and UI roster tier-0 source pools now derive from `RecruitUnitKind::all_for_faction(...)` instead of hardcoded per-faction arrays.
+- Reduced faction-duplicated branch logic in runtime systems:
+  - inventory combat-role resolution now keys off generic `unit_id` instead of explicit Christian/Muslim variant lists,
+  - enemy sprite family mapping now keys off generic `unit_id` + faction presentation assets,
+  - rescuable spawn presentation now resolves from `faction + archetype` helpers.
+- Moved promotion graph resolution to generic IDs:
+  - `promotion_targets_for_kind` now routes through a shared `unit_id -> target unit_id[]` graph and resolves faction variants via `UnitKind::from_faction_and_unit_id(...)`,
+  - rescuable variants are explicitly non-promotable,
+  - graph integrity tests now assert faction-scoped target resolution and one-tier progression for all mapped source nodes.
+- Removed hardcoded wave fallback enemy identity:
+  - enemy kind fallback selection now resolves the opposing faction's `peasant_infantry` via `UnitKind::from_faction_and_unit_id(...)`,
+  - wave selection tests now cover faction-aware fallback behavior.
+- Reduced hero recruit identity branching:
+  - hero subtype recruit mapping now resolves from shared hero `unit_id` values (`citadel_guard`, `elite_longbowman`, etc.) plus selected faction via `UnitKind::from_faction_and_unit_id(...)`,
+  - recruit flow now fails safe if a subtype cannot resolve and refunds the consumed `Hear the Call` token.
+- Added wave-tier composition ramp + major-army preview logic:
+  - regular waves now blend `previous_tier -> unlocked_tier` by wave index (`11..20`, `21..30`, etc.) and reach `100%` unlocked-tier by the next major wave,
+  - major-army lane now includes a difficulty-scaled next-tier preview share (`Recruit 20%`, `Experienced 35%`, `Alone 50%`) when a higher tier exists,
+  - major-army preview count is now targeted per spawn batch from configured preview percentage (rounded, min `1` when preview is active),
+  - wave pool builders now resolve enemy unit kinds from `assets/data/enemy_tier_pools.json` tier/role `unit_id` sets + faction context.
+- Expanded enemy profile resolution for higher-tier enemy kinds:
+  - `enemy_profile_for_kind(...)` now resolves non-tier0 lines by shared archetype traits (`infantry`/`archer`/`priest`) so wave-tier mixes can spawn upgraded unit kinds while preserving faction profile modifiers.
 - Added `assets/data/roster_tuning.json` and wired it into `GameData`:
   - tier-2 unit stats are now data-driven per tier-2 unit kind,
   - tracker/scout autonomous behavior timings and multipliers are data-driven,
@@ -22,6 +59,19 @@ Use this for entity/component/system lookup without scanning all source files.
   - tier-3 branches now continue into tier-4 (`elite shield infantry`, `halberdier`, `heavy knight`, `elite bannerman`, `longbowman`, `elite crossbowman`, `houndmaster`, `shock cavalry`, `elite cardinal`, `elite flagellant`),
   - tracker/scout branch actives carry forward (`Houndmaster` keeps hound strikes, `Shock Cavalry` keeps raid behavior),
   - fanatic branch traits carry forward (`Elite Flagellant` keeps armor-lock-at-zero + life-leech behavior).
+- Completed tier-5 branch runtime for both factions:
+  - tier-4 branches now continue into tier-5 (`citadel guard`, `armored halberdier`, `elite heavy knight`, `god's chosen`, `elite longbowman`, `siege crossbowman`, `elite houndmaster`, `elite shock cavalry`, `divine speaker`, `divine judge`),
+  - tracker/scout branch actives carry forward (`Elite Houndmaster` keeps hound strikes, `Elite Shock Cavalry` keeps raid behavior),
+  - fanatic branch traits carry forward (`Divine Judge` keeps armor-lock-at-zero + life-leech behavior).
+- Added hero-tier unlock + `Hear the Call` token economy and recruit actions:
+  - hero-tier unlock state now tracks major-army progression and flips at wave-60 major defeat,
+  - `Hear the Call` now drops as a dedicated single-item chest reward (not gold-style auto pickup),
+  - token chest drops now roll from army-lane clear rewards across all waves (`small` lane each wave, `minor` lane every other wave, `major` lane on major-army defeat) with lane-scaled RNG (`small < minor < major`) plus stash damping,
+  - army-lane clear rewards now roll equipment and `Hear the Call` independently (both can drop on the same lane clear),
+  - periodic random world equipment chests remain active on the existing cadence (every 3 waves),
+  - equipment chest item-quality weighting now scales gradually by wave so higher-quality outcomes become more likely over time,
+  - token chest pickups add `+1` `Hear the Call` to progression and HUD/unit-upgrade surfaces show token count,
+  - hero subtype buttons are now actionable in `Unit Upgrade` and spend `1` token per recruit.
 - Synced wave runtime docs to current code:
   - 30s wave windows, `MAX_WAVES=100`,
   - spawn-rate clamp now uses `MAX_ENEMIES_PER_WAVE=200`,
@@ -48,7 +98,8 @@ Use this for entity/component/system lookup without scanning all source files.
   - tier-2 nodes are now active branch targets for owned tier-1 source kinds,
   - tier-3 nodes are now active continuation targets for owned tier-2 branch kinds,
   - tier-4 nodes are now active continuation targets for owned tier-3 branch kinds,
-  - tier-5 and `Hero` nodes remain scaffolded/inactive placeholders.
+  - tier-5 nodes are now active continuation targets for owned tier-4 branch kinds,
+  - `Hero` nodes now expose subtype recruit buttons with unlock/token gating and disabled-state reasons.
 - Updated unit-upgrade node labeling:
   - unit boxes now render unit name only (no tier/count text inside the node).
 - Added per-tier0 swap controls as row actions:
@@ -152,12 +203,12 @@ Use this for entity/component/system lookup without scanning all source files.
   - tier 3 after wave 30 major army,
   - tier 4 after wave 40 major army,
   - tier 5 after wave 50 major army.
-- Added `Hero` equipment-tier scaffold for inventory/UI only (no promotion or spawn path enabled yet).
+- Added `Hero` equipment-tier scaffold for inventory/UI; dedicated hero equipment effects are still pending.
 - Replaced peasant-priest potion placeholder sprite with a character sprite (`tile_0109`) for clearer class readability.
 - Implemented Unit Upgrade modal runtime:
   - left roster list with selectable unit source rows,
-  - tier-column node graph (`Tier 0..5 + Hero`) with active tier-1, tier-2, tier-3, and tier-4 promotion nodes,
-  - tier-0 swap context menu (`right-click` source unit -> `Swap 1`) with scaffolded tier-5+ and hero placeholders.
+  - tier-column node graph (`Tier 0..5 + Hero`) with active tier-1, tier-2, tier-3, tier-4, and tier-5 promotion nodes,
+  - tier-0 swap context menu (`right-click` source unit -> `Swap 1`) plus active hero subtype recruit nodes with unlock/token status text.
 - Promotion validation now rejects non-upgrade paths (same-tier or invalid-tier conversions).
 - Enemy wave runtime now uses layered army scheduling with hard wave lock:
   - `Small` army lane every wave,
@@ -322,6 +373,62 @@ Use this for entity/component/system lookup without scanning all source files.
 - Added HUD bottom-left vertical meter for average army morale plus threshold-crossing toast messages.
 - Added banner pickup progress bar under treasury indicator.
 - Removed oasis from active runtime schema/config usage.
+
+## Unit Upgrade Tree Flowchart
+Maintenance rule: update this diagram whenever promotion paths or tiers change.
+
+```mermaid
+flowchart LR
+  PI["Peasant Infantry"] --> MA["Men-at-Arms"]
+  PA["Peasant Archer"] --> BW["Bowman"]
+  PP["Peasant Priest"] --> DV["Devoted"]
+
+  MA --> SI["Shield Infantry"]
+  MA --> SP["Spearman"]
+  MA --> UK["Unmounted Knight"]
+  MA --> SQ["Squire"]
+
+  BW --> EB["Experienced Bowman"]
+  BW --> XB["Crossbowman"]
+  BW --> TR["Tracker"]
+  BW --> SC["Scout"]
+
+  DV --> DO["Devoted One"]
+  DV --> FA["Fanatic"] 
+
+  SI --> ESI["Experienced Shield Infantry"]
+  SP --> SSP["Shielded Spearman"]
+  UK --> KN["Knight"]
+  SQ --> BN["Bannerman"]
+  EB --> ELB["Elite Bowman"]
+  XB --> AXB["Armored Crossbowman"]
+  TR --> PF["Pathfinder"]
+  SC --> MSC["Mounted Scout"]
+  DO --> CAR["Cardinal"]
+  FA --> FLA["Flagellant"]
+
+  ESI --> ESH["Elite Shield Infantry"]
+  SSP --> HAL["Halberdier"]
+  KN --> HKN["Heavy Knight"]
+  BN --> EBN["Elite Bannerman"]
+  ELB --> LBM["Longbowman"]
+  AXB --> EXB["Elite Crossbowman"]
+  PF --> HM["Houndmaster"]
+  MSC --> SHC["Shock Cavalry"]
+  CAR --> ECAR["Elite Cardinal"]
+  FLA --> EFLA["Elite Flagellant"]
+
+  ESH --> CG["Citadel Guard"]
+  HAL --> AHAL["Armored Halberdier"]
+  HKN --> EHKN["Elite Heavy Knight"]
+  EBN --> GC["God's Chosen"]
+  LBM --> ELBM["Elite Longbowman"]
+  EXB --> SXB["Siege Crossbowman"]
+  HM --> EHM["Elite Houndmaster"]
+  SHC --> ESHC["Elite Shock Cavalry"]
+  ECAR --> DS["Divine Speaker"]
+  EFLA --> DJ["Divine Judge"]
+```
 
 ## Runtime Architecture
 

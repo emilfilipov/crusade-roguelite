@@ -14,15 +14,15 @@ use crate::formation::{ActiveFormation, FormationModifiers, FormationSkillBar, S
 use crate::inventory::{
     BACKPACK_SLOT_CAPACITY, CHEST_SLOT_CAPACITY, EquipmentChestState, EquipmentUnitType,
     GearItemEntry, GearRarity, InventoryPlaceError, InventorySlotRef, InventoryState,
-    gear_item_tooltip, get_item_from_slot, item_rarity_tier_for_display, item_scrap_gold_value,
-    place_item_into_slot, take_item_from_slot,
+    default_icon_key_for_item_type, gear_item_tooltip, get_item_from_slot,
+    item_rarity_tier_for_display, item_scrap_gold_value, place_item_into_slot, take_item_from_slot,
 };
 use crate::map::MapBounds;
 use crate::model::{
     CommanderUnit, DamageTextEvent, EnemyUnit, FrameRateCap, FriendlyUnit, GameDifficulty,
-    GameState, Health, MatchSetupSelection, Morale, PlayerFaction, RescuableUnit, RunModalAction,
-    RunModalRequestEvent, RunModalScreen, RunModalState, RunSession, StartRunEvent, Team, Unit,
-    UnitKind, level_cap_from_locked_budget,
+    GameState, Health, MatchSetupSelection, Morale, PlayerFaction, RecruitUnitKind, RescuableUnit,
+    RunModalAction, RunModalRequestEvent, RunModalScreen, RunModalState, RunSession, StartRunEvent,
+    Team, Unit, UnitKind, level_cap_from_locked_budget,
 };
 use crate::morale::{
     MoraleThresholdCrossedEvent, average_morale_ratio, commander_aura_radius,
@@ -31,9 +31,10 @@ use crate::morale::{
 use crate::rescue::{RescueProgress, effective_rescue_duration};
 use crate::settings::AppSettings;
 use crate::squad::{
-    ConvertTierZeroUnitsEvent, PriestAttackSpeedBlessing, PromoteUnitsEvent, RosterEconomy,
-    RosterEconomyFeedback, SquadRoster, UpgradeTierUnlockState, friendly_stats_for_kind,
-    friendly_tier_for_kind, promotion_gold_cost, promotion_step_cost, promotion_targets_for_kind,
+    ConvertTierZeroUnitsEvent, HeroRecruitSubtype, PriestAttackSpeedBlessing, PromoteUnitsEvent,
+    RecruitHeroEvent, RosterEconomy, RosterEconomyFeedback, SquadRoster, UpgradeTierUnlockState,
+    friendly_stats_for_kind, friendly_tier_for_kind, hero_recruit_gold_cost_for_subtype,
+    promotion_gold_cost, promotion_step_cost, promotion_targets_for_kind,
     tier0_conversion_gold_cost, unit_kind_label, unlock_boss_wave_for_tier,
 };
 use crate::upgrades::{
@@ -53,6 +54,7 @@ pub struct HudSnapshot {
     pub level: u32,
     pub allowed_max_level: u32,
     pub gold: f32,
+    pub hear_the_call_tokens: u32,
     pub wave_index: usize,
     pub current_wave: u32,
     pub elapsed_seconds: f32,
@@ -70,6 +72,7 @@ impl Default for HudSnapshot {
             level: 1,
             allowed_max_level: 100,
             gold: 0.0,
+            hear_the_call_tokens: 0,
             wave_index: 0,
             current_wave: 1,
             elapsed_seconds: 0.0,
@@ -413,6 +416,11 @@ struct UnitUpgradePromoteButton {
 }
 
 #[derive(Component, Clone, Copy, Debug, Eq, PartialEq)]
+struct UnitUpgradeHeroRecruitButton {
+    subtype: HeroRecruitSubtype,
+}
+
+#[derive(Component, Clone, Copy, Debug, Eq, PartialEq)]
 struct UnitUpgradeSwapTargetCycleButton {
     from: UnitKind,
 }
@@ -470,10 +478,12 @@ struct UnitUpgradePanelData {
     allowed_max_level: u32,
     locked_levels: u32,
     unlocked_tier: u8,
+    hero_unlocked: bool,
     selected_source: UnitKind,
     roster_entries: Vec<UnitUpgradeRosterEntry>,
     promotions: Vec<UnitPromotionOption>,
     current_gold: f32,
+    hear_the_call_tokens: u32,
     conversion_gold_cost_per_unit: f32,
     context_swap_option: Option<UnitConversionOption>,
     graph_scroll_offset: f32,
@@ -556,6 +566,7 @@ struct UnitUpgradeRuntimeDeps<'w> {
     economy_feedback: ResMut<'w, RosterEconomyFeedback>,
     convert_events: EventWriter<'w, ConvertTierZeroUnitsEvent>,
     promote_events: EventWriter<'w, PromoteUnitsEvent>,
+    hero_recruit_events: EventWriter<'w, RecruitHeroEvent>,
 }
 
 const MENU_BACKGROUND: Color = Color::srgb(0.12, 0.1, 0.08);
@@ -2765,14 +2776,20 @@ fn unit_role_label(kind: UnitKind) -> &'static str {
         UnitKind::ChristianEliteShieldInfantry | UnitKind::MuslimEliteShieldInfantry => {
             "Tier 4 Tank"
         }
+        UnitKind::ChristianCitadelGuard | UnitKind::MuslimCitadelGuard => "Tier 5 Tank",
         UnitKind::ChristianShieldedSpearman | UnitKind::MuslimShieldedSpearman => {
             "Tier 3 Anti-Cavalry"
         }
         UnitKind::ChristianHalberdier | UnitKind::MuslimHalberdier => "Tier 4 Anti-Cavalry",
+        UnitKind::ChristianArmoredHalberdier | UnitKind::MuslimArmoredHalberdier => {
+            "Tier 5 Anti-Cavalry"
+        }
         UnitKind::ChristianKnight | UnitKind::MuslimKnight => "Tier 3 Bruiser",
         UnitKind::ChristianHeavyKnight | UnitKind::MuslimHeavyKnight => "Tier 4 Bruiser",
+        UnitKind::ChristianEliteHeavyKnight | UnitKind::MuslimEliteHeavyKnight => "Tier 5 Bruiser",
         UnitKind::ChristianBannerman | UnitKind::MuslimBannerman => "Tier 3 Support",
         UnitKind::ChristianEliteBannerman | UnitKind::MuslimEliteBannerman => "Tier 4 Support",
+        UnitKind::ChristianGodsChosen | UnitKind::MuslimGodsChosen => "Tier 5 Support",
         UnitKind::ChristianPeasantArcher | UnitKind::MuslimPeasantArcher => "Tier 0 Hybrid Ranged",
         UnitKind::ChristianBowman | UnitKind::MuslimBowman => "Tier 1 Ranged",
         UnitKind::ChristianExperiencedBowman | UnitKind::MuslimExperiencedBowman => "Tier 2 Ranged",
@@ -2781,24 +2798,34 @@ fn unit_role_label(kind: UnitKind) -> &'static str {
         UnitKind::ChristianScout | UnitKind::MuslimScout => "Tier 2 Raider",
         UnitKind::ChristianEliteBowman | UnitKind::MuslimEliteBowman => "Tier 3 Ranged",
         UnitKind::ChristianLongbowman | UnitKind::MuslimLongbowman => "Tier 4 Ranged",
+        UnitKind::ChristianEliteLongbowman | UnitKind::MuslimEliteLongbowman => "Tier 5 Ranged",
         UnitKind::ChristianArmoredCrossbowman | UnitKind::MuslimArmoredCrossbowman => {
             "Tier 3 Heavy Ranged"
         }
         UnitKind::ChristianEliteCrossbowman | UnitKind::MuslimEliteCrossbowman => {
             "Tier 4 Heavy Ranged"
         }
+        UnitKind::ChristianSiegeCrossbowman | UnitKind::MuslimSiegeCrossbowman => {
+            "Tier 5 Heavy Ranged"
+        }
         UnitKind::ChristianPathfinder | UnitKind::MuslimPathfinder => "Tier 3 Skirmish Ranged",
         UnitKind::ChristianHoundmaster | UnitKind::MuslimHoundmaster => "Tier 4 Skirmish Ranged",
+        UnitKind::ChristianEliteHoundmaster | UnitKind::MuslimEliteHoundmaster => {
+            "Tier 5 Skirmish Ranged"
+        }
         UnitKind::ChristianMountedScout | UnitKind::MuslimMountedScout => "Tier 3 Raider",
         UnitKind::ChristianShockCavalry | UnitKind::MuslimShockCavalry => "Tier 4 Raider",
+        UnitKind::ChristianEliteShockCavalry | UnitKind::MuslimEliteShockCavalry => "Tier 5 Raider",
         UnitKind::ChristianPeasantPriest | UnitKind::MuslimPeasantPriest => "Tier 0 Support",
         UnitKind::ChristianDevoted | UnitKind::MuslimDevoted => "Tier 1 Support",
         UnitKind::ChristianDevotedOne | UnitKind::MuslimDevotedOne => "Tier 2 Support",
         UnitKind::ChristianFanatic | UnitKind::MuslimFanatic => "Tier 2 Zealot",
         UnitKind::ChristianCardinal | UnitKind::MuslimCardinal => "Tier 3 Support",
         UnitKind::ChristianEliteCardinal | UnitKind::MuslimEliteCardinal => "Tier 4 Support",
+        UnitKind::ChristianDivineSpeaker | UnitKind::MuslimDivineSpeaker => "Tier 5 Support",
         UnitKind::ChristianFlagellant | UnitKind::MuslimFlagellant => "Tier 3 Zealot",
         UnitKind::ChristianEliteFlagellant | UnitKind::MuslimEliteFlagellant => "Tier 4 Zealot",
+        UnitKind::ChristianDivineJudge | UnitKind::MuslimDivineJudge => "Tier 5 Zealot",
         UnitKind::Commander => "Commander",
         _ => "Unit",
     }
@@ -2831,11 +2858,17 @@ fn unit_description(kind: UnitKind) -> &'static str {
         UnitKind::ChristianEliteShieldInfantry | UnitKind::MuslimEliteShieldInfantry => {
             "Tier-4 defensive anchor with superior durability and frontline staying power."
         }
+        UnitKind::ChristianCitadelGuard | UnitKind::MuslimCitadelGuard => {
+            "Tier-5 defensive capstone with maximum frontline hold and mitigation."
+        }
         UnitKind::ChristianShieldedSpearman | UnitKind::MuslimShieldedSpearman => {
             "Tier-3 anti-cavalry specialist with better reach and tougher defenses."
         }
         UnitKind::ChristianHalberdier | UnitKind::MuslimHalberdier => {
             "Tier-4 anti-cavalry specialist with stronger reach pressure and armor."
+        }
+        UnitKind::ChristianArmoredHalberdier | UnitKind::MuslimArmoredHalberdier => {
+            "Tier-5 anti-cavalry capstone with elite armor and punishing reach control."
         }
         UnitKind::ChristianKnight | UnitKind::MuslimKnight => {
             "Tier-3 melee bruiser with stronger burst and sustained pressure."
@@ -2843,11 +2876,17 @@ fn unit_description(kind: UnitKind) -> &'static str {
         UnitKind::ChristianHeavyKnight | UnitKind::MuslimHeavyKnight => {
             "Tier-4 melee bruiser with stronger armor and sustained offense."
         }
+        UnitKind::ChristianEliteHeavyKnight | UnitKind::MuslimEliteHeavyKnight => {
+            "Tier-5 melee capstone with elite armor and overwhelming sustained pressure."
+        }
         UnitKind::ChristianBannerman | UnitKind::MuslimBannerman => {
             "Tier-3 support unit focused on durable aura uptime."
         }
         UnitKind::ChristianEliteBannerman | UnitKind::MuslimEliteBannerman => {
             "Tier-4 support standard bearer with stronger resilience and uptime."
+        }
+        UnitKind::ChristianGodsChosen | UnitKind::MuslimGodsChosen => {
+            "Tier-5 support capstone with elite aura uptime and retinue resilience."
         }
         UnitKind::ChristianPeasantArcher | UnitKind::MuslimPeasantArcher => {
             "Hybrid archer: strong ranged pressure with weak melee fallback."
@@ -2873,11 +2912,17 @@ fn unit_description(kind: UnitKind) -> &'static str {
         UnitKind::ChristianLongbowman | UnitKind::MuslimLongbowman => {
             "Tier-4 ranged branch with longer reach and stronger sustained volleys."
         }
+        UnitKind::ChristianEliteLongbowman | UnitKind::MuslimEliteLongbowman => {
+            "Tier-5 ranged capstone with superior reach and sustained ranged pressure."
+        }
         UnitKind::ChristianArmoredCrossbowman | UnitKind::MuslimArmoredCrossbowman => {
             "Tier-3 heavy ranged branch with stronger bolts and improved armor."
         }
         UnitKind::ChristianEliteCrossbowman | UnitKind::MuslimEliteCrossbowman => {
             "Tier-4 heavy ranged branch with higher bolt pressure and durability."
+        }
+        UnitKind::ChristianSiegeCrossbowman | UnitKind::MuslimSiegeCrossbowman => {
+            "Tier-5 heavy ranged capstone with devastating bolts and strong durability."
         }
         UnitKind::ChristianPathfinder | UnitKind::MuslimPathfinder => {
             "Tier-3 skirmisher with improved hound pressure and mobility."
@@ -2885,11 +2930,17 @@ fn unit_description(kind: UnitKind) -> &'static str {
         UnitKind::ChristianHoundmaster | UnitKind::MuslimHoundmaster => {
             "Tier-4 skirmisher with stronger hound pressure and ranged pacing."
         }
+        UnitKind::ChristianEliteHoundmaster | UnitKind::MuslimEliteHoundmaster => {
+            "Tier-5 skirmisher capstone with relentless hound pressure and mobility."
+        }
         UnitKind::ChristianMountedScout | UnitKind::MuslimMountedScout => {
             "Tier-3 raider with faster autonomous strike rotations."
         }
         UnitKind::ChristianShockCavalry | UnitKind::MuslimShockCavalry => {
             "Tier-4 raider with stronger charge tempo and autonomous strike impact."
+        }
+        UnitKind::ChristianEliteShockCavalry | UnitKind::MuslimEliteShockCavalry => {
+            "Tier-5 raider capstone with dominant autonomous strike cadence."
         }
         UnitKind::ChristianPeasantPriest | UnitKind::MuslimPeasantPriest => {
             "Support priest that periodically buffs nearby allies."
@@ -2909,11 +2960,17 @@ fn unit_description(kind: UnitKind) -> &'static str {
         UnitKind::ChristianEliteCardinal | UnitKind::MuslimEliteCardinal => {
             "Tier-4 support branch with stronger survivability and aura uptime."
         }
+        UnitKind::ChristianDivineSpeaker | UnitKind::MuslimDivineSpeaker => {
+            "Tier-5 support capstone with maximum blessing uptime and morale stability."
+        }
         UnitKind::ChristianFlagellant | UnitKind::MuslimFlagellant => {
             "Tier-3 zealot branch with stronger life leech pressure and no armor scaling."
         }
         UnitKind::ChristianEliteFlagellant | UnitKind::MuslimEliteFlagellant => {
             "Tier-4 zealot branch with amplified life leech pressure and no armor scaling."
+        }
+        UnitKind::ChristianDivineJudge | UnitKind::MuslimDivineJudge => {
+            "Tier-5 zealot capstone with peak life leech pressure and no armor scaling."
         }
         UnitKind::Commander => "Army command center with leadership-focused progression.",
         _ => "Inactive node for future roster expansion.",
@@ -2927,77 +2984,101 @@ fn unit_abilities(kind: UnitKind) -> &'static str {
         | UnitKind::ChristianShieldInfantry
         | UnitKind::ChristianExperiencedShieldInfantry
         | UnitKind::ChristianEliteShieldInfantry
+        | UnitKind::ChristianCitadelGuard
         | UnitKind::MuslimPeasantInfantry
         | UnitKind::MuslimMenAtArms
         | UnitKind::MuslimShieldInfantry
         | UnitKind::MuslimExperiencedShieldInfantry
-        | UnitKind::MuslimEliteShieldInfantry => "Basic melee auto-attack.",
+        | UnitKind::MuslimEliteShieldInfantry
+        | UnitKind::MuslimCitadelGuard => "Basic melee auto-attack.",
         UnitKind::ChristianSpearman
         | UnitKind::ChristianShieldedSpearman
         | UnitKind::ChristianHalberdier
+        | UnitKind::ChristianArmoredHalberdier
         | UnitKind::MuslimSpearman
         | UnitKind::MuslimShieldedSpearman
-        | UnitKind::MuslimHalberdier => "Melee auto-attack with extended reach.",
+        | UnitKind::MuslimHalberdier
+        | UnitKind::MuslimArmoredHalberdier => "Melee auto-attack with extended reach.",
         UnitKind::ChristianUnmountedKnight
         | UnitKind::ChristianKnight
         | UnitKind::ChristianHeavyKnight
+        | UnitKind::ChristianEliteHeavyKnight
         | UnitKind::MuslimUnmountedKnight
         | UnitKind::MuslimKnight
-        | UnitKind::MuslimHeavyKnight => "Aggressive melee auto-attack.",
+        | UnitKind::MuslimHeavyKnight
+        | UnitKind::MuslimEliteHeavyKnight => "Aggressive melee auto-attack.",
         UnitKind::ChristianPeasantArcher
         | UnitKind::ChristianBowman
         | UnitKind::ChristianExperiencedBowman
         | UnitKind::ChristianEliteBowman
         | UnitKind::ChristianLongbowman
+        | UnitKind::ChristianEliteLongbowman
         | UnitKind::ChristianCrossbowman
         | UnitKind::ChristianArmoredCrossbowman
         | UnitKind::ChristianEliteCrossbowman
+        | UnitKind::ChristianSiegeCrossbowman
         | UnitKind::MuslimPeasantArcher
         | UnitKind::MuslimBowman
         | UnitKind::MuslimExperiencedBowman
         | UnitKind::MuslimEliteBowman
         | UnitKind::MuslimLongbowman
+        | UnitKind::MuslimEliteLongbowman
         | UnitKind::MuslimCrossbowman
         | UnitKind::MuslimArmoredCrossbowman
-        | UnitKind::MuslimEliteCrossbowman => {
+        | UnitKind::MuslimEliteCrossbowman
+        | UnitKind::MuslimSiegeCrossbowman => {
             "Auto-ranged attack; switches to melee at close range."
         }
         UnitKind::ChristianTracker
         | UnitKind::ChristianPathfinder
         | UnitKind::ChristianHoundmaster
+        | UnitKind::ChristianEliteHoundmaster
         | UnitKind::MuslimTracker
         | UnitKind::MuslimPathfinder
-        | UnitKind::MuslimHoundmaster => "Auto-ranged attack and periodic hound strike summons.",
+        | UnitKind::MuslimHoundmaster
+        | UnitKind::MuslimEliteHoundmaster => {
+            "Auto-ranged attack and periodic hound strike summons."
+        }
         UnitKind::ChristianScout
         | UnitKind::ChristianMountedScout
         | UnitKind::ChristianShockCavalry
+        | UnitKind::ChristianEliteShockCavalry
         | UnitKind::MuslimScout
         | UnitKind::MuslimMountedScout
-        | UnitKind::MuslimShockCavalry => "Periodic autonomous raid movement and melee strikes.",
+        | UnitKind::MuslimShockCavalry
+        | UnitKind::MuslimEliteShockCavalry => {
+            "Periodic autonomous raid movement and melee strikes."
+        }
         UnitKind::ChristianPeasantPriest
         | UnitKind::ChristianDevoted
         | UnitKind::ChristianSquire
         | UnitKind::ChristianBannerman
         | UnitKind::ChristianEliteBannerman
+        | UnitKind::ChristianGodsChosen
         | UnitKind::ChristianDevotedOne
         | UnitKind::ChristianCardinal
         | UnitKind::ChristianEliteCardinal
+        | UnitKind::ChristianDivineSpeaker
         | UnitKind::MuslimPeasantPriest
         | UnitKind::MuslimDevoted
         | UnitKind::MuslimSquire
         | UnitKind::MuslimBannerman
         | UnitKind::MuslimEliteBannerman
+        | UnitKind::MuslimGodsChosen
         | UnitKind::MuslimDevotedOne
         | UnitKind::MuslimCardinal
-        | UnitKind::MuslimEliteCardinal => {
+        | UnitKind::MuslimEliteCardinal
+        | UnitKind::MuslimDivineSpeaker => {
             "Auto-cast priest blessing (attack speed buff aura pulse)."
         }
         UnitKind::ChristianFanatic
         | UnitKind::ChristianFlagellant
         | UnitKind::ChristianEliteFlagellant
+        | UnitKind::ChristianDivineJudge
         | UnitKind::MuslimFanatic
         | UnitKind::MuslimFlagellant
-        | UnitKind::MuslimEliteFlagellant => {
+        | UnitKind::MuslimEliteFlagellant
+        | UnitKind::MuslimDivineJudge => {
             "Melee auto-attack with life leech and armor lock at zero."
         }
         UnitKind::Commander => "Auras, formations, battle-support combat.",
@@ -3072,10 +3153,96 @@ fn tier_placeholder_tooltip(source_kind: UnitKind, tier: u8) -> String {
     )
 }
 
-fn hero_scaffold_tooltip(source_kind: UnitKind) -> String {
+fn hero_recruit_disabled_reason(
+    hero_unlocked: bool,
+    hear_the_call_tokens: u32,
+    current_gold: f32,
+    subtype: HeroRecruitSubtype,
+) -> Option<String> {
+    if !hero_unlocked {
+        Some("Requires wave 60 boss unlock".to_string())
+    } else if hear_the_call_tokens == 0 {
+        Some("Requires Hear the Call".to_string())
+    } else {
+        let gold_cost = hero_recruit_gold_cost_for_subtype(subtype);
+        if current_gold + 0.001 < gold_cost {
+            Some(format!("Requires {:.1} gold", gold_cost))
+        } else {
+            None
+        }
+    }
+}
+
+fn hero_recruit_cost_text(subtype: HeroRecruitSubtype) -> String {
+    let gold_cost = hero_recruit_gold_cost_for_subtype(subtype);
+    if gold_cost <= 0.0 {
+        "1 Hear the Call token".to_string()
+    } else {
+        format!("1 Hear the Call token + {:.1} gold", gold_cost)
+    }
+}
+
+const HERO_SUBTYPES_INFANTRY_AND_CAVALRY: [HeroRecruitSubtype; 4] = [
+    HeroRecruitSubtype::InfantrySwordShield,
+    HeroRecruitSubtype::InfantrySpear,
+    HeroRecruitSubtype::InfantryTwoHandedSword,
+    HeroRecruitSubtype::CavalrySuperKnight,
+];
+
+const HERO_SUBTYPES_RANGED: [HeroRecruitSubtype; 3] = [
+    HeroRecruitSubtype::RangedBow,
+    HeroRecruitSubtype::RangedJavelin,
+    HeroRecruitSubtype::RangedBeastMaster,
+];
+
+const HERO_SUBTYPES_SUPPORT: [HeroRecruitSubtype; 2] = [
+    HeroRecruitSubtype::SupportSuperPriest,
+    HeroRecruitSubtype::SupportSuperFanatic,
+];
+
+fn hero_recruit_subtypes_for_source(source_kind: UnitKind) -> &'static [HeroRecruitSubtype] {
+    match source_kind {
+        UnitKind::ChristianPeasantInfantry | UnitKind::MuslimPeasantInfantry => {
+            &HERO_SUBTYPES_INFANTRY_AND_CAVALRY
+        }
+        UnitKind::ChristianPeasantArcher | UnitKind::MuslimPeasantArcher => &HERO_SUBTYPES_RANGED,
+        UnitKind::ChristianPeasantPriest | UnitKind::MuslimPeasantPriest => &HERO_SUBTYPES_SUPPORT,
+        _ => &[],
+    }
+}
+
+fn hero_recruit_subtype_label(subtype: HeroRecruitSubtype) -> &'static str {
+    match subtype {
+        HeroRecruitSubtype::InfantrySwordShield => "Sword+Shield",
+        HeroRecruitSubtype::InfantrySpear => "Spear",
+        HeroRecruitSubtype::InfantryTwoHandedSword => "2H Sword",
+        HeroRecruitSubtype::RangedBow => "Bow",
+        HeroRecruitSubtype::RangedJavelin => "Javelin",
+        HeroRecruitSubtype::RangedBeastMaster => "Beast Master",
+        HeroRecruitSubtype::SupportSuperPriest => "Super Priest",
+        HeroRecruitSubtype::SupportSuperFanatic => "Super Fanatic",
+        HeroRecruitSubtype::CavalrySuperKnight => "Super Knight",
+    }
+}
+
+fn hero_recruit_tooltip(
+    source_kind: UnitKind,
+    subtype: HeroRecruitSubtype,
+    hero_unlocked: bool,
+    hear_the_call_tokens: u32,
+    current_gold: f32,
+) -> String {
+    let requirement_text =
+        hero_recruit_disabled_reason(hero_unlocked, hear_the_call_tokens, current_gold, subtype)
+            .unwrap_or_else(|| "Ready to recruit".to_string());
     format!(
-        "{} Hero\nType: Hero\nDescription: Hero tier slot currently inactive for this unit type.\nStats: N/A (not implemented)\nAbilities: N/A",
-        unit_kind_label(source_kind)
+        "{} Hero\nType: Hero Recruit\nSubtype: {}\nDescription: Recruit hero placeholder from selected subtype.\nRequirements: {}\nCost: {}\nHear the Call Tokens: {}\nCurrent Gold: {:.1}",
+        unit_kind_label(source_kind),
+        hero_recruit_subtype_label(subtype),
+        requirement_text,
+        hero_recruit_cost_text(subtype),
+        hear_the_call_tokens,
+        current_gold
     )
 }
 
@@ -4435,21 +4602,38 @@ fn spawn_gear_rarity_legend(parent: &mut ChildBuilder) {
 }
 
 fn gear_item_icon_handle(item: &GearItemEntry, art: &ArtAssets) -> Handle<Image> {
-    use crate::inventory::GearItemType;
+    if let Some(icon) = gear_icon_from_key(item.icon_key.as_str(), item.faction, art) {
+        return icon;
+    }
+    let fallback_key = default_icon_key_for_item_type(item.item_type);
+    if let Some(icon) = gear_icon_from_key(fallback_key, item.faction, art) {
+        return icon;
+    }
+    art.item_armor_icon.clone()
+}
 
-    match item.item_type {
-        GearItemType::Banner => art.item_banner_icon.clone(),
-        GearItemType::Instrument => art.item_instrument_icon.clone(),
-        GearItemType::Chant => art.item_chant_icon.clone(),
-        GearItemType::Squire => art.item_squire_icon.clone(),
-        GearItemType::Symbol => match item.faction.unwrap_or(PlayerFaction::Christian) {
+fn gear_icon_from_key(
+    key: &str,
+    faction: Option<PlayerFaction>,
+    art: &ArtAssets,
+) -> Option<Handle<Image>> {
+    let icon = match key {
+        "item_banner" => art.item_banner_icon.clone(),
+        "item_instrument" => art.item_instrument_icon.clone(),
+        "item_chant" => art.item_chant_icon.clone(),
+        "item_squire" => art.item_squire_icon.clone(),
+        "item_symbol_cross" => art.item_symbol_cross_icon.clone(),
+        "item_symbol_crescent" => art.item_symbol_crescent_icon.clone(),
+        "item_symbol_faction" => match faction.unwrap_or(PlayerFaction::Christian) {
             PlayerFaction::Christian => art.item_symbol_cross_icon.clone(),
             PlayerFaction::Muslim => art.item_symbol_crescent_icon.clone(),
         },
-        GearItemType::MeleeWeapon => art.item_sword_icon.clone(),
-        GearItemType::RangedWeapon => art.item_bow_icon.clone(),
-        GearItemType::Armor => art.item_armor_icon.clone(),
-    }
+        "item_sword" => art.item_sword_icon.clone(),
+        "item_bow" => art.item_bow_icon.clone(),
+        "item_armor" => art.item_armor_icon.clone(),
+        _ => return None,
+    };
+    Some(icon)
 }
 
 fn equipment_unit_short_label(unit_type: EquipmentUnitType) -> &'static str {
@@ -4554,10 +4738,12 @@ fn build_unit_upgrade_panel_data(
         allowed_max_level: economy.allowed_max_level,
         locked_levels: economy.locked_levels,
         unlocked_tier: unlock_state.unlocked_tier,
+        hero_unlocked: unlock_state.hero_tier_unlocked,
         selected_source,
         roster_entries,
         promotions,
         current_gold: progression.gold,
+        hear_the_call_tokens: progression.hear_the_call_tokens,
         conversion_gold_cost_per_unit: conversion_gold_cost,
         context_swap_option,
         graph_scroll_offset: ui_state
@@ -4573,11 +4759,17 @@ fn spawn_unit_upgrade_modal_sections(
     data: &GameData,
 ) {
     let budget_text = format!(
-        "Commander Level Budget: {}/{}  |  Locked by Roster: {}  |  Treasury: {:.1} gold",
+        "Commander Level Budget: {}/{}  |  Locked by Roster: {}  |  Treasury: {:.1} gold  |  Hear the Call: {}  |  Hero Tier: {}",
         panel_data.commander_level,
         panel_data.allowed_max_level,
         panel_data.locked_levels,
-        panel_data.current_gold
+        panel_data.current_gold,
+        panel_data.hear_the_call_tokens,
+        if panel_data.hero_unlocked {
+            "Unlocked"
+        } else {
+            "Locked (major wave 60)"
+        }
     );
     let tier_headers = [
         ("I", "Tier 0"),
@@ -4969,6 +5161,23 @@ fn spawn_unit_upgrade_modal_sections(
                     });
                     tier4_options
                         .dedup_by(|a, b| a.from_kind == b.from_kind && a.to_kind == b.to_kind);
+                    let mut tier5_options = if source_tier == 4 {
+                        options_for_target_tier(entry.kind, 5)
+                    } else {
+                        tier4_options
+                            .iter()
+                            .flat_map(|tier4| options_for_target_tier(tier4.to_kind, 5))
+                            .collect::<Vec<_>>()
+                    };
+                    tier5_options.sort_by(|a, b| {
+                        unit_kind_label(a.to_kind)
+                            .cmp(unit_kind_label(b.to_kind))
+                            .then_with(|| {
+                                unit_kind_label(a.from_kind).cmp(unit_kind_label(b.from_kind))
+                            })
+                    });
+                    tier5_options
+                        .dedup_by(|a, b| a.from_kind == b.from_kind && a.to_kind == b.to_kind);
                     scroll_root
                         .spawn((
                             UnitUpgradeGraphContent,
@@ -4991,7 +5200,7 @@ fn spawn_unit_upgrade_modal_sections(
                             row.spawn(NodeBundle {
                                 style: Style {
                                     width: Val::Px(UNIT_UPGRADE_GRAPH_CELL_WIDTH),
-                                    min_height: Val::Px(62.0),
+                                    min_height: Val::Px(92.0),
                                     border: UiRect::all(Val::Px(1.0)),
                                     padding: UiRect::all(Val::Px(4.0)),
                                     justify_content: JustifyContent::Center,
@@ -5226,8 +5435,10 @@ fn spawn_unit_upgrade_modal_sections(
                                         cell.spawn(NodeBundle {
                                             style: Style {
                                                 width: Val::Percent(100.0),
-                                                flex_direction: FlexDirection::Column,
-                                                row_gap: Val::Px(2.0),
+                                                flex_direction: FlexDirection::Row,
+                                                flex_wrap: FlexWrap::Wrap,
+                                                row_gap: Val::Px(3.0),
+                                                column_gap: Val::Px(3.0),
                                                 ..default()
                                             },
                                             background_color: BackgroundColor(Color::NONE),
@@ -5243,8 +5454,8 @@ fn spawn_unit_upgrade_modal_sections(
                                                     list.spawn((
                                                         ButtonBundle {
                                                             style: Style {
-                                                                width: Val::Percent(100.0),
-                                                                min_height: Val::Px(18.0),
+                                                                width: Val::Percent(48.0),
+                                                                min_height: Val::Px(20.0),
                                                                 border: UiRect::all(Val::Px(1.0)),
                                                                 justify_content:
                                                                     JustifyContent::Center,
@@ -5301,8 +5512,10 @@ fn spawn_unit_upgrade_modal_sections(
                                         cell.spawn(NodeBundle {
                                             style: Style {
                                                 width: Val::Percent(100.0),
-                                                flex_direction: FlexDirection::Column,
-                                                row_gap: Val::Px(2.0),
+                                                flex_direction: FlexDirection::Row,
+                                                flex_wrap: FlexWrap::Wrap,
+                                                row_gap: Val::Px(3.0),
+                                                column_gap: Val::Px(3.0),
                                                 ..default()
                                             },
                                             background_color: BackgroundColor(Color::NONE),
@@ -5318,8 +5531,8 @@ fn spawn_unit_upgrade_modal_sections(
                                                     list.spawn((
                                                         ButtonBundle {
                                                             style: Style {
-                                                                width: Val::Percent(100.0),
-                                                                min_height: Val::Px(18.0),
+                                                                width: Val::Percent(48.0),
+                                                                min_height: Val::Px(20.0),
                                                                 border: UiRect::all(Val::Px(1.0)),
                                                                 justify_content:
                                                                     JustifyContent::Center,
@@ -5376,8 +5589,10 @@ fn spawn_unit_upgrade_modal_sections(
                                         cell.spawn(NodeBundle {
                                             style: Style {
                                                 width: Val::Percent(100.0),
-                                                flex_direction: FlexDirection::Column,
-                                                row_gap: Val::Px(2.0),
+                                                flex_direction: FlexDirection::Row,
+                                                flex_wrap: FlexWrap::Wrap,
+                                                row_gap: Val::Px(3.0),
+                                                column_gap: Val::Px(3.0),
                                                 ..default()
                                             },
                                             background_color: BackgroundColor(Color::NONE),
@@ -5393,8 +5608,8 @@ fn spawn_unit_upgrade_modal_sections(
                                                     list.spawn((
                                                         ButtonBundle {
                                                             style: Style {
-                                                                width: Val::Percent(100.0),
-                                                                min_height: Val::Px(18.0),
+                                                                width: Val::Percent(48.0),
+                                                                min_height: Val::Px(20.0),
                                                                 border: UiRect::all(Val::Px(1.0)),
                                                                 justify_content:
                                                                     JustifyContent::Center,
@@ -5436,6 +5651,83 @@ fn spawn_unit_upgrade_modal_sections(
                                                             TextStyle {
                                                                 font_size: 10.0,
                                                                 color: if tier4_enabled {
+                                                                    HUD_TEXT_COLOR
+                                                                } else {
+                                                                    MENU_BUTTON_TEXT_DISABLED
+                                                                },
+                                                                ..default()
+                                                            },
+                                                        ));
+                                                    });
+                                                }
+                                            },
+                                        );
+                                    } else if tier == 5 && !tier5_options.is_empty() {
+                                        cell.spawn(NodeBundle {
+                                            style: Style {
+                                                width: Val::Percent(100.0),
+                                                flex_direction: FlexDirection::Row,
+                                                flex_wrap: FlexWrap::Wrap,
+                                                row_gap: Val::Px(3.0),
+                                                column_gap: Val::Px(3.0),
+                                                ..default()
+                                            },
+                                            background_color: BackgroundColor(Color::NONE),
+                                            ..default()
+                                        })
+                                        .with_children(
+                                            |list| {
+                                                for promotion in &tier5_options {
+                                                    let tier5_unlocked = promotion.unlock_tier
+                                                        <= panel_data.unlocked_tier;
+                                                    let tier5_enabled = tier5_unlocked
+                                                        && promotion.max_affordable > 0;
+                                                    list.spawn((
+                                                        ButtonBundle {
+                                                            style: Style {
+                                                                width: Val::Percent(48.0),
+                                                                min_height: Val::Px(20.0),
+                                                                border: UiRect::all(Val::Px(1.0)),
+                                                                justify_content:
+                                                                    JustifyContent::Center,
+                                                                align_items: AlignItems::Center,
+                                                                padding: UiRect::axes(
+                                                                    Val::Px(4.0),
+                                                                    Val::Px(2.0),
+                                                                ),
+                                                                ..default()
+                                                            },
+                                                            background_color: BackgroundColor(
+                                                                Color::srgba(0.07, 0.07, 0.07, 0.6),
+                                                            ),
+                                                            border_color: BorderColor(
+                                                                if tier5_enabled {
+                                                                    Color::srgba(
+                                                                        0.78, 0.72, 0.58, 0.24,
+                                                                    )
+                                                                } else {
+                                                                    MENU_BUTTON_BORDER_DISABLED
+                                                                },
+                                                            ),
+                                                            ..default()
+                                                        },
+                                                        UnitUpgradePromoteButton {
+                                                            from: promotion.from_kind,
+                                                            to: promotion.to_kind,
+                                                        },
+                                                        UnitUpgradeTooltipTarget {
+                                                            tooltip: promotion_tooltip(
+                                                                promotion,
+                                                                panel_data.unlocked_tier,
+                                                            ),
+                                                        },
+                                                    ))
+                                                    .with_children(|button| {
+                                                        button.spawn(TextBundle::from_section(
+                                                            unit_kind_label(promotion.to_kind),
+                                                            TextStyle {
+                                                                font_size: 10.0,
+                                                                color: if tier5_enabled {
                                                                     HUD_TEXT_COLOR
                                                                 } else {
                                                                     MENU_BUTTON_TEXT_DISABLED
@@ -5515,7 +5807,7 @@ fn spawn_unit_upgrade_modal_sections(
                             row.spawn(NodeBundle {
                                 style: Style {
                                     width: Val::Px(UNIT_UPGRADE_GRAPH_CELL_WIDTH),
-                                    min_height: Val::Px(62.0),
+                                    min_height: Val::Px(92.0),
                                     border: UiRect::all(Val::Px(1.0)),
                                     padding: UiRect::all(Val::Px(4.0)),
                                     justify_content: JustifyContent::Center,
@@ -5529,36 +5821,82 @@ fn spawn_unit_upgrade_modal_sections(
                                 ..default()
                             })
                             .with_children(|cell| {
-                                cell.spawn((
-                                    ButtonBundle {
-                                        style: Style {
-                                            width: Val::Percent(100.0),
-                                            min_height: Val::Px(48.0),
-                                            border: UiRect::all(Val::Px(1.0)),
-                                            justify_content: JustifyContent::Center,
-                                            align_items: AlignItems::Center,
-                                            padding: UiRect::axes(Val::Px(6.0), Val::Px(4.0)),
-                                            ..default()
-                                        },
-                                        background_color: BackgroundColor(Color::srgba(
-                                            0.07, 0.07, 0.07, 0.6,
-                                        )),
-                                        border_color: BorderColor(MENU_BUTTON_BORDER_DISABLED),
+                                let hero_subtypes = hero_recruit_subtypes_for_source(entry.kind);
+
+                                cell.spawn(NodeBundle {
+                                    style: Style {
+                                        width: Val::Percent(100.0),
+                                        flex_direction: FlexDirection::Row,
+                                        flex_wrap: FlexWrap::Wrap,
+                                        row_gap: Val::Px(3.0),
+                                        column_gap: Val::Px(3.0),
                                         ..default()
                                     },
-                                    UnitUpgradeTooltipTarget {
-                                        tooltip: hero_scaffold_tooltip(entry.kind),
-                                    },
-                                ))
-                                .with_children(|button| {
-                                    button.spawn(TextBundle::from_section(
-                                        base_label,
-                                        TextStyle {
-                                            font_size: 12.0,
-                                            color: MENU_BUTTON_TEXT_DISABLED,
-                                            ..default()
-                                        },
-                                    ));
+                                    background_color: BackgroundColor(Color::NONE),
+                                    ..default()
+                                })
+                                .with_children(|list| {
+                                    for subtype in hero_subtypes {
+                                        let subtype = *subtype;
+                                        let hero_disabled_reason = hero_recruit_disabled_reason(
+                                            panel_data.hero_unlocked,
+                                            panel_data.hear_the_call_tokens,
+                                            panel_data.current_gold,
+                                            subtype,
+                                        );
+                                        let hero_enabled = hero_disabled_reason.is_none();
+                                        list.spawn((
+                                            ButtonBundle {
+                                                style: Style {
+                                                    width: Val::Percent(48.0),
+                                                    min_height: Val::Px(20.0),
+                                                    border: UiRect::all(Val::Px(1.0)),
+                                                    justify_content: JustifyContent::Center,
+                                                    align_items: AlignItems::Center,
+                                                    padding: UiRect::axes(
+                                                        Val::Px(4.0),
+                                                        Val::Px(2.0),
+                                                    ),
+                                                    ..default()
+                                                },
+                                                background_color: BackgroundColor(Color::srgba(
+                                                    0.07, 0.07, 0.07, 0.6,
+                                                )),
+                                                border_color: BorderColor(if hero_enabled {
+                                                    Color::srgba(0.78, 0.72, 0.58, 0.24)
+                                                } else {
+                                                    MENU_BUTTON_BORDER_DISABLED
+                                                }),
+                                                ..default()
+                                            },
+                                            UnitUpgradeHeroRecruitButton { subtype },
+                                            UnitUpgradeTooltipTarget {
+                                                tooltip: hero_recruit_tooltip(
+                                                    entry.kind,
+                                                    subtype,
+                                                    panel_data.hero_unlocked,
+                                                    panel_data.hear_the_call_tokens,
+                                                    panel_data.current_gold,
+                                                ),
+                                            },
+                                        ))
+                                        .with_children(
+                                            |button| {
+                                                button.spawn(TextBundle::from_section(
+                                                    hero_recruit_subtype_label(subtype),
+                                                    TextStyle {
+                                                        font_size: 9.0,
+                                                        color: if hero_enabled {
+                                                            HUD_TEXT_COLOR
+                                                        } else {
+                                                            MENU_BUTTON_TEXT_DISABLED
+                                                        },
+                                                        ..default()
+                                                    },
+                                                ));
+                                            },
+                                        );
+                                    }
                                 });
                             });
                         });
@@ -5572,18 +5910,12 @@ fn roster_count_for_kind(economy: &RosterEconomy, kind: UnitKind) -> u32 {
 }
 
 fn roster_upgrade_kinds_for_faction(faction: PlayerFaction) -> [UnitKind; 3] {
-    match faction {
-        PlayerFaction::Christian => [
-            UnitKind::ChristianPeasantInfantry,
-            UnitKind::ChristianPeasantArcher,
-            UnitKind::ChristianPeasantPriest,
-        ],
-        PlayerFaction::Muslim => [
-            UnitKind::MuslimPeasantInfantry,
-            UnitKind::MuslimPeasantArcher,
-            UnitKind::MuslimPeasantPriest,
-        ],
-    }
+    let kinds = RecruitUnitKind::all_for_faction(faction);
+    [
+        kinds[0].as_unit_kind(),
+        kinds[1].as_unit_kind(),
+        kinds[2].as_unit_kind(),
+    ]
 }
 
 fn conversion_targets_for(kind: UnitKind, roster_kinds: &[UnitKind]) -> Vec<UnitKind> {
@@ -6997,6 +7329,25 @@ fn handle_unit_upgrade_buttons(
             Without<UnitUpgradeGraphScrollButton>,
         ),
     >,
+    mut hero_recruit_buttons: Query<
+        (
+            &Interaction,
+            &UnitUpgradeHeroRecruitButton,
+            &Children,
+            &mut BorderColor,
+            &mut BackgroundColor,
+        ),
+        (
+            Changed<Interaction>,
+            With<Button>,
+            With<UnitUpgradeHeroRecruitButton>,
+            Without<UnitUpgradeSourceButton>,
+            Without<UnitUpgradeSwapTargetCycleButton>,
+            Without<UnitUpgradeConvertButton>,
+            Without<UnitUpgradePromoteButton>,
+            Without<UnitUpgradeGraphScrollButton>,
+        ),
+    >,
     mut graph_scroll_buttons: Query<
         (
             &Interaction,
@@ -7258,6 +7609,68 @@ fn handle_unit_upgrade_buttons(
                         )
                     };
                     runtime.economy_feedback.blocked_upgrade_reason = Some(reason);
+                    *border_color = BorderColor(MENU_BUTTON_BORDER_DISABLED);
+                    *background_color = BackgroundColor(Color::srgba(0.06, 0.055, 0.05, 0.64));
+                }
+            }
+            Interaction::Hovered => {
+                *border_color = BorderColor(if enabled {
+                    MENU_BUTTON_BORDER_HOVERED
+                } else {
+                    MENU_BUTTON_BORDER_DISABLED
+                });
+                *background_color = BackgroundColor(Color::srgba(0.1, 0.085, 0.075, 0.62));
+            }
+            Interaction::None => {
+                *border_color = BorderColor(if enabled {
+                    Color::srgba(0.78, 0.72, 0.58, 0.24)
+                } else {
+                    MENU_BUTTON_BORDER_DISABLED
+                });
+                *background_color = BackgroundColor(Color::srgba(0.08, 0.07, 0.06, 0.62));
+            }
+        }
+    }
+
+    for (interaction, button, children, mut border_color, mut background_color) in
+        &mut hero_recruit_buttons
+    {
+        let disabled_reason = hero_recruit_disabled_reason(
+            runtime.unlock_state.hero_tier_unlocked,
+            runtime.progression.hear_the_call_tokens,
+            runtime.progression.gold,
+            button.subtype,
+        );
+        let enabled = disabled_reason.is_none();
+
+        if let Some(&text_entity) = children.first()
+            && let Ok(mut text) = text_query.get_mut(text_entity)
+        {
+            text.sections[0].style.color = if enabled {
+                if matches!(*interaction, Interaction::Hovered | Interaction::Pressed) {
+                    MENU_BUTTON_TEXT_HOVERED
+                } else {
+                    HUD_TEXT_COLOR
+                }
+            } else {
+                MENU_BUTTON_TEXT_DISABLED
+            };
+        }
+
+        match *interaction {
+            Interaction::Pressed => {
+                if enabled {
+                    runtime.hero_recruit_events.send(RecruitHeroEvent {
+                        subtype: button.subtype,
+                    });
+                    runtime.economy_feedback.blocked_upgrade_reason = None;
+                    *border_color = BorderColor(MENU_BUTTON_BORDER_HOVERED);
+                    *background_color = BackgroundColor(Color::srgba(0.11, 0.09, 0.08, 0.7));
+                } else {
+                    runtime.economy_feedback.blocked_upgrade_reason = Some(format!(
+                        "Hero recruit blocked: {}.",
+                        disabled_reason.as_deref().unwrap_or("unknown restriction")
+                    ));
                     *border_color = BorderColor(MENU_BUTTON_BORDER_DISABLED);
                     *background_color = BackgroundColor(Color::srgba(0.06, 0.055, 0.05, 0.64));
                 }
@@ -8190,6 +8603,7 @@ fn refresh_hud_snapshot(
         level: progression.level,
         allowed_max_level: roster_economy.allowed_max_level,
         gold: progression.gold,
+        hear_the_call_tokens: progression.hear_the_call_tokens,
         wave_index: waves.current_wave.saturating_sub(1) as usize,
         current_wave: displayed_wave_number(&waves),
         elapsed_seconds: run_session.survived_seconds,
@@ -8232,7 +8646,11 @@ fn update_in_run_hud(
         );
     }
     if let Ok(mut text) = texts.p5().get_single_mut() {
-        text.sections[0].value = format!("Treasury: {:.1}g", hud.gold.max(0.0));
+        text.sections[0].value = format!(
+            "Treasury: {:.1}g  |  Hear the Call: {}",
+            hud.gold.max(0.0),
+            hud.hear_the_call_tokens
+        );
     }
     if let Ok(mut style) = morale_bar_styles.get_single_mut() {
         style.height = Val::Percent(hud.average_morale_ratio.clamp(0.0, 1.0) * 100.0);
@@ -8919,6 +9337,7 @@ pub fn health_bar_fill_width(current: f32, max: f32, full_width: f32) -> f32 {
 mod tests {
     use std::path::Path;
 
+    use super::HeroRecruitSubtype;
     use crate::archive::{ArchiveCategory, ArchiveDataset, ArchiveEntry};
     use crate::core::hotkey_to_run_modal_screen;
     use crate::data::GameData;
@@ -8963,6 +9382,7 @@ mod tests {
             level: 2,
             allowed_max_level: 197,
             gold: 12.0,
+            hear_the_call_tokens: 1,
             wave_index: 2,
             current_wave: 2,
             elapsed_seconds: 61.0,
@@ -9202,10 +9622,77 @@ mod tests {
     }
 
     #[test]
+    fn hero_recruit_disabled_reason_matches_unlock_and_token_gates() {
+        assert_eq!(
+            super::hero_recruit_disabled_reason(
+                false,
+                3,
+                1_000.0,
+                HeroRecruitSubtype::InfantrySwordShield,
+            ),
+            Some("Requires wave 60 boss unlock".to_string())
+        );
+        assert_eq!(
+            super::hero_recruit_disabled_reason(
+                true,
+                0,
+                1_000.0,
+                HeroRecruitSubtype::InfantrySwordShield,
+            ),
+            Some("Requires Hear the Call".to_string())
+        );
+        assert_eq!(
+            super::hero_recruit_disabled_reason(
+                true,
+                1,
+                0.0,
+                HeroRecruitSubtype::InfantrySwordShield,
+            ),
+            Some(format!(
+                "Requires {:.1} gold",
+                super::hero_recruit_gold_cost_for_subtype(HeroRecruitSubtype::InfantrySwordShield)
+            ))
+        );
+        assert_eq!(
+            super::hero_recruit_disabled_reason(
+                true,
+                1,
+                1_000.0,
+                HeroRecruitSubtype::InfantrySwordShield,
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn hero_subtype_rows_match_role_lanes() {
+        let infantry = super::hero_recruit_subtypes_for_source(UnitKind::ChristianPeasantInfantry)
+            .iter()
+            .map(|subtype| super::hero_recruit_subtype_label(*subtype))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            infantry,
+            vec!["Sword+Shield", "Spear", "2H Sword", "Super Knight"]
+        );
+
+        let ranged = super::hero_recruit_subtypes_for_source(UnitKind::ChristianPeasantArcher)
+            .iter()
+            .map(|subtype| super::hero_recruit_subtype_label(*subtype))
+            .collect::<Vec<_>>();
+        assert_eq!(ranged, vec!["Bow", "Javelin", "Beast Master"]);
+
+        let support = super::hero_recruit_subtypes_for_source(UnitKind::ChristianPeasantPriest)
+            .iter()
+            .map(|subtype| super::hero_recruit_subtype_label(*subtype))
+            .collect::<Vec<_>>();
+        assert_eq!(support, vec!["Super Priest", "Super Fanatic"]);
+    }
+
+    #[test]
     fn unit_box_tooltip_contains_required_sections_for_infantry() {
         let data = GameData::load_from_dir(Path::new("assets/data")).expect("load data");
         let tooltip = unit_box_tooltip(UnitKind::ChristianPeasantInfantry, &data, Some(12.0));
-        assert!(tooltip.contains("Christian Peasant Infantry"));
+        assert!(tooltip.contains("Peasant Infantry"));
         assert!(tooltip.contains("Type:"));
         assert!(tooltip.contains("Description:"));
         assert!(tooltip.contains("Stats:"));
@@ -9365,6 +9852,7 @@ mod tests {
         let data = GameData::load_from_dir(Path::new("assets/data")).expect("load data");
         let progression = Progression {
             gold: 0.0,
+            hear_the_call_tokens: 0,
             level: 8,
             pending_level_ups: 0,
         };

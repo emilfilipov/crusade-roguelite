@@ -98,9 +98,9 @@ pub fn build_archive_entries(data: &GameData) -> Vec<ArchiveEntry> {
         },
         ArchiveEntry {
             category: ArchiveCategory::Units,
-            title: "Christian Peasant Infantry".to_string(),
+            title: "Peasant Infantry".to_string(),
             description: format!(
-                "Melee retinue. HP {}, Armor {}, Damage {}.",
+                "Melee retinue. Christian profile: HP {}, Armor {}, Damage {}.",
                 data.units.recruit_christian_peasant_infantry.max_hp,
                 data.units.recruit_christian_peasant_infantry.armor,
                 data.units.recruit_christian_peasant_infantry.damage,
@@ -109,21 +109,21 @@ pub fn build_archive_entries(data: &GameData) -> Vec<ArchiveEntry> {
         },
         ArchiveEntry {
             category: ArchiveCategory::Units,
-            title: "Christian Peasant Archer".to_string(),
+            title: "Peasant Archer".to_string(),
             description: "Hybrid unit with weak melee and stronger ranged arrows.".to_string(),
             icon: None,
         },
         ArchiveEntry {
             category: ArchiveCategory::Units,
-            title: "Christian Peasant Priest".to_string(),
+            title: "Peasant Priest".to_string(),
             description: "Support caster with periodic attack-speed blessing.".to_string(),
             icon: Some(UpgradeCardIcon::HospitalierAura),
         },
         ArchiveEntry {
             category: ArchiveCategory::Units,
-            title: "Muslim Peasant Infantry".to_string(),
+            title: "Peasant Infantry (Alt Profile)".to_string(),
             description: format!(
-                "Melee retinue. HP {}, Armor {}, Damage {}.",
+                "Melee retinue. Muslim profile: HP {}, Armor {}, Damage {}.",
                 data.units.recruit_muslim_peasant_infantry.max_hp,
                 data.units.recruit_muslim_peasant_infantry.armor,
                 data.units.recruit_muslim_peasant_infantry.damage,
@@ -132,21 +132,23 @@ pub fn build_archive_entries(data: &GameData) -> Vec<ArchiveEntry> {
         },
         ArchiveEntry {
             category: ArchiveCategory::Units,
-            title: "Muslim Peasant Archer".to_string(),
-            description: "Hybrid unit with weak melee and stronger ranged arrows.".to_string(),
+            title: "Peasant Archer (Alt Profile)".to_string(),
+            description: "Hybrid unit with weak melee and stronger ranged arrows (Muslim profile)."
+                .to_string(),
             icon: None,
         },
         ArchiveEntry {
             category: ArchiveCategory::Units,
-            title: "Muslim Peasant Priest".to_string(),
-            description: "Support caster with periodic attack-speed blessing.".to_string(),
+            title: "Peasant Priest (Alt Profile)".to_string(),
+            description: "Support caster with periodic attack-speed blessing (Muslim profile)."
+                .to_string(),
             icon: Some(UpgradeCardIcon::HospitalierAura),
         },
         ArchiveEntry {
             category: ArchiveCategory::Enemies,
-            title: "Christian Enemy Infantry".to_string(),
+            title: "Enemy Infantry".to_string(),
             description: format!(
-                "Melee enemy. HP {}, Damage {}, Move {}.",
+                "Melee enemy profile A. HP {}, Damage {}, Move {}.",
                 data.enemies.enemy_christian_peasant_infantry.max_hp,
                 data.enemies.enemy_christian_peasant_infantry.damage,
                 data.enemies.enemy_christian_peasant_infantry.move_speed,
@@ -155,9 +157,9 @@ pub fn build_archive_entries(data: &GameData) -> Vec<ArchiveEntry> {
         },
         ArchiveEntry {
             category: ArchiveCategory::Enemies,
-            title: "Muslim Enemy Infantry".to_string(),
+            title: "Enemy Infantry (Alt Profile)".to_string(),
             description: format!(
-                "Melee enemy. HP {}, Damage {}, Move {}.",
+                "Melee enemy profile B. HP {}, Damage {}, Move {}.",
                 data.enemies.enemy_muslim_peasant_infantry.max_hp,
                 data.enemies.enemy_muslim_peasant_infantry.damage,
                 data.enemies.enemy_muslim_peasant_infantry.move_speed,

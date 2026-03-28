@@ -14,6 +14,13 @@ UI element art is intentionally excluded for now (basic programmatic shapes are 
 - Oasis POI assets are optional/deferred until oasis gameplay is re-enabled.
 - Banner drop/recovery and rescue recruitment are included.
 
+## Runtime Identity Requirements (Refactor Baseline)
+- Runtime-facing identity should be generic-first:
+  - units resolve to shared `unit_id` values (for example `peasant_infantry`) with faction context carried separately,
+  - hero/item identity follows the same pattern (`id + faction override context`) instead of duplicating definitions per faction.
+- Faction differentiation should default to data overrides (display, stats, abilities, visuals, drops), not hardcoded branch-specific names in UI/runtime labels.
+- Item catalogs must allow faction-scoped entries with the same base `item_id` to support override-style authoring.
+
 ## Global Art Specs
 - Format: `PNG` with transparency for sprites/decals, `PNG` tiles for terrain.
 - Style: grounded, dusty, readable silhouettes, low detail noise.

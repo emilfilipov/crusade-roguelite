@@ -1,5 +1,7 @@
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::Path;
 
 use crate::banner::BannerState;
 use crate::model::{GameState, PlayerFaction, StartRunEvent, UnitKind};
@@ -126,6 +128,19 @@ pub enum GearItemType {
     Armor,
 }
 
+pub const fn default_icon_key_for_item_type(item_type: GearItemType) -> &'static str {
+    match item_type {
+        GearItemType::Banner => "item_banner",
+        GearItemType::Instrument => "item_instrument",
+        GearItemType::Chant => "item_chant",
+        GearItemType::Squire => "item_squire",
+        GearItemType::Symbol => "item_symbol_faction",
+        GearItemType::MeleeWeapon => "item_sword",
+        GearItemType::RangedWeapon => "item_bow",
+        GearItemType::Armor => "item_armor",
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub enum GearStatKind {
     DamagePercent,
@@ -217,6 +232,28 @@ pub struct GearItemEntry {
     pub faction: Option<PlayerFaction>,
     pub stats: Vec<GearRolledStat>,
     pub special_effect: Option<GearSpecialEffectKind>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
+pub struct ItemRef {
+    pub item_id: String,
+    #[serde(default)]
+    pub faction: Option<PlayerFaction>,
+}
+
+impl ItemRef {
+    pub fn new(item_id: impl Into<String>, faction: Option<PlayerFaction>) -> Self {
+        Self {
+            item_id: item_id.into(),
+            faction,
+        }
+    }
+}
+
+impl GearItemEntry {
+    pub fn item_ref(&self) -> ItemRef {
+        ItemRef::new(self.template_id.clone(), self.faction)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -420,16 +457,38 @@ pub enum UnitCombatRole {
     Support,
 }
 
-#[derive(Clone, Copy, Debug)]
-struct GearTemplate {
-    id: &'static str,
-    name: &'static str,
-    description: &'static str,
-    icon_key: &'static str,
-    item_type: GearItemType,
-    stats: [GearStatKind; 2],
-    special_effect: Option<GearSpecialEffectKind>,
-    faction: Option<PlayerFaction>,
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct GearTemplateConfig {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub icon_key: String,
+    pub item_type: GearItemType,
+    pub stats: [GearStatKind; 2],
+    #[serde(default)]
+    pub special_effect: Option<GearSpecialEffectKind>,
+    #[serde(default)]
+    pub faction: Option<PlayerFaction>,
+    #[serde(default = "default_template_weight")]
+    pub drop_weight: f32,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct GearTemplateConfigFile {
+    templates: Vec<GearTemplateConfig>,
+}
+
+#[derive(Resource, Clone, Debug)]
+pub struct ItemTemplateCatalog {
+    pub templates: Vec<GearTemplateConfig>,
+}
+
+impl Default for ItemTemplateCatalog {
+    fn default() -> Self {
+        Self {
+            templates: default_item_templates(),
+        }
+    }
 }
 
 const BASE_RARITY_WEIGHTS: [(GearRarity, f32); 6] = [
@@ -441,113 +500,171 @@ const BASE_RARITY_WEIGHTS: [(GearRarity, f32); 6] = [
     (GearRarity::Unique, 0.01),
 ];
 
-const TEMPLATES: [GearTemplate; 9] = [
-    GearTemplate {
-        id: "banner_sturdy_pole",
-        name: "Banner on Sturdy Pole",
-        description: "Army banner boosting pace and command reach.",
-        icon_key: "item_banner",
-        item_type: GearItemType::Banner,
-        stats: [GearStatKind::MoveSpeedFlat, GearStatKind::AuraRangeFlat],
-        special_effect: None,
-        faction: None,
-    },
-    GearTemplate {
-        id: "instrument_drum",
-        name: "War Drum",
-        description: "Triggers a periodic armor pulse for the army.",
-        icon_key: "item_instrument",
-        item_type: GearItemType::Instrument,
-        stats: [
-            GearStatKind::ArmorPulseFlat,
-            GearStatKind::CommanderMaxHealthFlat,
-        ],
-        special_effect: Some(GearSpecialEffectKind::DrumArmorPulse),
-        faction: None,
-    },
-    GearTemplate {
-        id: "chant_battle_song",
-        name: "Battle Song",
-        description: "Periodically grants temporary morale-loss immunity.",
-        icon_key: "item_chant",
-        item_type: GearItemType::Chant,
-        stats: [
-            GearStatKind::CooldownReductionSecs,
-            GearStatKind::CommanderMaxHealthFlat,
-        ],
-        special_effect: Some(GearSpecialEffectKind::BattleChantMoraleImmunity),
-        faction: None,
-    },
-    GearTemplate {
-        id: "squire_young",
-        name: "Young Squire",
-        description: "Role-based support stats for the assigned setup.",
-        icon_key: "item_squire",
-        item_type: GearItemType::Squire,
-        stats: [GearStatKind::SquirePrimary, GearStatKind::SquireSecondary],
-        special_effect: None,
-        faction: None,
-    },
-    GearTemplate {
-        id: "symbol_cross",
-        name: "Holy Cross",
-        description: "Empowers aura effects against enemies and extends aura reach.",
-        icon_key: "item_symbol_cross",
-        item_type: GearItemType::Symbol,
-        stats: [
-            GearStatKind::AuraEnemyEffectPercent,
-            GearStatKind::AuraRangeFlat,
-        ],
-        special_effect: None,
-        faction: Some(PlayerFaction::Christian),
-    },
-    GearTemplate {
-        id: "symbol_crescent",
-        name: "Crescent Emblem",
-        description: "Empowers aura effects against enemies and extends aura reach.",
-        icon_key: "item_symbol_crescent",
-        item_type: GearItemType::Symbol,
-        stats: [
-            GearStatKind::AuraEnemyEffectPercent,
-            GearStatKind::AuraRangeFlat,
-        ],
-        special_effect: None,
-        faction: Some(PlayerFaction::Muslim),
-    },
-    GearTemplate {
-        id: "sword_simple",
-        name: "Simple Sword",
-        description: "Tradeoff roll between damage and attack speed.",
-        icon_key: "item_sword",
-        item_type: GearItemType::MeleeWeapon,
-        stats: [
-            GearStatKind::DamagePercent,
-            GearStatKind::AttackSpeedPercent,
-        ],
-        special_effect: None,
-        faction: None,
-    },
-    GearTemplate {
-        id: "bow_simple",
-        name: "Simple Bow",
-        description: "Tradeoff roll between ranged damage and range.",
-        icon_key: "item_bow",
-        item_type: GearItemType::RangedWeapon,
-        stats: [GearStatKind::DamagePercent, GearStatKind::RangedRangeFlat],
-        special_effect: None,
-        faction: None,
-    },
-    GearTemplate {
-        id: "armor_simple",
-        name: "Simple Chestpiece",
-        description: "Tradeoff roll between armor and movement speed.",
-        icon_key: "item_armor",
-        item_type: GearItemType::Armor,
-        stats: [GearStatKind::ArmorFlat, GearStatKind::MoveSpeedFlat],
-        special_effect: None,
-        faction: None,
-    },
-];
+fn default_item_templates() -> Vec<GearTemplateConfig> {
+    vec![
+        GearTemplateConfig {
+            id: "banner_sturdy_pole".to_string(),
+            name: "Banner on Sturdy Pole".to_string(),
+            description: "Army banner boosting pace and command reach.".to_string(),
+            icon_key: "item_banner".to_string(),
+            item_type: GearItemType::Banner,
+            stats: [GearStatKind::MoveSpeedFlat, GearStatKind::AuraRangeFlat],
+            special_effect: None,
+            faction: None,
+            drop_weight: 1.0,
+        },
+        GearTemplateConfig {
+            id: "instrument_drum".to_string(),
+            name: "War Drum".to_string(),
+            description: "Triggers a periodic armor pulse for the army.".to_string(),
+            icon_key: "item_instrument".to_string(),
+            item_type: GearItemType::Instrument,
+            stats: [
+                GearStatKind::ArmorPulseFlat,
+                GearStatKind::CommanderMaxHealthFlat,
+            ],
+            special_effect: Some(GearSpecialEffectKind::DrumArmorPulse),
+            faction: None,
+            drop_weight: 1.0,
+        },
+        GearTemplateConfig {
+            id: "chant_battle_song".to_string(),
+            name: "Battle Song".to_string(),
+            description: "Periodically grants temporary morale-loss immunity.".to_string(),
+            icon_key: "item_chant".to_string(),
+            item_type: GearItemType::Chant,
+            stats: [
+                GearStatKind::CooldownReductionSecs,
+                GearStatKind::CommanderMaxHealthFlat,
+            ],
+            special_effect: Some(GearSpecialEffectKind::BattleChantMoraleImmunity),
+            faction: None,
+            drop_weight: 1.0,
+        },
+        GearTemplateConfig {
+            id: "squire_young".to_string(),
+            name: "Young Squire".to_string(),
+            description: "Role-based support stats for the assigned setup.".to_string(),
+            icon_key: "item_squire".to_string(),
+            item_type: GearItemType::Squire,
+            stats: [GearStatKind::SquirePrimary, GearStatKind::SquireSecondary],
+            special_effect: None,
+            faction: None,
+            drop_weight: 1.0,
+        },
+        GearTemplateConfig {
+            id: "symbol_cross".to_string(),
+            name: "Holy Cross".to_string(),
+            description: "Empowers aura effects against enemies and extends aura reach."
+                .to_string(),
+            icon_key: "item_symbol_faction".to_string(),
+            item_type: GearItemType::Symbol,
+            stats: [
+                GearStatKind::AuraEnemyEffectPercent,
+                GearStatKind::AuraRangeFlat,
+            ],
+            special_effect: None,
+            faction: Some(PlayerFaction::Christian),
+            drop_weight: 1.0,
+        },
+        GearTemplateConfig {
+            id: "symbol_crescent".to_string(),
+            name: "Crescent Emblem".to_string(),
+            description: "Empowers aura effects against enemies and extends aura reach."
+                .to_string(),
+            icon_key: "item_symbol_faction".to_string(),
+            item_type: GearItemType::Symbol,
+            stats: [
+                GearStatKind::AuraEnemyEffectPercent,
+                GearStatKind::AuraRangeFlat,
+            ],
+            special_effect: None,
+            faction: Some(PlayerFaction::Muslim),
+            drop_weight: 1.0,
+        },
+        GearTemplateConfig {
+            id: "sword_simple".to_string(),
+            name: "Simple Sword".to_string(),
+            description: "Tradeoff roll between damage and attack speed.".to_string(),
+            icon_key: "item_sword".to_string(),
+            item_type: GearItemType::MeleeWeapon,
+            stats: [
+                GearStatKind::DamagePercent,
+                GearStatKind::AttackSpeedPercent,
+            ],
+            special_effect: None,
+            faction: None,
+            drop_weight: 1.0,
+        },
+        GearTemplateConfig {
+            id: "bow_simple".to_string(),
+            name: "Simple Bow".to_string(),
+            description: "Tradeoff roll between ranged damage and range.".to_string(),
+            icon_key: "item_bow".to_string(),
+            item_type: GearItemType::RangedWeapon,
+            stats: [GearStatKind::DamagePercent, GearStatKind::RangedRangeFlat],
+            special_effect: None,
+            faction: None,
+            drop_weight: 1.0,
+        },
+        GearTemplateConfig {
+            id: "armor_simple".to_string(),
+            name: "Simple Chestpiece".to_string(),
+            description: "Tradeoff roll between armor and movement speed.".to_string(),
+            icon_key: "item_armor".to_string(),
+            item_type: GearItemType::Armor,
+            stats: [GearStatKind::ArmorFlat, GearStatKind::MoveSpeedFlat],
+            special_effect: None,
+            faction: None,
+            drop_weight: 1.0,
+        },
+    ]
+}
+
+fn default_template_weight() -> f32 {
+    1.0
+}
+
+fn load_item_template_catalog_from_disk(path: &Path) -> Option<ItemTemplateCatalog> {
+    let Ok(raw) = fs::read_to_string(path) else {
+        return None;
+    };
+    let Ok(parsed) = serde_json::from_str::<GearTemplateConfigFile>(&raw) else {
+        return None;
+    };
+    if parsed.templates.is_empty() {
+        return None;
+    }
+    let mut seen_ids = std::collections::HashSet::new();
+    let mut filtered = Vec::with_capacity(parsed.templates.len());
+    for mut template in parsed.templates {
+        let dedupe_key = (template.id.clone(), template.faction);
+        if template.id.trim().is_empty() || !seen_ids.insert(dedupe_key) {
+            continue;
+        }
+        if template.name.trim().is_empty() {
+            template.name = template.id.clone();
+        }
+        if template.description.trim().is_empty() {
+            template.description = "No description.".to_string();
+        }
+        if template.icon_key.trim().is_empty() {
+            template.icon_key = default_icon_key_for_item_type(template.item_type).to_string();
+        }
+        if !template.drop_weight.is_finite() {
+            template.drop_weight = 0.0;
+        } else {
+            template.drop_weight = template.drop_weight.max(0.0);
+        }
+        filtered.push(template);
+    }
+    if filtered.is_empty() {
+        return None;
+    }
+    Some(ItemTemplateCatalog {
+        templates: filtered,
+    })
+}
 
 impl InventoryState {
     pub fn setup_for(&self, unit_type: EquipmentUnitType) -> Option<&UnitEquipmentSetup> {
@@ -591,80 +708,28 @@ pub fn equipment_unit_type_for_unit(kind: UnitKind, tier: Option<u8>) -> Option<
 }
 
 fn role_for_unit(kind: UnitKind) -> UnitCombatRole {
-    match kind {
-        UnitKind::Commander => UnitCombatRole::Commander,
-        UnitKind::ChristianPeasantInfantry
-        | UnitKind::ChristianMenAtArms
-        | UnitKind::ChristianShieldInfantry
-        | UnitKind::ChristianExperiencedShieldInfantry
-        | UnitKind::ChristianEliteShieldInfantry
-        | UnitKind::ChristianSpearman
-        | UnitKind::ChristianShieldedSpearman
-        | UnitKind::ChristianHalberdier
-        | UnitKind::ChristianUnmountedKnight
-        | UnitKind::ChristianKnight
-        | UnitKind::ChristianHeavyKnight
-        | UnitKind::ChristianScout
-        | UnitKind::ChristianMountedScout
-        | UnitKind::ChristianShockCavalry
-        | UnitKind::ChristianFanatic
-        | UnitKind::ChristianFlagellant
-        | UnitKind::ChristianEliteFlagellant
-        | UnitKind::MuslimPeasantInfantry
-        | UnitKind::MuslimMenAtArms
-        | UnitKind::MuslimShieldInfantry
-        | UnitKind::MuslimExperiencedShieldInfantry
-        | UnitKind::MuslimEliteShieldInfantry
-        | UnitKind::MuslimSpearman
-        | UnitKind::MuslimShieldedSpearman
-        | UnitKind::MuslimHalberdier
-        | UnitKind::MuslimUnmountedKnight
-        | UnitKind::MuslimKnight
-        | UnitKind::MuslimHeavyKnight
-        | UnitKind::MuslimScout
-        | UnitKind::MuslimMountedScout
-        | UnitKind::MuslimShockCavalry
-        | UnitKind::MuslimFanatic
-        | UnitKind::MuslimFlagellant
-        | UnitKind::MuslimEliteFlagellant => UnitCombatRole::Melee,
-        UnitKind::ChristianPeasantArcher
-        | UnitKind::ChristianBowman
-        | UnitKind::ChristianExperiencedBowman
-        | UnitKind::ChristianEliteBowman
-        | UnitKind::ChristianLongbowman
-        | UnitKind::ChristianCrossbowman
-        | UnitKind::ChristianTracker
-        | UnitKind::ChristianArmoredCrossbowman
-        | UnitKind::ChristianPathfinder
-        | UnitKind::ChristianEliteCrossbowman
-        | UnitKind::ChristianHoundmaster
-        | UnitKind::MuslimPeasantArcher
-        | UnitKind::MuslimBowman
-        | UnitKind::MuslimExperiencedBowman
-        | UnitKind::MuslimCrossbowman
-        | UnitKind::MuslimEliteBowman
-        | UnitKind::MuslimLongbowman
-        | UnitKind::MuslimArmoredCrossbowman
-        | UnitKind::MuslimTracker
-        | UnitKind::MuslimPathfinder
-        | UnitKind::MuslimEliteCrossbowman
-        | UnitKind::MuslimHoundmaster => UnitCombatRole::Ranged,
-        UnitKind::ChristianPeasantPriest
-        | UnitKind::ChristianDevoted
-        | UnitKind::ChristianSquire
-        | UnitKind::ChristianBannerman
-        | UnitKind::ChristianEliteBannerman
-        | UnitKind::ChristianDevotedOne
-        | UnitKind::ChristianCardinal
-        | UnitKind::ChristianEliteCardinal
-        | UnitKind::MuslimPeasantPriest
-        | UnitKind::MuslimDevoted
-        | UnitKind::MuslimSquire
-        | UnitKind::MuslimBannerman
-        | UnitKind::MuslimEliteBannerman
-        | UnitKind::MuslimDevotedOne
-        | UnitKind::MuslimCardinal
-        | UnitKind::MuslimEliteCardinal => UnitCombatRole::Support,
+    if kind == UnitKind::Commander {
+        return UnitCombatRole::Commander;
+    }
+    match kind.unit_id() {
+        "peasant_archer"
+        | "bowman"
+        | "experienced_bowman"
+        | "elite_bowman"
+        | "longbowman"
+        | "elite_longbowman"
+        | "crossbowman"
+        | "armored_crossbowman"
+        | "elite_crossbowman"
+        | "siege_crossbowman"
+        | "tracker"
+        | "pathfinder"
+        | "houndmaster"
+        | "elite_houndmaster" => UnitCombatRole::Ranged,
+        "peasant_priest" | "devoted" | "squire" | "bannerman" | "elite_bannerman"
+        | "gods_chosen" | "devoted_one" | "cardinal" | "elite_cardinal" | "divine_speaker" => {
+            UnitCombatRole::Support
+        }
         _ => UnitCombatRole::Melee,
     }
 }
@@ -1022,7 +1087,7 @@ fn roll_rarity_from_pool(
 
 fn roll_item_from_template(
     rng: &mut InventoryRngState,
-    template: GearTemplate,
+    template: &GearTemplateConfig,
     rarity_roll_bonus_pct: f32,
 ) -> GearItemEntry {
     let (stat_a_kind, stat_b_kind) = if rng.next_f32() < 0.5 {
@@ -1070,16 +1135,78 @@ fn roll_item_from_template(
     };
 
     GearItemEntry {
-        instance_id: rng.next_item_instance_id(template.id),
-        template_id: template.id.to_string(),
-        name: template.name.to_string(),
-        description: template.description.to_string(),
-        icon_key: template.icon_key.to_string(),
+        instance_id: rng.next_item_instance_id(template.id.as_str()),
+        template_id: template.id.clone(),
+        name: template.name.clone(),
+        description: template.description.clone(),
+        icon_key: template.icon_key.clone(),
         item_type: template.item_type,
         faction: template.faction,
         stats: vec![stat_a, stat_b],
         special_effect: template.special_effect,
     }
+}
+
+fn weighted_template_index(
+    rng: &mut InventoryRngState,
+    templates: &[GearTemplateConfig],
+    player_faction: PlayerFaction,
+) -> Option<usize> {
+    let mut total_weight = 0.0f32;
+    let mut weighted = Vec::with_capacity(templates.len());
+    for (index, template) in templates.iter().enumerate() {
+        if template.faction.is_some() && template.faction != Some(player_faction) {
+            continue;
+        }
+        let weight = template.drop_weight.max(0.0);
+        if weight <= 0.0 {
+            continue;
+        }
+        total_weight += weight;
+        weighted.push((index, weight));
+    }
+    if weighted.is_empty() {
+        return None;
+    }
+    if total_weight <= 0.0 {
+        return weighted.first().map(|(index, _)| *index);
+    }
+
+    let mut roll = rng.next_f32() * total_weight;
+    for (index, weight) in &weighted {
+        if roll <= *weight {
+            return Some(*index);
+        }
+        roll -= *weight;
+    }
+    weighted.last().map(|(index, _)| *index)
+}
+
+pub fn roll_chest_items_with_catalog(
+    rng: &mut InventoryRngState,
+    catalog: &ItemTemplateCatalog,
+    player_faction: PlayerFaction,
+    count: usize,
+    rarity_roll_bonus_pct: f32,
+) -> Vec<GearItemEntry> {
+    if catalog.templates.is_empty() || count == 0 {
+        return Vec::new();
+    }
+
+    let mut items = Vec::with_capacity(count);
+    for _ in 0..count {
+        let Some(index) =
+            weighted_template_index(rng, catalog.templates.as_slice(), player_faction)
+        else {
+            break;
+        };
+        items.push(roll_item_from_template(
+            rng,
+            &catalog.templates[index],
+            rarity_roll_bonus_pct,
+        ));
+    }
+    items
 }
 
 pub fn roll_chest_items(
@@ -1088,25 +1215,8 @@ pub fn roll_chest_items(
     count: usize,
     rarity_roll_bonus_pct: f32,
 ) -> Vec<GearItemEntry> {
-    let templates: Vec<GearTemplate> = TEMPLATES
-        .iter()
-        .copied()
-        .filter(|template| template.faction.is_none() || template.faction == Some(player_faction))
-        .collect();
-    if templates.is_empty() || count == 0 {
-        return Vec::new();
-    }
-
-    let mut items = Vec::with_capacity(count);
-    for _ in 0..count {
-        let index = (rng.next_u32() as usize) % templates.len();
-        items.push(roll_item_from_template(
-            rng,
-            templates[index],
-            rarity_roll_bonus_pct,
-        ));
-    }
-    items
+    let catalog = ItemTemplateCatalog::default();
+    roll_chest_items_with_catalog(rng, &catalog, player_faction, count, rarity_roll_bonus_pct)
 }
 
 pub fn roll_chest_items_from_seed(
@@ -1116,7 +1226,14 @@ pub fn roll_chest_items_from_seed(
     rarity_roll_bonus_pct: f32,
 ) -> Vec<GearItemEntry> {
     let mut rng = InventoryRngState::from_seed(seed);
-    roll_chest_items(&mut rng, player_faction, count, rarity_roll_bonus_pct)
+    let catalog = ItemTemplateCatalog::default();
+    roll_chest_items_with_catalog(
+        &mut rng,
+        &catalog,
+        player_faction,
+        count,
+        rarity_roll_bonus_pct,
+    )
 }
 
 fn make_slot(slot_id: &str, display_name: &str, accepted: &[GearItemType]) -> EquippedSlot {
@@ -1352,6 +1469,8 @@ impl Plugin for InventoryPlugin {
             .init_resource::<EquipmentArmyEffects>()
             .init_resource::<InventoryRngState>()
             .init_resource::<ItemRarityRollBonus>()
+            .init_resource::<ItemTemplateCatalog>()
+            .add_systems(OnEnter(GameState::Boot), load_item_template_catalog_on_boot)
             .add_systems(Update, reset_inventory_on_run_start)
             .add_systems(
                 Update,
@@ -1364,14 +1483,30 @@ impl Plugin for InventoryPlugin {
     }
 }
 
+fn load_item_template_catalog_on_boot(mut catalog: ResMut<ItemTemplateCatalog>) {
+    let path = Path::new("assets/data/items.json");
+    if let Some(loaded) = load_item_template_catalog_from_disk(path) {
+        *catalog = loaded;
+        info!("Loaded item template catalog from {}.", path.display());
+    } else {
+        warn!(
+            "Falling back to built-in item template catalog. Missing or invalid: {}",
+            path.display()
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::{
         BACKPACK_SLOT_CAPACITY, CHEST_SLOT_CAPACITY, EquipmentChestState, EquipmentUnitType,
-        GearItemEntry, GearItemType, GearRarity, GearRolledStat, GearStatKind, InventoryPlaceError,
-        InventoryRngState, InventorySlotRef, InventoryState, commander_armywide_bonuses,
-        gear_bonuses_for_unit, gear_bonuses_for_unit_with_banner_state, place_item_into_slot,
-        roll_chest_items, take_item_from_slot,
+        GearItemEntry, GearItemType, GearRarity, GearRolledStat, GearStatKind, GearTemplateConfig,
+        InventoryPlaceError, InventoryRngState, InventorySlotRef, InventoryState,
+        ItemTemplateCatalog, commander_armywide_bonuses, gear_bonuses_for_unit,
+        gear_bonuses_for_unit_with_banner_state, load_item_template_catalog_from_disk,
+        place_item_into_slot, roll_chest_items, roll_chest_items_with_catalog, take_item_from_slot,
     };
     use crate::inventory::UnitCombatRole;
     use crate::model::{PlayerFaction, UnitKind};
@@ -1481,6 +1616,123 @@ mod tests {
                 assert!(second.points() >= 3);
             }
         }
+    }
+
+    #[test]
+    fn roll_chest_items_with_catalog_respects_faction_filters() {
+        let catalog = ItemTemplateCatalog {
+            templates: vec![
+                GearTemplateConfig {
+                    id: "symbol_faction".to_string(),
+                    name: "Faction Symbol".to_string(),
+                    description: "Faction symbol item.".to_string(),
+                    icon_key: "item_symbol_faction".to_string(),
+                    item_type: GearItemType::Symbol,
+                    stats: [
+                        GearStatKind::AuraEnemyEffectPercent,
+                        GearStatKind::AuraRangeFlat,
+                    ],
+                    special_effect: None,
+                    faction: Some(PlayerFaction::Christian),
+                    drop_weight: 1.0,
+                },
+                GearTemplateConfig {
+                    id: "symbol_faction".to_string(),
+                    name: "Faction Symbol".to_string(),
+                    description: "Faction symbol item.".to_string(),
+                    icon_key: "item_symbol_faction".to_string(),
+                    item_type: GearItemType::Symbol,
+                    stats: [
+                        GearStatKind::AuraEnemyEffectPercent,
+                        GearStatKind::AuraRangeFlat,
+                    ],
+                    special_effect: None,
+                    faction: Some(PlayerFaction::Muslim),
+                    drop_weight: 1.0,
+                },
+            ],
+        };
+
+        let mut christian_rng = InventoryRngState::from_seed(0xCA11_AB1E);
+        let christian_items = roll_chest_items_with_catalog(
+            &mut christian_rng,
+            &catalog,
+            PlayerFaction::Christian,
+            24,
+            0.0,
+        );
+        assert!(!christian_items.is_empty());
+        assert!(
+            christian_items
+                .iter()
+                .all(|item| item.faction == Some(PlayerFaction::Christian))
+        );
+
+        let mut muslim_rng = InventoryRngState::from_seed(0xCA11_AB1E);
+        let muslim_items = roll_chest_items_with_catalog(
+            &mut muslim_rng,
+            &catalog,
+            PlayerFaction::Muslim,
+            24,
+            0.0,
+        );
+        assert!(!muslim_items.is_empty());
+        assert!(
+            muslim_items
+                .iter()
+                .all(|item| item.faction == Some(PlayerFaction::Muslim))
+        );
+    }
+
+    #[test]
+    fn item_catalog_loader_allows_duplicate_item_ids_for_different_factions() {
+        let path = std::env::temp_dir().join(format!(
+            "crusade_item_catalog_test_{}_{}.json",
+            std::process::id(),
+            1_723_001_u32
+        ));
+        let json = r#"{
+  "templates": [
+    {
+      "id": "symbol_faction",
+      "name": "Faction Symbol",
+      "description": "test",
+      "icon_key": "item_symbol_faction",
+      "item_type": "Symbol",
+      "stats": ["AuraEnemyEffectPercent", "AuraRangeFlat"],
+      "faction": "Christian",
+      "drop_weight": 1.0
+    },
+    {
+      "id": "symbol_faction",
+      "name": "Faction Symbol",
+      "description": "test",
+      "icon_key": "item_symbol_faction",
+      "item_type": "Symbol",
+      "stats": ["AuraEnemyEffectPercent", "AuraRangeFlat"],
+      "faction": "Muslim",
+      "drop_weight": 1.0
+    }
+  ]
+}"#;
+        fs::write(&path, json).expect("write test item catalog");
+        let loaded =
+            load_item_template_catalog_from_disk(&path).expect("load faction-duplicate catalog");
+        let _ = fs::remove_file(path);
+
+        assert_eq!(loaded.templates.len(), 2);
+        assert!(
+            loaded
+                .templates
+                .iter()
+                .any(|entry| entry.faction == Some(PlayerFaction::Christian))
+        );
+        assert!(
+            loaded
+                .templates
+                .iter()
+                .any(|entry| entry.faction == Some(PlayerFaction::Muslim))
+        );
     }
 
     #[test]

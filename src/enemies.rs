@@ -6,7 +6,7 @@ use crate::ai::{
     should_move_towards_target,
 };
 use crate::combat::{RangedAttackCooldown, RangedAttackProfile};
-use crate::data::{DifficultyGameplayConfig, EnemyStatsConfig, GameData, WavesConfigFile};
+use crate::data::{DifficultyGameplayConfig, EnemyTierPoolsConfigFile, GameData, WavesConfigFile};
 use crate::formation::{ActiveFormation, active_formation_config, formation_contains_position};
 use crate::inventory::{
     UnitCombatRole, UnitEquipmentBonuses, aggregate_item_bonuses_for_role,
@@ -14,9 +14,9 @@ use crate::inventory::{
 };
 use crate::map::{MapBounds, playable_bounds};
 use crate::model::{
-    Armor, AttackCooldown, AttackProfile, ColliderRadius, CommanderUnit, EnemyUnit, FriendlyUnit,
-    GameDifficulty, GameState, Health, MatchSetupSelection, Morale, MoveSpeed, PlayerFaction,
-    StartRunEvent, Team, Unit, UnitKind,
+    Armor, AttackCooldown, AttackProfile, ColliderRadius, CommanderUnit, EnemySpawnLane,
+    EnemySpawnSource, EnemyUnit, FriendlyUnit, GameDifficulty, GameState, Health,
+    MatchSetupSelection, Morale, MoveSpeed, PlayerFaction, StartRunEvent, Team, Unit, UnitKind,
 };
 use crate::morale::morale_movement_multiplier;
 use crate::random::runtime_entropy_seed_u32;
@@ -408,6 +408,7 @@ fn spawn_pending_enemy_batches(
             &data,
             &art,
             player_faction,
+            difficulty,
             spawn_bounds,
             commander_position,
             batch.wave_number,
@@ -441,6 +442,7 @@ fn spawn_enemy_batch(
     data: &GameData,
     art: &ArtAssets,
     player_faction: PlayerFaction,
+    difficulty: GameDifficulty,
     bounds: MapBounds,
     commander_position: Vec2,
     wave_number: u32,
@@ -453,15 +455,14 @@ fn spawn_enemy_batch(
     spawn_rng_state: &mut u64,
     role_mix: &mut HashMap<u32, EnemyRoleCounts>,
 ) {
-    let enemy_pool = data.enemies.opposing_enemy_pool(player_faction);
-    let enemy_pool_roles: Vec<(UnitKind, EnemySpawnRole)> = enemy_pool
-        .iter()
-        .copied()
-        .filter_map(|kind| {
-            let cfg = data.enemies.enemy_profile_for_kind(kind)?;
-            Some((kind, enemy_spawn_role(kind, cfg)))
-        })
-        .collect();
+    let enemy_faction = player_faction.opposing();
+    let enemy_pool_roles = build_enemy_pool_roles_for_wave(
+        &data.enemy_tier_pools,
+        enemy_faction,
+        wave_number,
+        lane,
+        difficulty,
+    );
     if enemy_pool_roles.is_empty() {
         return;
     }
@@ -474,6 +475,14 @@ fn spawn_enemy_batch(
     let has_support = enemy_pool_roles
         .iter()
         .any(|(_, role)| *role == EnemySpawnRole::Support);
+    let major_preview_tier = major_wave_preview_tier(wave_number, lane);
+    let tier_mix = enemy_tier_mix_for_wave(wave_number, lane, difficulty);
+    let major_preview_target_count = if major_preview_tier.is_some() {
+        major_wave_preview_target_count_for_batch(count, tier_mix[1].weight_percent)
+    } else {
+        0
+    };
+    let mut major_preview_spawned_count = 0u32;
 
     for _ in 0..count {
         let seq = *spawn_sequence;
@@ -486,11 +495,42 @@ fn spawn_enemy_batch(
             has_support,
             seq ^ spawn_seed ^ 0x5F9D_A5C7,
         );
-        let enemy_kind = choose_enemy_kind_for_role(
-            &enemy_pool_roles,
-            spawn_role,
-            hash_seed(wave_number ^ spawn_seed, seq ^ spawn_seed, 0xC55A_A5AA),
-        );
+        let force_preview_this_spawn = major_preview_tier.is_some()
+            && major_preview_spawned_count < major_preview_target_count;
+        let enemy_kind = if force_preview_this_spawn {
+            let preview_tier = major_preview_tier.expect("checked above");
+            choose_enemy_kind_for_tier_and_role(
+                &data.enemy_tier_pools,
+                enemy_faction,
+                preview_tier,
+                spawn_role,
+                hash_seed(wave_number ^ spawn_seed, seq ^ spawn_seed, 0xD13F_0A1D),
+            )
+            .unwrap_or_else(|| {
+                choose_enemy_kind_for_role(
+                    &enemy_pool_roles,
+                    spawn_role,
+                    hash_seed(wave_number ^ spawn_seed, seq ^ spawn_seed, 0xC55A_A5AA),
+                    UnitKind::from_faction_and_unit_id(enemy_faction, "peasant_infantry", false)
+                        .unwrap_or(UnitKind::ChristianPeasantInfantry),
+                )
+            })
+        } else {
+            choose_enemy_kind_for_role(
+                &enemy_pool_roles,
+                spawn_role,
+                hash_seed(wave_number ^ spawn_seed, seq ^ spawn_seed, 0xC55A_A5AA),
+                UnitKind::from_faction_and_unit_id(enemy_faction, "peasant_infantry", false)
+                    .unwrap_or(UnitKind::ChristianPeasantInfantry),
+            )
+        };
+        if force_preview_this_spawn
+            && major_preview_tier
+                .map(|preview_tier| enemy_kind.tier_hint() == Some(preview_tier))
+                .unwrap_or(false)
+        {
+            major_preview_spawned_count = major_preview_spawned_count.saturating_add(1);
+        }
         let Some(cfg) = data.enemies.enemy_profile_for_kind(enemy_kind) else {
             continue;
         };
@@ -498,8 +538,8 @@ fn spawn_enemy_batch(
             .entry(wave_number)
             .or_default()
             .register(spawn_role);
-        let enemy_faction = enemy_kind.faction().unwrap_or(player_faction.opposing());
-        let faction_mods = data.factions.for_faction(enemy_faction);
+        let resolved_enemy_faction = enemy_kind.faction().unwrap_or(enemy_faction);
+        let faction_mods = data.factions.for_faction(resolved_enemy_faction);
         let equipment_bonuses = army_progression
             .equipment
             .bonuses_for_spawn_role(spawn_role);
@@ -585,6 +625,9 @@ fn spawn_enemy_batch(
                 level: army_progression.army_level.max(1),
             },
             EnemyUnit,
+            EnemySpawnSource {
+                lane: enemy_spawn_lane_for_army_lane(lane),
+            },
             BanditVisualRuntime {
                 last_position: pos,
                 state: BanditVisualState::Idle,
@@ -645,23 +688,203 @@ fn spawn_enemy_batch(
     }
 }
 
-fn enemy_spawn_role(kind: UnitKind, cfg: &EnemyStatsConfig) -> EnemySpawnRole {
-    if kind.is_priest() || cfg.damage <= 0.0 {
-        EnemySpawnRole::Support
-    } else if cfg.ranged_attack_damage > 0.0 {
-        EnemySpawnRole::Ranged
-    } else {
-        EnemySpawnRole::Melee
+fn enemy_spawn_lane_for_army_lane(lane: EnemyArmyLane) -> EnemySpawnLane {
+    match lane {
+        EnemyArmyLane::Small => EnemySpawnLane::Small,
+        EnemyArmyLane::Minor => EnemySpawnLane::Minor,
+        EnemyArmyLane::Major => EnemySpawnLane::Major,
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct EnemyTierWeight {
+    tier: u8,
+    weight_percent: u8,
+}
+
+fn unlocked_enemy_tier_for_regular_wave(wave_number: u32) -> u8 {
+    (wave_number.saturating_sub(1) / 10).min(5) as u8
+}
+
+fn major_army_next_tier_preview_percent(difficulty: GameDifficulty) -> u8 {
+    match difficulty {
+        GameDifficulty::Recruit => 20,
+        GameDifficulty::Experienced => 35,
+        GameDifficulty::AloneAgainstTheInfidels => 50,
+    }
+}
+
+fn major_wave_preview_target_count_for_batch(count: u32, preview_percent: u8) -> u32 {
+    if count == 0 || preview_percent == 0 {
+        return 0;
+    }
+    ((count.saturating_mul(preview_percent as u32) + 50) / 100)
+        .max(1)
+        .min(count)
+}
+
+fn enemy_tier_mix_for_wave(
+    wave_number: u32,
+    lane: EnemyArmyLane,
+    difficulty: GameDifficulty,
+) -> [EnemyTierWeight; 2] {
+    match lane {
+        EnemyArmyLane::Major => {
+            let base_tier = unlocked_enemy_tier_for_regular_wave(wave_number);
+            if base_tier >= 5 {
+                return [
+                    EnemyTierWeight {
+                        tier: 5,
+                        weight_percent: 100,
+                    },
+                    EnemyTierWeight {
+                        tier: 5,
+                        weight_percent: 0,
+                    },
+                ];
+            }
+            let next_tier = (base_tier + 1).min(5);
+            let next_share = major_army_next_tier_preview_percent(difficulty);
+            [
+                EnemyTierWeight {
+                    tier: base_tier,
+                    weight_percent: 100u8.saturating_sub(next_share),
+                },
+                EnemyTierWeight {
+                    tier: next_tier,
+                    weight_percent: next_share,
+                },
+            ]
+        }
+        EnemyArmyLane::Small | EnemyArmyLane::Minor => {
+            let unlocked_tier = unlocked_enemy_tier_for_regular_wave(wave_number);
+            if unlocked_tier == 0 {
+                return [
+                    EnemyTierWeight {
+                        tier: 0,
+                        weight_percent: 100,
+                    },
+                    EnemyTierWeight {
+                        tier: 0,
+                        weight_percent: 0,
+                    },
+                ];
+            }
+            let window_start_wave = unlocked_tier as u32 * 10;
+            let progress_steps = wave_number.saturating_sub(window_start_wave).clamp(0, 10);
+            let unlocked_share = ((progress_steps * 10).min(100)) as u8;
+            [
+                EnemyTierWeight {
+                    tier: unlocked_tier - 1,
+                    weight_percent: 100u8.saturating_sub(unlocked_share),
+                },
+                EnemyTierWeight {
+                    tier: unlocked_tier,
+                    weight_percent: unlocked_share,
+                },
+            ]
+        }
+    }
+}
+
+fn major_wave_preview_tier(wave_number: u32, lane: EnemyArmyLane) -> Option<u8> {
+    if !matches!(lane, EnemyArmyLane::Major) {
+        return None;
+    }
+    let base_tier = unlocked_enemy_tier_for_regular_wave(wave_number);
+    if base_tier >= 5 {
+        None
+    } else {
+        Some((base_tier + 1).min(5))
+    }
+}
+
+fn enemy_unit_ids_for_tier_and_role(
+    pools: &EnemyTierPoolsConfigFile,
+    tier: u8,
+    role: EnemySpawnRole,
+) -> Option<&[String]> {
+    let archetype = match role {
+        EnemySpawnRole::Melee => crate::model::RecruitArchetype::Infantry,
+        EnemySpawnRole::Ranged => crate::model::RecruitArchetype::Archer,
+        EnemySpawnRole::Support => crate::model::RecruitArchetype::Priest,
+    };
+    pools.unit_ids_for_tier_and_archetype(tier, archetype)
+}
+
+fn choose_enemy_kind_for_tier_and_role(
+    pools: &EnemyTierPoolsConfigFile,
+    faction: PlayerFaction,
+    tier: u8,
+    role: EnemySpawnRole,
+    seed: u32,
+) -> Option<UnitKind> {
+    let ids = enemy_unit_ids_for_tier_and_role(pools, tier, role)?;
+    if ids.is_empty() {
+        return None;
+    }
+    let pick = ids[(seed as usize) % ids.len()].as_str();
+    UnitKind::from_faction_and_unit_id(faction, pick, false)
+}
+
+fn build_enemy_pool_roles_for_wave(
+    pools: &EnemyTierPoolsConfigFile,
+    enemy_faction: PlayerFaction,
+    wave_number: u32,
+    lane: EnemyArmyLane,
+    difficulty: GameDifficulty,
+) -> Vec<(UnitKind, EnemySpawnRole)> {
+    let tier_mix = enemy_tier_mix_for_wave(wave_number, lane, difficulty);
+    let mut pool = Vec::new();
+    for weight in tier_mix {
+        if weight.weight_percent == 0 {
+            continue;
+        }
+        for role in [
+            EnemySpawnRole::Melee,
+            EnemySpawnRole::Ranged,
+            EnemySpawnRole::Support,
+        ] {
+            if let Some(unit_ids) = enemy_unit_ids_for_tier_and_role(pools, weight.tier, role) {
+                for unit_id in unit_ids {
+                    let Some(kind) =
+                        UnitKind::from_faction_and_unit_id(enemy_faction, unit_id, false)
+                    else {
+                        continue;
+                    };
+                    for _ in 0..weight.weight_percent {
+                        pool.push((kind, role));
+                    }
+                }
+            }
+        }
+    }
+    if pool.is_empty() {
+        for role in [
+            EnemySpawnRole::Melee,
+            EnemySpawnRole::Ranged,
+            EnemySpawnRole::Support,
+        ] {
+            if let Some(unit_ids) = enemy_unit_ids_for_tier_and_role(pools, 0, role)
+                && let Some(unit_id) = unit_ids.first()
+                && let Some(kind) =
+                    UnitKind::from_faction_and_unit_id(enemy_faction, unit_id, false)
+            {
+                pool.push((kind, role));
+            }
+        }
+    }
+    pool
 }
 
 fn choose_enemy_kind_for_role(
     enemy_pool_roles: &[(UnitKind, EnemySpawnRole)],
     preferred_role: EnemySpawnRole,
     seed: u32,
+    fallback_kind: UnitKind,
 ) -> UnitKind {
     if enemy_pool_roles.is_empty() {
-        return UnitKind::ChristianPeasantInfantry;
+        return fallback_kind;
     }
     let matching_count = enemy_pool_roles
         .iter()
@@ -1710,86 +1933,52 @@ fn enemy_texture_for_state(
 }
 
 fn enemy_texture_for_kind(art: &ArtAssets, kind: UnitKind) -> Handle<Image> {
-    match kind {
-        UnitKind::ChristianPeasantInfantry
-        | UnitKind::ChristianMenAtArms
-        | UnitKind::ChristianShieldInfantry
-        | UnitKind::ChristianExperiencedShieldInfantry
-        | UnitKind::ChristianEliteShieldInfantry
-        | UnitKind::ChristianSpearman
-        | UnitKind::ChristianShieldedSpearman
-        | UnitKind::ChristianHalberdier
-        | UnitKind::ChristianUnmountedKnight
-        | UnitKind::ChristianKnight
-        | UnitKind::ChristianHeavyKnight => art.friendly_peasant_infantry_idle.clone(),
-        UnitKind::ChristianPeasantArcher
-        | UnitKind::ChristianBowman
-        | UnitKind::ChristianExperiencedBowman
-        | UnitKind::ChristianEliteBowman
-        | UnitKind::ChristianLongbowman
-        | UnitKind::ChristianCrossbowman
-        | UnitKind::ChristianArmoredCrossbowman
-        | UnitKind::ChristianEliteCrossbowman
-        | UnitKind::ChristianTracker
-        | UnitKind::ChristianPathfinder
-        | UnitKind::ChristianHoundmaster
-        | UnitKind::ChristianScout
-        | UnitKind::ChristianMountedScout
-        | UnitKind::ChristianShockCavalry => art.friendly_peasant_archer_idle.clone(),
-        UnitKind::ChristianPeasantPriest
-        | UnitKind::ChristianDevoted
-        | UnitKind::ChristianSquire
-        | UnitKind::ChristianBannerman
-        | UnitKind::ChristianEliteBannerman
-        | UnitKind::ChristianDevotedOne
-        | UnitKind::ChristianCardinal
-        | UnitKind::ChristianEliteCardinal
-        | UnitKind::ChristianFanatic
-        | UnitKind::ChristianFlagellant
-        | UnitKind::ChristianEliteFlagellant => art.friendly_peasant_priest_idle.clone(),
-        UnitKind::MuslimPeasantInfantry
-        | UnitKind::MuslimMenAtArms
-        | UnitKind::MuslimShieldInfantry
-        | UnitKind::MuslimExperiencedShieldInfantry
-        | UnitKind::MuslimEliteShieldInfantry
-        | UnitKind::MuslimSpearman
-        | UnitKind::MuslimShieldedSpearman
-        | UnitKind::MuslimHalberdier
-        | UnitKind::MuslimUnmountedKnight
-        | UnitKind::MuslimKnight
-        | UnitKind::MuslimHeavyKnight => art.muslim_peasant_infantry_idle.clone(),
-        UnitKind::MuslimPeasantArcher
-        | UnitKind::MuslimBowman
-        | UnitKind::MuslimExperiencedBowman
-        | UnitKind::MuslimEliteBowman
-        | UnitKind::MuslimLongbowman
-        | UnitKind::MuslimCrossbowman
-        | UnitKind::MuslimArmoredCrossbowman
-        | UnitKind::MuslimEliteCrossbowman
-        | UnitKind::MuslimTracker
-        | UnitKind::MuslimPathfinder
-        | UnitKind::MuslimHoundmaster
-        | UnitKind::MuslimScout
-        | UnitKind::MuslimMountedScout
-        | UnitKind::MuslimShockCavalry => art.muslim_peasant_archer_idle.clone(),
-        UnitKind::MuslimPeasantPriest
-        | UnitKind::MuslimDevoted
-        | UnitKind::MuslimSquire
-        | UnitKind::MuslimBannerman
-        | UnitKind::MuslimEliteBannerman
-        | UnitKind::MuslimDevotedOne
-        | UnitKind::MuslimCardinal
-        | UnitKind::MuslimEliteCardinal
-        | UnitKind::MuslimFanatic
-        | UnitKind::MuslimFlagellant
-        | UnitKind::MuslimEliteFlagellant => art.muslim_peasant_priest_idle.clone(),
-        UnitKind::Commander
-        | UnitKind::RescuableChristianPeasantInfantry
-        | UnitKind::RescuableChristianPeasantArcher
-        | UnitKind::RescuableChristianPeasantPriest
-        | UnitKind::RescuableMuslimPeasantInfantry
-        | UnitKind::RescuableMuslimPeasantArcher
-        | UnitKind::RescuableMuslimPeasantPriest => art.enemy_bandit_raider_idle.clone(),
+    let family = enemy_sprite_family_for_kind(kind);
+    let Some(faction) = kind.faction() else {
+        return art.enemy_bandit_raider_idle.clone();
+    };
+
+    match (faction, family) {
+        (_, EnemySpriteFamily::Fallback) => art.enemy_bandit_raider_idle.clone(),
+        (PlayerFaction::Christian, EnemySpriteFamily::Infantry) => {
+            art.friendly_peasant_infantry_idle.clone()
+        }
+        (PlayerFaction::Christian, EnemySpriteFamily::Archer) => {
+            art.friendly_peasant_archer_idle.clone()
+        }
+        (PlayerFaction::Christian, EnemySpriteFamily::Priest) => {
+            art.friendly_peasant_priest_idle.clone()
+        }
+        (PlayerFaction::Muslim, EnemySpriteFamily::Infantry) => {
+            art.muslim_peasant_infantry_idle.clone()
+        }
+        (PlayerFaction::Muslim, EnemySpriteFamily::Archer) => {
+            art.muslim_peasant_archer_idle.clone()
+        }
+        (PlayerFaction::Muslim, EnemySpriteFamily::Priest) => {
+            art.muslim_peasant_priest_idle.clone()
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum EnemySpriteFamily {
+    Infantry,
+    Archer,
+    Priest,
+    Fallback,
+}
+
+fn enemy_sprite_family_for_kind(kind: UnitKind) -> EnemySpriteFamily {
+    if kind == UnitKind::Commander || kind.is_rescuable_variant() {
+        return EnemySpriteFamily::Fallback;
+    }
+    if kind.is_archer_line() {
+        EnemySpriteFamily::Archer
+    } else if kind.is_priest_family_line() {
+        EnemySpriteFamily::Priest
+    } else {
+        EnemySpriteFamily::Infantry
     }
 }
 
@@ -1821,20 +2010,23 @@ pub fn decide_bandit_visual_state(
 #[cfg(test)]
 mod tests {
     use bevy::prelude::{Entity, Vec2};
+    use std::path::Path;
 
     use crate::ai::{
         chase_step_distance, chase_target_positions, choose_nearest, should_move_towards_target,
     };
     use crate::combat::RangedAttackProfile;
-    use crate::data::{WaveConfig, WavesConfigFile};
+    use crate::data::{GameData, WaveConfig, WavesConfigFile};
     use crate::enemies::{
         BanditVisualState, EnemyRoleCounts, EnemySpawnRole, batch_interval_secs,
-        batch_size_for_wave, combined_enemy_speed_multiplier, combined_enemy_stat_multiplier,
+        batch_size_for_wave, build_enemy_pool_roles_for_wave, choose_enemy_kind_for_role,
+        combined_enemy_speed_multiplier, combined_enemy_stat_multiplier,
         crowded_enemy_neighbor_count, decide_bandit_visual_state, enemy_army_level_for_difficulty,
         enemy_army_progression_profile, enemy_desired_engagement_range, enemy_engagement_range,
         enemy_move_speed, enemy_player_pressure_multiplier, enemy_prefers_ranged_spacing,
-        enemy_ranged_support_avoid_trigger_distance, formation_overflow_repel_target,
-        formation_perimeter_target, is_major_army_wave, is_minor_army_wave,
+        enemy_ranged_support_avoid_trigger_distance, enemy_tier_mix_for_wave,
+        formation_overflow_repel_target, formation_perimeter_target, is_major_army_wave,
+        is_minor_army_wave, major_wave_preview_target_count_for_batch,
         max_inside_enemy_count_for_formation, next_enemy_stuck_secs, overflow_indices_by_distance,
         pick_next_spawn_role, planned_wave_army_batches, random_spawn_position,
         should_start_crowd_hold, units_per_second_for_wave, wave_duration_secs,
@@ -1842,7 +2034,7 @@ mod tests {
     };
     use crate::formation::{ActiveFormation, formation_contains_position};
     use crate::map::MapBounds;
-    use crate::model::{GameDifficulty, PlayerFaction};
+    use crate::model::{GameDifficulty, PlayerFaction, UnitKind};
 
     #[test]
     fn chooses_nearest_target() {
@@ -1882,6 +2074,30 @@ mod tests {
         assert_eq!(
             decide_bandit_visual_state(0.1, 0.8, 1.0, 9.0, 10.0),
             BanditVisualState::Idle
+        );
+    }
+
+    #[test]
+    fn enemy_sprite_family_uses_generic_unit_ids() {
+        assert_eq!(
+            super::enemy_sprite_family_for_kind(UnitKind::ChristianTracker),
+            super::EnemySpriteFamily::Archer
+        );
+        assert_eq!(
+            super::enemy_sprite_family_for_kind(UnitKind::MuslimTracker),
+            super::EnemySpriteFamily::Archer
+        );
+        assert_eq!(
+            super::enemy_sprite_family_for_kind(UnitKind::ChristianFanatic),
+            super::EnemySpriteFamily::Priest
+        );
+        assert_eq!(
+            super::enemy_sprite_family_for_kind(UnitKind::MuslimFanatic),
+            super::EnemySpriteFamily::Priest
+        );
+        assert_eq!(
+            super::enemy_sprite_family_for_kind(UnitKind::ChristianMenAtArms),
+            super::EnemySpriteFamily::Infantry
         );
     }
 
@@ -1954,6 +2170,135 @@ mod tests {
         );
         assert!(is_minor_army_wave(10));
         assert!(is_major_army_wave(10));
+    }
+
+    #[test]
+    fn wave_tier_mix_ramps_between_unlock_milestones() {
+        let wave_1 =
+            enemy_tier_mix_for_wave(1, super::EnemyArmyLane::Small, GameDifficulty::Recruit);
+        assert_eq!(
+            wave_1,
+            [
+                super::EnemyTierWeight {
+                    tier: 0,
+                    weight_percent: 100,
+                },
+                super::EnemyTierWeight {
+                    tier: 0,
+                    weight_percent: 0,
+                },
+            ]
+        );
+
+        let wave_11 =
+            enemy_tier_mix_for_wave(11, super::EnemyArmyLane::Small, GameDifficulty::Recruit);
+        assert_eq!(wave_11[0].tier, 0);
+        assert_eq!(wave_11[0].weight_percent, 90);
+        assert_eq!(wave_11[1].tier, 1);
+        assert_eq!(wave_11[1].weight_percent, 10);
+
+        let wave_20 =
+            enemy_tier_mix_for_wave(20, super::EnemyArmyLane::Small, GameDifficulty::Recruit);
+        assert_eq!(wave_20[0].tier, 0);
+        assert_eq!(wave_20[0].weight_percent, 0);
+        assert_eq!(wave_20[1].tier, 1);
+        assert_eq!(wave_20[1].weight_percent, 100);
+
+        let wave_21 =
+            enemy_tier_mix_for_wave(21, super::EnemyArmyLane::Small, GameDifficulty::Recruit);
+        assert_eq!(wave_21[0].tier, 1);
+        assert_eq!(wave_21[0].weight_percent, 90);
+        assert_eq!(wave_21[1].tier, 2);
+        assert_eq!(wave_21[1].weight_percent, 10);
+    }
+
+    #[test]
+    fn major_wave_tier_mix_previews_next_tier_by_difficulty() {
+        let recruit =
+            enemy_tier_mix_for_wave(20, super::EnemyArmyLane::Major, GameDifficulty::Recruit);
+        assert_eq!(recruit[0].tier, 1);
+        assert_eq!(recruit[0].weight_percent, 80);
+        assert_eq!(recruit[1].tier, 2);
+        assert_eq!(recruit[1].weight_percent, 20);
+
+        let experienced =
+            enemy_tier_mix_for_wave(20, super::EnemyArmyLane::Major, GameDifficulty::Experienced);
+        assert_eq!(experienced[0].weight_percent, 65);
+        assert_eq!(experienced[1].weight_percent, 35);
+
+        let hard = enemy_tier_mix_for_wave(
+            20,
+            super::EnemyArmyLane::Major,
+            GameDifficulty::AloneAgainstTheInfidels,
+        );
+        assert_eq!(hard[0].weight_percent, 50);
+        assert_eq!(hard[1].weight_percent, 50);
+
+        let capped =
+            enemy_tier_mix_for_wave(60, super::EnemyArmyLane::Major, GameDifficulty::Recruit);
+        assert_eq!(capped[0].tier, 5);
+        assert_eq!(capped[0].weight_percent, 100);
+        assert_eq!(capped[1].weight_percent, 0);
+    }
+
+    #[test]
+    fn major_preview_target_count_tracks_configured_share() {
+        assert_eq!(major_wave_preview_target_count_for_batch(0, 20), 0);
+        assert_eq!(major_wave_preview_target_count_for_batch(1, 20), 1);
+        assert_eq!(major_wave_preview_target_count_for_batch(3, 20), 1);
+        assert_eq!(major_wave_preview_target_count_for_batch(10, 20), 2);
+        assert_eq!(major_wave_preview_target_count_for_batch(9, 35), 3);
+        assert_eq!(major_wave_preview_target_count_for_batch(20, 50), 10);
+    }
+
+    #[test]
+    fn wave_enemy_pool_builder_uses_expected_tier_bands() {
+        let data = GameData::load_from_dir(Path::new("assets/data")).expect("data");
+        let wave_20_pool = build_enemy_pool_roles_for_wave(
+            &data.enemy_tier_pools,
+            PlayerFaction::Muslim,
+            20,
+            super::EnemyArmyLane::Small,
+            GameDifficulty::Recruit,
+        );
+        assert!(
+            wave_20_pool
+                .iter()
+                .all(|(kind, _)| kind.tier_hint() == Some(1)),
+            "wave 20 regular should be fully tier-1"
+        );
+
+        let wave_21_pool = build_enemy_pool_roles_for_wave(
+            &data.enemy_tier_pools,
+            PlayerFaction::Muslim,
+            21,
+            super::EnemyArmyLane::Small,
+            GameDifficulty::Recruit,
+        );
+        assert!(
+            wave_21_pool
+                .iter()
+                .any(|(kind, _)| kind.tier_hint() == Some(1))
+        );
+        assert!(
+            wave_21_pool
+                .iter()
+                .any(|(kind, _)| kind.tier_hint() == Some(2))
+        );
+
+        let wave_20_major_pool = build_enemy_pool_roles_for_wave(
+            &data.enemy_tier_pools,
+            PlayerFaction::Muslim,
+            20,
+            super::EnemyArmyLane::Major,
+            GameDifficulty::Recruit,
+        );
+        assert!(
+            wave_20_major_pool
+                .iter()
+                .any(|(kind, _)| kind.tier_hint() == Some(2)),
+            "major wave should include next-tier preview"
+        );
     }
 
     #[test]
@@ -2111,6 +2456,15 @@ mod tests {
         assert_eq!(counts.support, 7);
         assert_eq!(counts.melee, 0);
         assert_eq!(counts.ranged, 0);
+    }
+
+    #[test]
+    fn enemy_kind_picker_uses_faction_aware_fallback_when_pool_is_empty() {
+        let fallback =
+            UnitKind::from_faction_and_unit_id(PlayerFaction::Muslim, "peasant_infantry", false)
+                .expect("fallback kind should resolve");
+        let selected = choose_enemy_kind_for_role(&[], EnemySpawnRole::Melee, 42, fallback);
+        assert_eq!(selected, UnitKind::MuslimPeasantInfantry);
     }
 
     #[test]

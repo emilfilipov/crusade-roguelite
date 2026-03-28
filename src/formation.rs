@@ -344,9 +344,14 @@ fn formation_slot_role_priority(kind: UnitKind) -> u8 {
         | UnitKind::ChristianScout
         | UnitKind::ChristianMountedScout
         | UnitKind::ChristianShockCavalry
+        | UnitKind::ChristianCitadelGuard
+        | UnitKind::ChristianArmoredHalberdier
+        | UnitKind::ChristianEliteHeavyKnight
+        | UnitKind::ChristianEliteShockCavalry
         | UnitKind::ChristianFanatic
         | UnitKind::ChristianFlagellant
         | UnitKind::ChristianEliteFlagellant
+        | UnitKind::ChristianDivineJudge
         | UnitKind::MuslimPeasantInfantry
         | UnitKind::MuslimMenAtArms
         | UnitKind::MuslimShieldInfantry
@@ -361,47 +366,62 @@ fn formation_slot_role_priority(kind: UnitKind) -> u8 {
         | UnitKind::MuslimScout
         | UnitKind::MuslimMountedScout
         | UnitKind::MuslimShockCavalry
+        | UnitKind::MuslimCitadelGuard
+        | UnitKind::MuslimArmoredHalberdier
+        | UnitKind::MuslimEliteHeavyKnight
+        | UnitKind::MuslimEliteShockCavalry
         | UnitKind::MuslimFanatic
         | UnitKind::MuslimFlagellant
-        | UnitKind::MuslimEliteFlagellant => 0, // outer frontline
+        | UnitKind::MuslimEliteFlagellant
+        | UnitKind::MuslimDivineJudge => 0, // outer frontline
         UnitKind::ChristianPeasantArcher
         | UnitKind::ChristianBowman
         | UnitKind::ChristianExperiencedBowman
         | UnitKind::ChristianEliteBowman
         | UnitKind::ChristianLongbowman
+        | UnitKind::ChristianEliteLongbowman
         | UnitKind::ChristianCrossbowman
         | UnitKind::ChristianEliteCrossbowman
+        | UnitKind::ChristianSiegeCrossbowman
         | UnitKind::ChristianTracker
         | UnitKind::ChristianArmoredCrossbowman
         | UnitKind::ChristianPathfinder
         | UnitKind::ChristianHoundmaster
+        | UnitKind::ChristianEliteHoundmaster
         | UnitKind::MuslimPeasantArcher
         | UnitKind::MuslimBowman
         | UnitKind::MuslimExperiencedBowman
         | UnitKind::MuslimCrossbowman
         | UnitKind::MuslimEliteBowman
         | UnitKind::MuslimLongbowman
+        | UnitKind::MuslimEliteLongbowman
         | UnitKind::MuslimArmoredCrossbowman
         | UnitKind::MuslimEliteCrossbowman
+        | UnitKind::MuslimSiegeCrossbowman
         | UnitKind::MuslimTracker
         | UnitKind::MuslimPathfinder
-        | UnitKind::MuslimHoundmaster => 1, // middle ring
+        | UnitKind::MuslimHoundmaster
+        | UnitKind::MuslimEliteHoundmaster => 1, // middle ring
         UnitKind::ChristianPeasantPriest
         | UnitKind::ChristianDevoted
         | UnitKind::ChristianSquire
         | UnitKind::ChristianBannerman
         | UnitKind::ChristianEliteBannerman
+        | UnitKind::ChristianGodsChosen
         | UnitKind::ChristianDevotedOne
         | UnitKind::ChristianCardinal
         | UnitKind::ChristianEliteCardinal
+        | UnitKind::ChristianDivineSpeaker
         | UnitKind::MuslimPeasantPriest
         | UnitKind::MuslimDevoted
         | UnitKind::MuslimSquire
         | UnitKind::MuslimBannerman
         | UnitKind::MuslimEliteBannerman
+        | UnitKind::MuslimGodsChosen
         | UnitKind::MuslimDevotedOne
         | UnitKind::MuslimCardinal
-        | UnitKind::MuslimEliteCardinal => 2, // innermost support
+        | UnitKind::MuslimEliteCardinal
+        | UnitKind::MuslimDivineSpeaker => 2, // innermost support
         _ => 1,
     }
 }

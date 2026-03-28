@@ -254,38 +254,11 @@ pub(crate) fn spawn_rescuable_entity(
     recruit_kind: RecruitUnitKind,
     art: &ArtAssets,
 ) {
-    let (rescuable_unit_kind, texture, tint) = match recruit_kind {
-        RecruitUnitKind::ChristianPeasantInfantry => (
-            crate::model::UnitKind::RescuableChristianPeasantInfantry,
-            art.friendly_peasant_infantry_rescuable_variant.clone(),
-            Color::srgb(0.88, 0.92, 1.0),
-        ),
-        RecruitUnitKind::ChristianPeasantArcher => (
-            crate::model::UnitKind::RescuableChristianPeasantArcher,
-            art.friendly_peasant_archer_rescuable_variant.clone(),
-            Color::srgb(0.86, 0.95, 0.86),
-        ),
-        RecruitUnitKind::ChristianPeasantPriest => (
-            crate::model::UnitKind::RescuableChristianPeasantPriest,
-            art.friendly_peasant_priest_idle.clone(),
-            Color::srgb(0.94, 0.92, 0.98),
-        ),
-        RecruitUnitKind::MuslimPeasantInfantry => (
-            crate::model::UnitKind::RescuableMuslimPeasantInfantry,
-            art.muslim_peasant_infantry_rescuable_variant.clone(),
-            Color::srgb(0.86, 0.9, 1.0),
-        ),
-        RecruitUnitKind::MuslimPeasantArcher => (
-            crate::model::UnitKind::RescuableMuslimPeasantArcher,
-            art.muslim_peasant_archer_rescuable_variant.clone(),
-            Color::srgb(0.84, 0.95, 0.86),
-        ),
-        RecruitUnitKind::MuslimPeasantPriest => (
-            crate::model::UnitKind::RescuableMuslimPeasantPriest,
-            art.muslim_peasant_priest_idle.clone(),
-            Color::srgb(0.9, 0.9, 0.98),
-        ),
-    };
+    let faction = recruit_kind.faction();
+    let archetype = recruit_kind.archetype();
+    let rescuable_unit_kind = recruit_kind.as_rescuable_unit_kind();
+    let texture = rescuable_texture_for(faction, archetype, art);
+    let tint = rescuable_tint_for(faction, archetype);
 
     commands.spawn((
         Unit {
@@ -306,6 +279,42 @@ pub(crate) fn spawn_rescuable_entity(
             ..default()
         },
     ));
+}
+
+fn rescuable_texture_for(
+    faction: PlayerFaction,
+    archetype: RecruitArchetype,
+    art: &ArtAssets,
+) -> Handle<Image> {
+    match (faction, archetype) {
+        (PlayerFaction::Christian, RecruitArchetype::Infantry) => {
+            art.friendly_peasant_infantry_rescuable_variant.clone()
+        }
+        (PlayerFaction::Christian, RecruitArchetype::Archer) => {
+            art.friendly_peasant_archer_rescuable_variant.clone()
+        }
+        (PlayerFaction::Christian, RecruitArchetype::Priest) => {
+            art.friendly_peasant_priest_idle.clone()
+        }
+        (PlayerFaction::Muslim, RecruitArchetype::Infantry) => {
+            art.muslim_peasant_infantry_rescuable_variant.clone()
+        }
+        (PlayerFaction::Muslim, RecruitArchetype::Archer) => {
+            art.muslim_peasant_archer_rescuable_variant.clone()
+        }
+        (PlayerFaction::Muslim, RecruitArchetype::Priest) => art.muslim_peasant_priest_idle.clone(),
+    }
+}
+
+fn rescuable_tint_for(faction: PlayerFaction, archetype: RecruitArchetype) -> Color {
+    match (faction, archetype) {
+        (PlayerFaction::Christian, RecruitArchetype::Infantry) => Color::srgb(0.88, 0.92, 1.0),
+        (PlayerFaction::Christian, RecruitArchetype::Archer) => Color::srgb(0.86, 0.95, 0.86),
+        (PlayerFaction::Christian, RecruitArchetype::Priest) => Color::srgb(0.94, 0.92, 0.98),
+        (PlayerFaction::Muslim, RecruitArchetype::Infantry) => Color::srgb(0.86, 0.9, 1.0),
+        (PlayerFaction::Muslim, RecruitArchetype::Archer) => Color::srgb(0.84, 0.95, 0.86),
+        (PlayerFaction::Muslim, RecruitArchetype::Priest) => Color::srgb(0.9, 0.9, 0.98),
+    }
 }
 
 fn spawn_rescuable(

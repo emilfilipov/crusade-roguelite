@@ -1,0 +1,40 @@
+{
+  "tiers": [
+    {
+      "tier": 0,
+      "melee": ["peasant_infantry"],
+      "ranged": ["peasant_archer"],
+      "support": ["peasant_priest"]
+    },
+    {
+      "tier": 1,
+      "melee": ["men_at_arms"],
+      "ranged": ["bowman"],
+      "support": ["devoted"]
+    },
+    {
+      "tier": 2,
+      "melee": ["shield_infantry", "spearman", "unmounted_knight"],
+      "ranged": ["experienced_bowman", "crossbowman", "tracker", "scout"],
+      "support": ["squire", "devoted_one"]
+    },
+    {
+      "tier": 3,
+      "melee": ["experienced_shield_infantry", "shielded_spearman", "knight"],
+      "ranged": ["elite_bowman", "armored_crossbowman", "pathfinder", "mounted_scout"],
+      "support": ["bannerman", "cardinal"]
+    },
+    {
+      "tier": 4,
+      "melee": ["elite_shield_infantry", "halberdier", "heavy_knight"],
+      "ranged": ["longbowman", "elite_crossbowman", "houndmaster", "shock_cavalry"],
+      "support": ["elite_bannerman", "elite_cardinal"]
+    },
+    {
+      "tier": 5,
+      "melee": ["citadel_guard", "armored_halberdier", "elite_heavy_knight"],
+      "ranged": ["elite_longbowman", "siege_crossbowman", "elite_houndmaster", "elite_shock_cavalry"],
+      "support": ["gods_chosen", "divine_speaker"]
+    }
+  ]
+}

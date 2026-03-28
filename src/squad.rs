@@ -18,12 +18,15 @@ use crate::map::{MapBounds, playable_bounds};
 use crate::model::{
     Armor, AttackCooldown, AttackProfile, BaseMaxHealth, ColliderRadius, CommanderUnit,
     DamageEvent, EnemyUnit, FriendlyUnit, GameState, GlobalBuffs, Health, MatchSetupSelection,
-    Morale, MoveSpeed, PlayerControlled, PlayerFaction, RecruitEvent, RecruitUnitKind,
-    RescuableUnit, StartRunEvent, Team, Unit, UnitDiedEvent, UnitKind, UnitTier,
+    Morale, MoveSpeed, PlayerControlled, PlayerFaction, RecruitArchetype, RecruitEvent,
+    RecruitUnitKind, RescuableUnit, StartRunEvent, Team, Unit, UnitDiedEvent, UnitKind, UnitTier,
     level_cap_from_locked_budget,
 };
 use crate::morale::morale_movement_multiplier;
-use crate::upgrades::{ConditionalUpgradeEffects, Progression, SkillTimingBuffs};
+use crate::upgrades::{
+    ConditionalUpgradeEffects, Progression, SkillTimingBuffs,
+    consume_hear_the_call_for_hero_recruit,
+};
 use crate::visuals::ArtAssets;
 
 const ENEMY_INSIDE_FORMATION_SLOWDOWN_PER_UNIT: f32 = 0.04;
@@ -42,6 +45,7 @@ const PRIEST_BLESSING_VFX_MIN_RADIUS: f32 = 8.0;
 const TIER0_CONVERSION_GOLD_COST_PER_UNIT: f32 = 18.0;
 const PROMOTION_GOLD_COST_PER_STEP: f32 = 65.0;
 const PROMOTION_GOLD_COST_PER_TIER: f32 = 24.0;
+const HERO_RECRUIT_GOLD_PREMIUM: f32 = 110.0;
 pub const HERO_TIER_UNLOCK_MAJOR_WAVE: u32 = 60;
 
 #[derive(Resource, Clone, Debug, Default)]
@@ -176,6 +180,24 @@ pub struct ConvertTierZeroUnitsEvent {
     pub count: u32,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub enum HeroRecruitSubtype {
+    InfantrySwordShield,
+    InfantrySpear,
+    InfantryTwoHandedSword,
+    RangedBow,
+    RangedJavelin,
+    RangedBeastMaster,
+    SupportSuperPriest,
+    SupportSuperFanatic,
+    CavalrySuperKnight,
+}
+
+#[derive(Event, Clone, Copy, Debug)]
+pub struct RecruitHeroEvent {
+    pub subtype: HeroRecruitSubtype,
+}
+
 pub struct SquadPlugin;
 
 impl Plugin for SquadPlugin {
@@ -189,6 +211,7 @@ impl Plugin for SquadPlugin {
             .add_event::<RecruitEvent>()
             .add_event::<PromoteUnitsEvent>()
             .add_event::<ConvertTierZeroUnitsEvent>()
+            .add_event::<RecruitHeroEvent>()
             .add_event::<UnitDiedEvent>()
             .add_event::<WaveCompletedEvent>()
             .add_systems(Update, (handle_start_run, update_upgrade_tier_unlock_state))
@@ -202,6 +225,7 @@ impl Plugin for SquadPlugin {
                     apply_recruit_events,
                     apply_promotion_events,
                     apply_tier0_conversion_events,
+                    apply_hero_recruit_events,
                     run_tracker_hound_logic,
                     run_scout_raid_behavior,
                     run_priest_support_logic,
@@ -490,6 +514,112 @@ fn spawn_recruit(
     }
 
     entity.id()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spawn_friendly_kind(
+    commands: &mut Commands,
+    data: &GameData,
+    art: &ArtAssets,
+    kind: UnitKind,
+    world_position: Vec2,
+    level_cost: u32,
+) -> Option<Entity> {
+    let profile = friendly_profile_for_kind(data, art, kind)?;
+    let faction = kind.faction().unwrap_or(PlayerFaction::Christian);
+    let cfg = faction_adjusted_friendly_stats(&profile.stats, data.factions.for_faction(faction));
+    let tier = friendly_tier_for_kind(kind).unwrap_or(0);
+    let sprite_tint = match faction {
+        PlayerFaction::Christian => Color::WHITE,
+        PlayerFaction::Muslim => Color::srgb(0.94, 0.96, 1.0),
+    };
+
+    let mut entity = commands.spawn((
+        Unit {
+            team: Team::Friendly,
+            kind,
+            level: 1,
+        },
+        UnitTier(tier),
+        UnitLevelCost(level_cost),
+        FriendlyUnit,
+        Health::new(cfg.max_hp),
+        BaseMaxHealth(cfg.max_hp),
+        Morale::new(cfg.morale),
+        Armor(if profile.armor_locked_zero {
+            0.0
+        } else {
+            cfg.armor
+        }),
+        ColliderRadius(profile.collider_radius),
+        MoveSpeed(cfg.move_speed),
+        SpriteBundle {
+            texture: profile.texture.clone(),
+            sprite: Sprite {
+                color: sprite_tint,
+                custom_size: Some(Vec2::splat(34.0)),
+                ..default()
+            },
+            transform: Transform::from_xyz(world_position.x, world_position.y, 10.0),
+            ..default()
+        },
+    ));
+
+    if profile.has_melee {
+        entity.insert((
+            AttackProfile {
+                damage: cfg.damage,
+                range: cfg.attack_range,
+                cooldown_secs: cfg.attack_cooldown_secs,
+            },
+            AttackCooldown(Timer::from_seconds(
+                cfg.attack_cooldown_secs,
+                TimerMode::Repeating,
+            )),
+        ));
+    }
+
+    if profile.has_ranged {
+        entity.insert((
+            RangedAttackProfile {
+                damage: cfg.ranged_attack_damage,
+                range: cfg.ranged_attack_range,
+                projectile_speed: cfg.ranged_projectile_speed,
+                projectile_max_distance: cfg.ranged_projectile_max_distance,
+            },
+            RangedAttackCooldown(Timer::from_seconds(
+                cfg.ranged_attack_cooldown_secs,
+                TimerMode::Repeating,
+            )),
+        ));
+    }
+
+    if profile.priest_kind {
+        entity.insert(PriestSupportCaster {
+            cooldown: PRIEST_BLESSING_COOLDOWN_SECS,
+        });
+    }
+
+    if profile.tracker_kind {
+        entity.insert(TrackerHoundSummoner {
+            cooldown_secs: data.roster_tuning.behavior.tracker_hound_cooldown_secs,
+            active_secs: 0.0,
+            strike_cooldown_secs: 0.0,
+        });
+    }
+
+    if profile.scout_kind {
+        entity.insert(ScoutRaidBehavior {
+            cooldown_secs: data.roster_tuning.behavior.scout_raid_cooldown_secs,
+            active_secs: 0.0,
+        });
+    }
+
+    if profile.armor_locked_zero {
+        entity.insert((ArmorLockedZero, Armor(0.0)));
+    }
+
+    Some(entity.id())
 }
 
 fn faction_adjusted_friendly_stats(
@@ -959,6 +1089,158 @@ fn apply_tier0_conversion_events(
     }
 }
 
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+fn apply_hero_recruit_events(
+    mut commands: Commands,
+    mut recruit_events: EventReader<RecruitHeroEvent>,
+    data: Res<GameData>,
+    art: Res<ArtAssets>,
+    progression: Option<ResMut<Progression>>,
+    unlock_state: Res<UpgradeTierUnlockState>,
+    setup_selection: Option<Res<MatchSetupSelection>>,
+    mut feedback: ResMut<RosterEconomyFeedback>,
+    commanders: Query<&Transform, (With<CommanderUnit>, With<PlayerControlled>)>,
+    friendlies: Query<Entity, (With<FriendlyUnit>, Without<CommanderUnit>)>,
+) {
+    if recruit_events.is_empty() {
+        return;
+    }
+    let Some(mut progression) = progression else {
+        return;
+    };
+    feedback.blocked_upgrade_reason = None;
+
+    let Some(commander_transform) = commanders.iter().next() else {
+        for _ in recruit_events.read() {}
+        feedback.blocked_upgrade_reason =
+            Some("Hero recruit blocked: commander is missing from the battlefield.".to_string());
+        return;
+    };
+
+    let player_faction = setup_selection
+        .as_deref()
+        .map(|selection| selection.faction)
+        .unwrap_or(PlayerFaction::Christian);
+    let commander_position = commander_transform.translation.truncate();
+    let mut spawn_index = friendlies.iter().count();
+
+    for event in recruit_events.read() {
+        if !unlock_state.hero_tier_unlocked {
+            feedback.blocked_upgrade_reason =
+                Some("Hero recruit blocked: Requires wave 60 boss unlock.".to_string());
+            continue;
+        }
+        let Some(hero_kind) = hero_unit_kind_for_subtype(player_faction, event.subtype) else {
+            feedback.blocked_upgrade_reason = Some(format!(
+                "Hero recruit blocked: unresolved hero subtype '{}'.",
+                hero_recruit_subtype_label(event.subtype)
+            ));
+            continue;
+        };
+        let gold_cost = hero_recruit_gold_cost_for_subtype(event.subtype);
+        if progression.gold + 0.001 < gold_cost {
+            feedback.blocked_upgrade_reason = Some(format!(
+                "Hero recruit blocked: requires {:.1} gold, current treasury is {:.1}.",
+                gold_cost, progression.gold
+            ));
+            continue;
+        }
+        if !consume_hear_the_call_for_hero_recruit(&mut progression) {
+            feedback.blocked_upgrade_reason =
+                Some("Hero recruit blocked: Requires Hear the Call.".to_string());
+            continue;
+        }
+
+        let spawn_offset = hero_recruit_spawn_offset(spawn_index);
+        spawn_index = spawn_index.saturating_add(1);
+        let level_cost = hero_recruit_level_cost(hero_kind);
+        let spawn_position = commander_position + spawn_offset;
+
+        let spawned = spawn_friendly_kind(
+            &mut commands,
+            &data,
+            &art,
+            hero_kind,
+            spawn_position,
+            level_cost,
+        );
+        if spawned.is_some() {
+            progression.gold = (progression.gold - gold_cost).max(0.0);
+            feedback.blocked_upgrade_reason = None;
+        } else {
+            progression.hear_the_call_tokens = progression.hear_the_call_tokens.saturating_add(1);
+            feedback.blocked_upgrade_reason = Some(format!(
+                "Hero recruit blocked: missing unit profile for '{}'.",
+                unit_kind_label(hero_kind)
+            ));
+        }
+    }
+}
+
+fn hero_recruit_level_cost(kind: UnitKind) -> u32 {
+    friendly_tier_for_kind(kind).unwrap_or(5) as u32
+}
+
+pub fn hero_recruit_gold_cost_for_subtype(subtype: HeroRecruitSubtype) -> f32 {
+    let tier = UnitKind::from_faction_and_unit_id(
+        PlayerFaction::Christian,
+        hero_unit_id_for_subtype(subtype),
+        false,
+    )
+    .and_then(friendly_tier_for_kind)
+    .unwrap_or(5);
+    promotion_gold_cost(1, tier) + HERO_RECRUIT_GOLD_PREMIUM
+}
+
+fn hero_recruit_spawn_offset(index: usize) -> Vec2 {
+    const OFFSETS: [Vec2; 8] = [
+        Vec2::new(26.0, 0.0),
+        Vec2::new(-26.0, 0.0),
+        Vec2::new(0.0, 24.0),
+        Vec2::new(0.0, -24.0),
+        Vec2::new(22.0, 20.0),
+        Vec2::new(-22.0, 20.0),
+        Vec2::new(22.0, -20.0),
+        Vec2::new(-22.0, -20.0),
+    ];
+    OFFSETS[index % OFFSETS.len()]
+}
+
+fn hero_recruit_subtype_label(subtype: HeroRecruitSubtype) -> &'static str {
+    match subtype {
+        HeroRecruitSubtype::InfantrySwordShield => "sword_shield",
+        HeroRecruitSubtype::InfantrySpear => "spear",
+        HeroRecruitSubtype::InfantryTwoHandedSword => "two_handed_sword",
+        HeroRecruitSubtype::RangedBow => "bow",
+        HeroRecruitSubtype::RangedJavelin => "javelin",
+        HeroRecruitSubtype::RangedBeastMaster => "beast_master",
+        HeroRecruitSubtype::SupportSuperPriest => "super_priest",
+        HeroRecruitSubtype::SupportSuperFanatic => "super_fanatic",
+        HeroRecruitSubtype::CavalrySuperKnight => "super_knight",
+    }
+}
+
+fn hero_unit_id_for_subtype(subtype: HeroRecruitSubtype) -> &'static str {
+    match subtype {
+        HeroRecruitSubtype::InfantrySwordShield => "citadel_guard",
+        HeroRecruitSubtype::InfantrySpear => "armored_halberdier",
+        HeroRecruitSubtype::InfantryTwoHandedSword => "elite_heavy_knight",
+        HeroRecruitSubtype::RangedBow => "elite_longbowman",
+        HeroRecruitSubtype::RangedJavelin => "siege_crossbowman",
+        HeroRecruitSubtype::RangedBeastMaster => "elite_houndmaster",
+        HeroRecruitSubtype::SupportSuperPriest => "divine_speaker",
+        HeroRecruitSubtype::SupportSuperFanatic => "divine_judge",
+        HeroRecruitSubtype::CavalrySuperKnight => "elite_shock_cavalry",
+    }
+}
+
+fn hero_unit_kind_for_subtype(
+    faction: PlayerFaction,
+    subtype: HeroRecruitSubtype,
+) -> Option<UnitKind> {
+    UnitKind::from_faction_and_unit_id(faction, hero_unit_id_for_subtype(subtype), false)
+}
+
 #[allow(clippy::type_complexity)]
 fn run_tracker_hound_logic(
     time: Res<Time>,
@@ -987,17 +1269,7 @@ fn run_tracker_hound_logic(
     }
 
     for (unit, tracker_transform, attack_profile, mut summoner) in &mut trackers {
-        if !matches!(
-            unit.kind,
-            UnitKind::ChristianTracker
-                | UnitKind::ChristianPathfinder
-                | UnitKind::ChristianHoundmaster
-                | UnitKind::ChristianEliteHoundmaster
-                | UnitKind::MuslimTracker
-                | UnitKind::MuslimPathfinder
-                | UnitKind::MuslimHoundmaster
-                | UnitKind::MuslimEliteHoundmaster
-        ) {
+        if !unit.kind.is_tracker_line() {
             continue;
         }
         if unit.team == Team::Neutral {
@@ -1076,17 +1348,7 @@ fn run_scout_raid_behavior(
         .collect();
 
     for (entity, unit, speed, mut transform, mut scout) in &mut scouts {
-        if !matches!(
-            unit.kind,
-            UnitKind::ChristianScout
-                | UnitKind::ChristianMountedScout
-                | UnitKind::ChristianShockCavalry
-                | UnitKind::ChristianEliteShockCavalry
-                | UnitKind::MuslimScout
-                | UnitKind::MuslimMountedScout
-                | UnitKind::MuslimShockCavalry
-                | UnitKind::MuslimEliteShockCavalry
-        ) {
+        if !unit.kind.is_scout_line() {
             continue;
         }
         if unit.team == Team::Neutral {
@@ -1390,17 +1652,13 @@ fn sync_roster(
         if unit_tier == 0 {
             tier0 = tier0.saturating_add(1);
         }
-        match unit.kind {
-            UnitKind::ChristianPeasantInfantry | UnitKind::MuslimPeasantInfantry => {
-                infantry = infantry.saturating_add(1)
+        if unit_tier == 0 {
+            match unit.kind.recruit_archetype() {
+                Some(RecruitArchetype::Infantry) => infantry = infantry.saturating_add(1),
+                Some(RecruitArchetype::Archer) => archer = archer.saturating_add(1),
+                Some(RecruitArchetype::Priest) => priest = priest.saturating_add(1),
+                None => {}
             }
-            UnitKind::ChristianPeasantArcher | UnitKind::MuslimPeasantArcher => {
-                archer = archer.saturating_add(1)
-            }
-            UnitKind::ChristianPeasantPriest | UnitKind::MuslimPeasantPriest => {
-                priest = priest.saturating_add(1)
-            }
-            _ => {}
         }
     }
 
@@ -1428,207 +1686,67 @@ fn on_unit_died(mut roster: ResMut<SquadRoster>, mut death_events: EventReader<U
 }
 
 pub fn friendly_tier_for_kind(kind: UnitKind) -> Option<u8> {
-    match kind {
-        UnitKind::ChristianPeasantInfantry
-        | UnitKind::ChristianPeasantArcher
-        | UnitKind::ChristianPeasantPriest
-        | UnitKind::MuslimPeasantInfantry
-        | UnitKind::MuslimPeasantArcher
-        | UnitKind::MuslimPeasantPriest => Some(0),
-        UnitKind::ChristianMenAtArms
-        | UnitKind::ChristianBowman
-        | UnitKind::ChristianDevoted
-        | UnitKind::MuslimMenAtArms
-        | UnitKind::MuslimBowman
-        | UnitKind::MuslimDevoted => Some(1),
-        UnitKind::ChristianShieldInfantry
-        | UnitKind::ChristianSpearman
-        | UnitKind::ChristianUnmountedKnight
-        | UnitKind::ChristianSquire
-        | UnitKind::ChristianExperiencedBowman
-        | UnitKind::ChristianCrossbowman
-        | UnitKind::ChristianTracker
-        | UnitKind::ChristianScout
-        | UnitKind::ChristianDevotedOne
-        | UnitKind::ChristianFanatic
-        | UnitKind::MuslimShieldInfantry
-        | UnitKind::MuslimSpearman
-        | UnitKind::MuslimUnmountedKnight
-        | UnitKind::MuslimSquire
-        | UnitKind::MuslimExperiencedBowman
-        | UnitKind::MuslimCrossbowman
-        | UnitKind::MuslimTracker
-        | UnitKind::MuslimScout
-        | UnitKind::MuslimDevotedOne
-        | UnitKind::MuslimFanatic => Some(2),
-        UnitKind::ChristianExperiencedShieldInfantry
-        | UnitKind::ChristianShieldedSpearman
-        | UnitKind::ChristianKnight
-        | UnitKind::ChristianBannerman
-        | UnitKind::ChristianEliteBowman
-        | UnitKind::ChristianArmoredCrossbowman
-        | UnitKind::ChristianPathfinder
-        | UnitKind::ChristianMountedScout
-        | UnitKind::ChristianCardinal
-        | UnitKind::ChristianFlagellant
-        | UnitKind::MuslimExperiencedShieldInfantry
-        | UnitKind::MuslimShieldedSpearman
-        | UnitKind::MuslimKnight
-        | UnitKind::MuslimBannerman
-        | UnitKind::MuslimEliteBowman
-        | UnitKind::MuslimArmoredCrossbowman
-        | UnitKind::MuslimPathfinder
-        | UnitKind::MuslimMountedScout
-        | UnitKind::MuslimCardinal
-        | UnitKind::MuslimFlagellant => Some(3),
-        UnitKind::ChristianEliteShieldInfantry
-        | UnitKind::ChristianHalberdier
-        | UnitKind::ChristianHeavyKnight
-        | UnitKind::ChristianEliteBannerman
-        | UnitKind::ChristianLongbowman
-        | UnitKind::ChristianEliteCrossbowman
-        | UnitKind::ChristianHoundmaster
-        | UnitKind::ChristianShockCavalry
-        | UnitKind::ChristianEliteCardinal
-        | UnitKind::ChristianEliteFlagellant
-        | UnitKind::MuslimEliteShieldInfantry
-        | UnitKind::MuslimHalberdier
-        | UnitKind::MuslimHeavyKnight
-        | UnitKind::MuslimEliteBannerman
-        | UnitKind::MuslimLongbowman
-        | UnitKind::MuslimEliteCrossbowman
-        | UnitKind::MuslimHoundmaster
-        | UnitKind::MuslimShockCavalry
-        | UnitKind::MuslimEliteCardinal
-        | UnitKind::MuslimEliteFlagellant => Some(4),
-        UnitKind::ChristianCitadelGuard
-        | UnitKind::ChristianArmoredHalberdier
-        | UnitKind::ChristianEliteHeavyKnight
-        | UnitKind::ChristianGodsChosen
-        | UnitKind::ChristianEliteLongbowman
-        | UnitKind::ChristianSiegeCrossbowman
-        | UnitKind::ChristianEliteHoundmaster
-        | UnitKind::ChristianEliteShockCavalry
-        | UnitKind::ChristianDivineSpeaker
-        | UnitKind::ChristianDivineJudge
-        | UnitKind::MuslimCitadelGuard
-        | UnitKind::MuslimArmoredHalberdier
-        | UnitKind::MuslimEliteHeavyKnight
-        | UnitKind::MuslimGodsChosen
-        | UnitKind::MuslimEliteLongbowman
-        | UnitKind::MuslimSiegeCrossbowman
-        | UnitKind::MuslimEliteHoundmaster
-        | UnitKind::MuslimEliteShockCavalry
-        | UnitKind::MuslimDivineSpeaker
-        | UnitKind::MuslimDivineJudge => Some(5),
-        _ => None,
-    }
+    kind.tier_hint()
 }
 
 pub fn tier1_promotion_target_for_kind(from_kind: UnitKind) -> Option<UnitKind> {
     promotion_targets_for_kind(from_kind).into_iter().next()
 }
 
-pub fn promotion_targets_for_kind(from_kind: UnitKind) -> Vec<UnitKind> {
-    match from_kind {
-        UnitKind::ChristianPeasantInfantry => vec![UnitKind::ChristianMenAtArms],
-        UnitKind::ChristianPeasantArcher => vec![UnitKind::ChristianBowman],
-        UnitKind::ChristianPeasantPriest => vec![UnitKind::ChristianDevoted],
-        UnitKind::MuslimPeasantInfantry => vec![UnitKind::MuslimMenAtArms],
-        UnitKind::MuslimPeasantArcher => vec![UnitKind::MuslimBowman],
-        UnitKind::MuslimPeasantPriest => vec![UnitKind::MuslimDevoted],
-        UnitKind::ChristianMenAtArms => vec![
-            UnitKind::ChristianShieldInfantry,
-            UnitKind::ChristianSpearman,
-            UnitKind::ChristianUnmountedKnight,
-            UnitKind::ChristianSquire,
-        ],
-        UnitKind::ChristianBowman => vec![
-            UnitKind::ChristianExperiencedBowman,
-            UnitKind::ChristianCrossbowman,
-            UnitKind::ChristianTracker,
-            UnitKind::ChristianScout,
-        ],
-        UnitKind::ChristianDevoted => {
-            vec![UnitKind::ChristianDevotedOne, UnitKind::ChristianFanatic]
-        }
-        UnitKind::ChristianShieldInfantry => vec![UnitKind::ChristianExperiencedShieldInfantry],
-        UnitKind::ChristianSpearman => vec![UnitKind::ChristianShieldedSpearman],
-        UnitKind::ChristianUnmountedKnight => vec![UnitKind::ChristianKnight],
-        UnitKind::ChristianSquire => vec![UnitKind::ChristianBannerman],
-        UnitKind::ChristianExperiencedBowman => vec![UnitKind::ChristianEliteBowman],
-        UnitKind::ChristianCrossbowman => vec![UnitKind::ChristianArmoredCrossbowman],
-        UnitKind::ChristianTracker => vec![UnitKind::ChristianPathfinder],
-        UnitKind::ChristianScout => vec![UnitKind::ChristianMountedScout],
-        UnitKind::ChristianDevotedOne => vec![UnitKind::ChristianCardinal],
-        UnitKind::ChristianFanatic => vec![UnitKind::ChristianFlagellant],
-        UnitKind::ChristianExperiencedShieldInfantry => {
-            vec![UnitKind::ChristianEliteShieldInfantry]
-        }
-        UnitKind::ChristianShieldedSpearman => vec![UnitKind::ChristianHalberdier],
-        UnitKind::ChristianKnight => vec![UnitKind::ChristianHeavyKnight],
-        UnitKind::ChristianBannerman => vec![UnitKind::ChristianEliteBannerman],
-        UnitKind::ChristianEliteBowman => vec![UnitKind::ChristianLongbowman],
-        UnitKind::ChristianArmoredCrossbowman => vec![UnitKind::ChristianEliteCrossbowman],
-        UnitKind::ChristianPathfinder => vec![UnitKind::ChristianHoundmaster],
-        UnitKind::ChristianMountedScout => vec![UnitKind::ChristianShockCavalry],
-        UnitKind::ChristianCardinal => vec![UnitKind::ChristianEliteCardinal],
-        UnitKind::ChristianFlagellant => vec![UnitKind::ChristianEliteFlagellant],
-        UnitKind::ChristianEliteShieldInfantry => vec![UnitKind::ChristianCitadelGuard],
-        UnitKind::ChristianHalberdier => vec![UnitKind::ChristianArmoredHalberdier],
-        UnitKind::ChristianHeavyKnight => vec![UnitKind::ChristianEliteHeavyKnight],
-        UnitKind::ChristianEliteBannerman => vec![UnitKind::ChristianGodsChosen],
-        UnitKind::ChristianLongbowman => vec![UnitKind::ChristianEliteLongbowman],
-        UnitKind::ChristianEliteCrossbowman => vec![UnitKind::ChristianSiegeCrossbowman],
-        UnitKind::ChristianHoundmaster => vec![UnitKind::ChristianEliteHoundmaster],
-        UnitKind::ChristianShockCavalry => vec![UnitKind::ChristianEliteShockCavalry],
-        UnitKind::ChristianEliteCardinal => vec![UnitKind::ChristianDivineSpeaker],
-        UnitKind::ChristianEliteFlagellant => vec![UnitKind::ChristianDivineJudge],
-        UnitKind::MuslimMenAtArms => vec![
-            UnitKind::MuslimShieldInfantry,
-            UnitKind::MuslimSpearman,
-            UnitKind::MuslimUnmountedKnight,
-            UnitKind::MuslimSquire,
-        ],
-        UnitKind::MuslimBowman => vec![
-            UnitKind::MuslimExperiencedBowman,
-            UnitKind::MuslimCrossbowman,
-            UnitKind::MuslimTracker,
-            UnitKind::MuslimScout,
-        ],
-        UnitKind::MuslimDevoted => vec![UnitKind::MuslimDevotedOne, UnitKind::MuslimFanatic],
-        UnitKind::MuslimShieldInfantry => vec![UnitKind::MuslimExperiencedShieldInfantry],
-        UnitKind::MuslimSpearman => vec![UnitKind::MuslimShieldedSpearman],
-        UnitKind::MuslimUnmountedKnight => vec![UnitKind::MuslimKnight],
-        UnitKind::MuslimSquire => vec![UnitKind::MuslimBannerman],
-        UnitKind::MuslimExperiencedBowman => vec![UnitKind::MuslimEliteBowman],
-        UnitKind::MuslimCrossbowman => vec![UnitKind::MuslimArmoredCrossbowman],
-        UnitKind::MuslimTracker => vec![UnitKind::MuslimPathfinder],
-        UnitKind::MuslimScout => vec![UnitKind::MuslimMountedScout],
-        UnitKind::MuslimDevotedOne => vec![UnitKind::MuslimCardinal],
-        UnitKind::MuslimFanatic => vec![UnitKind::MuslimFlagellant],
-        UnitKind::MuslimExperiencedShieldInfantry => vec![UnitKind::MuslimEliteShieldInfantry],
-        UnitKind::MuslimShieldedSpearman => vec![UnitKind::MuslimHalberdier],
-        UnitKind::MuslimKnight => vec![UnitKind::MuslimHeavyKnight],
-        UnitKind::MuslimBannerman => vec![UnitKind::MuslimEliteBannerman],
-        UnitKind::MuslimEliteBowman => vec![UnitKind::MuslimLongbowman],
-        UnitKind::MuslimArmoredCrossbowman => vec![UnitKind::MuslimEliteCrossbowman],
-        UnitKind::MuslimPathfinder => vec![UnitKind::MuslimHoundmaster],
-        UnitKind::MuslimMountedScout => vec![UnitKind::MuslimShockCavalry],
-        UnitKind::MuslimCardinal => vec![UnitKind::MuslimEliteCardinal],
-        UnitKind::MuslimFlagellant => vec![UnitKind::MuslimEliteFlagellant],
-        UnitKind::MuslimEliteShieldInfantry => vec![UnitKind::MuslimCitadelGuard],
-        UnitKind::MuslimHalberdier => vec![UnitKind::MuslimArmoredHalberdier],
-        UnitKind::MuslimHeavyKnight => vec![UnitKind::MuslimEliteHeavyKnight],
-        UnitKind::MuslimEliteBannerman => vec![UnitKind::MuslimGodsChosen],
-        UnitKind::MuslimLongbowman => vec![UnitKind::MuslimEliteLongbowman],
-        UnitKind::MuslimEliteCrossbowman => vec![UnitKind::MuslimSiegeCrossbowman],
-        UnitKind::MuslimHoundmaster => vec![UnitKind::MuslimEliteHoundmaster],
-        UnitKind::MuslimShockCavalry => vec![UnitKind::MuslimEliteShockCavalry],
-        UnitKind::MuslimEliteCardinal => vec![UnitKind::MuslimDivineSpeaker],
-        UnitKind::MuslimEliteFlagellant => vec![UnitKind::MuslimDivineJudge],
-        _ => Vec::new(),
+fn promotion_target_ids_for_unit_id(unit_id: &str) -> &'static [&'static str] {
+    match unit_id {
+        "peasant_infantry" => &["men_at_arms"],
+        "peasant_archer" => &["bowman"],
+        "peasant_priest" => &["devoted"],
+        "men_at_arms" => &["shield_infantry", "spearman", "unmounted_knight", "squire"],
+        "bowman" => &["experienced_bowman", "crossbowman", "tracker", "scout"],
+        "devoted" => &["devoted_one", "fanatic"],
+        "shield_infantry" => &["experienced_shield_infantry"],
+        "spearman" => &["shielded_spearman"],
+        "unmounted_knight" => &["knight"],
+        "squire" => &["bannerman"],
+        "experienced_bowman" => &["elite_bowman"],
+        "crossbowman" => &["armored_crossbowman"],
+        "tracker" => &["pathfinder"],
+        "scout" => &["mounted_scout"],
+        "devoted_one" => &["cardinal"],
+        "fanatic" => &["flagellant"],
+        "experienced_shield_infantry" => &["elite_shield_infantry"],
+        "shielded_spearman" => &["halberdier"],
+        "knight" => &["heavy_knight"],
+        "bannerman" => &["elite_bannerman"],
+        "elite_bowman" => &["longbowman"],
+        "armored_crossbowman" => &["elite_crossbowman"],
+        "pathfinder" => &["houndmaster"],
+        "mounted_scout" => &["shock_cavalry"],
+        "cardinal" => &["elite_cardinal"],
+        "flagellant" => &["elite_flagellant"],
+        "elite_shield_infantry" => &["citadel_guard"],
+        "halberdier" => &["armored_halberdier"],
+        "heavy_knight" => &["elite_heavy_knight"],
+        "elite_bannerman" => &["gods_chosen"],
+        "longbowman" => &["elite_longbowman"],
+        "elite_crossbowman" => &["siege_crossbowman"],
+        "houndmaster" => &["elite_houndmaster"],
+        "shock_cavalry" => &["elite_shock_cavalry"],
+        "elite_cardinal" => &["divine_speaker"],
+        "elite_flagellant" => &["divine_judge"],
+        _ => &[],
     }
+}
+
+pub fn promotion_targets_for_kind(from_kind: UnitKind) -> Vec<UnitKind> {
+    if from_kind.is_rescuable_variant() {
+        return Vec::new();
+    }
+    let Some(faction) = from_kind.faction() else {
+        return Vec::new();
+    };
+    promotion_target_ids_for_unit_id(from_kind.unit_id())
+        .iter()
+        .copied()
+        .filter_map(|unit_id| UnitKind::from_faction_and_unit_id(faction, unit_id, false))
+        .collect()
 }
 
 fn is_valid_promotion_path(from_kind: UnitKind, to_kind: UnitKind) -> bool {
@@ -1682,104 +1800,82 @@ pub fn is_upgrade_tier_unlocked(tier: u8, unlocked_tier: u8) -> bool {
 pub fn unit_kind_label(kind: UnitKind) -> &'static str {
     match kind {
         UnitKind::Commander => "Commander",
-        UnitKind::ChristianPeasantInfantry => "Christian Peasant Infantry",
-        UnitKind::ChristianPeasantArcher => "Christian Peasant Archer",
-        UnitKind::ChristianPeasantPriest => "Christian Peasant Priest",
-        UnitKind::ChristianMenAtArms => "Christian Men-at-Arms",
-        UnitKind::ChristianBowman => "Christian Bowman",
-        UnitKind::ChristianDevoted => "Christian Devoted",
-        UnitKind::ChristianShieldInfantry => "Christian Shield Infantry",
-        UnitKind::ChristianSpearman => "Christian Spearman",
-        UnitKind::ChristianUnmountedKnight => "Christian Unmounted Knight",
-        UnitKind::ChristianSquire => "Christian Squire",
-        UnitKind::ChristianExperiencedBowman => "Christian Experienced Bowman",
-        UnitKind::ChristianCrossbowman => "Christian Crossbowman",
-        UnitKind::ChristianTracker => "Christian Tracker",
-        UnitKind::ChristianScout => "Christian Scout",
-        UnitKind::ChristianDevotedOne => "Christian Devoted One",
-        UnitKind::ChristianFanatic => "Christian Fanatic",
-        UnitKind::ChristianExperiencedShieldInfantry => "Christian Experienced Shield Infantry",
-        UnitKind::ChristianShieldedSpearman => "Christian Shielded Spearman",
-        UnitKind::ChristianKnight => "Christian Knight",
-        UnitKind::ChristianBannerman => "Christian Bannerman",
-        UnitKind::ChristianEliteBowman => "Christian Elite Bowman",
-        UnitKind::ChristianArmoredCrossbowman => "Christian Armored Crossbowman",
-        UnitKind::ChristianPathfinder => "Christian Pathfinder",
-        UnitKind::ChristianMountedScout => "Christian Mounted Scout",
-        UnitKind::ChristianCardinal => "Christian Cardinal",
-        UnitKind::ChristianFlagellant => "Christian Flagellant",
-        UnitKind::ChristianEliteShieldInfantry => "Christian Elite Shield Infantry",
-        UnitKind::ChristianHalberdier => "Christian Halberdier",
-        UnitKind::ChristianHeavyKnight => "Christian Heavy Knight",
-        UnitKind::ChristianEliteBannerman => "Christian Elite Bannerman",
-        UnitKind::ChristianLongbowman => "Christian Longbowman",
-        UnitKind::ChristianEliteCrossbowman => "Christian Elite Crossbowman",
-        UnitKind::ChristianHoundmaster => "Christian Houndmaster",
-        UnitKind::ChristianShockCavalry => "Christian Shock Cavalry",
-        UnitKind::ChristianEliteCardinal => "Christian Elite Cardinal",
-        UnitKind::ChristianEliteFlagellant => "Christian Elite Flagellant",
-        UnitKind::ChristianCitadelGuard => "Christian Citadel Guard",
-        UnitKind::ChristianArmoredHalberdier => "Christian Armored Halberdier",
-        UnitKind::ChristianEliteHeavyKnight => "Christian Elite Heavy Knight",
-        UnitKind::ChristianGodsChosen => "Christian God's Chosen",
-        UnitKind::ChristianEliteLongbowman => "Christian Elite Longbowman",
-        UnitKind::ChristianSiegeCrossbowman => "Christian Siege Crossbowman",
-        UnitKind::ChristianEliteHoundmaster => "Christian Elite Houndmaster",
-        UnitKind::ChristianEliteShockCavalry => "Christian Elite Shock Cavalry",
-        UnitKind::ChristianDivineSpeaker => "Christian Divine Speaker",
-        UnitKind::ChristianDivineJudge => "Christian Divine Judge",
-        UnitKind::MuslimPeasantInfantry => "Muslim Peasant Infantry",
-        UnitKind::MuslimPeasantArcher => "Muslim Peasant Archer",
-        UnitKind::MuslimPeasantPriest => "Muslim Peasant Priest",
-        UnitKind::MuslimMenAtArms => "Muslim Men-at-Arms",
-        UnitKind::MuslimBowman => "Muslim Bowman",
-        UnitKind::MuslimDevoted => "Muslim Devoted",
-        UnitKind::MuslimShieldInfantry => "Muslim Shield Infantry",
-        UnitKind::MuslimSpearman => "Muslim Spearman",
-        UnitKind::MuslimUnmountedKnight => "Muslim Unmounted Knight",
-        UnitKind::MuslimSquire => "Muslim Squire",
-        UnitKind::MuslimExperiencedBowman => "Muslim Experienced Bowman",
-        UnitKind::MuslimCrossbowman => "Muslim Crossbowman",
-        UnitKind::MuslimTracker => "Muslim Tracker",
-        UnitKind::MuslimScout => "Muslim Scout",
-        UnitKind::MuslimDevotedOne => "Muslim Devoted One",
-        UnitKind::MuslimFanatic => "Muslim Fanatic",
-        UnitKind::MuslimExperiencedShieldInfantry => "Muslim Experienced Shield Infantry",
-        UnitKind::MuslimShieldedSpearman => "Muslim Shielded Spearman",
-        UnitKind::MuslimKnight => "Muslim Knight",
-        UnitKind::MuslimBannerman => "Muslim Bannerman",
-        UnitKind::MuslimEliteBowman => "Muslim Elite Bowman",
-        UnitKind::MuslimArmoredCrossbowman => "Muslim Armored Crossbowman",
-        UnitKind::MuslimPathfinder => "Muslim Pathfinder",
-        UnitKind::MuslimMountedScout => "Muslim Mounted Scout",
-        UnitKind::MuslimCardinal => "Muslim Cardinal",
-        UnitKind::MuslimFlagellant => "Muslim Flagellant",
-        UnitKind::MuslimEliteShieldInfantry => "Muslim Elite Shield Infantry",
-        UnitKind::MuslimHalberdier => "Muslim Halberdier",
-        UnitKind::MuslimHeavyKnight => "Muslim Heavy Knight",
-        UnitKind::MuslimEliteBannerman => "Muslim Elite Bannerman",
-        UnitKind::MuslimLongbowman => "Muslim Longbowman",
-        UnitKind::MuslimEliteCrossbowman => "Muslim Elite Crossbowman",
-        UnitKind::MuslimHoundmaster => "Muslim Houndmaster",
-        UnitKind::MuslimShockCavalry => "Muslim Shock Cavalry",
-        UnitKind::MuslimEliteCardinal => "Muslim Elite Cardinal",
-        UnitKind::MuslimEliteFlagellant => "Muslim Elite Flagellant",
-        UnitKind::MuslimCitadelGuard => "Muslim Citadel Guard",
-        UnitKind::MuslimArmoredHalberdier => "Muslim Armored Halberdier",
-        UnitKind::MuslimEliteHeavyKnight => "Muslim Elite Heavy Knight",
-        UnitKind::MuslimGodsChosen => "Muslim God's Chosen",
-        UnitKind::MuslimEliteLongbowman => "Muslim Elite Longbowman",
-        UnitKind::MuslimSiegeCrossbowman => "Muslim Siege Crossbowman",
-        UnitKind::MuslimEliteHoundmaster => "Muslim Elite Houndmaster",
-        UnitKind::MuslimEliteShockCavalry => "Muslim Elite Shock Cavalry",
-        UnitKind::MuslimDivineSpeaker => "Muslim Divine Speaker",
-        UnitKind::MuslimDivineJudge => "Muslim Divine Judge",
-        UnitKind::RescuableChristianPeasantInfantry => "Rescuable Christian Peasant Infantry",
-        UnitKind::RescuableChristianPeasantArcher => "Rescuable Christian Peasant Archer",
-        UnitKind::RescuableChristianPeasantPriest => "Rescuable Christian Peasant Priest",
-        UnitKind::RescuableMuslimPeasantInfantry => "Rescuable Muslim Peasant Infantry",
-        UnitKind::RescuableMuslimPeasantArcher => "Rescuable Muslim Peasant Archer",
-        UnitKind::RescuableMuslimPeasantPriest => "Rescuable Muslim Peasant Priest",
+        UnitKind::ChristianPeasantInfantry | UnitKind::MuslimPeasantInfantry => "Peasant Infantry",
+        UnitKind::ChristianPeasantArcher | UnitKind::MuslimPeasantArcher => "Peasant Archer",
+        UnitKind::ChristianPeasantPriest | UnitKind::MuslimPeasantPriest => "Peasant Priest",
+        UnitKind::ChristianMenAtArms | UnitKind::MuslimMenAtArms => "Men-at-Arms",
+        UnitKind::ChristianBowman | UnitKind::MuslimBowman => "Bowman",
+        UnitKind::ChristianDevoted | UnitKind::MuslimDevoted => "Devoted",
+        UnitKind::ChristianShieldInfantry | UnitKind::MuslimShieldInfantry => "Shield Infantry",
+        UnitKind::ChristianSpearman | UnitKind::MuslimSpearman => "Spearman",
+        UnitKind::ChristianUnmountedKnight | UnitKind::MuslimUnmountedKnight => "Unmounted Knight",
+        UnitKind::ChristianSquire | UnitKind::MuslimSquire => "Squire",
+        UnitKind::ChristianExperiencedBowman | UnitKind::MuslimExperiencedBowman => {
+            "Experienced Bowman"
+        }
+        UnitKind::ChristianCrossbowman | UnitKind::MuslimCrossbowman => "Crossbowman",
+        UnitKind::ChristianTracker | UnitKind::MuslimTracker => "Tracker",
+        UnitKind::ChristianScout | UnitKind::MuslimScout => "Scout",
+        UnitKind::ChristianDevotedOne | UnitKind::MuslimDevotedOne => "Devoted One",
+        UnitKind::ChristianFanatic | UnitKind::MuslimFanatic => "Fanatic",
+        UnitKind::ChristianExperiencedShieldInfantry
+        | UnitKind::MuslimExperiencedShieldInfantry => "Experienced Shield Infantry",
+        UnitKind::ChristianShieldedSpearman | UnitKind::MuslimShieldedSpearman => {
+            "Shielded Spearman"
+        }
+        UnitKind::ChristianKnight | UnitKind::MuslimKnight => "Knight",
+        UnitKind::ChristianBannerman | UnitKind::MuslimBannerman => "Bannerman",
+        UnitKind::ChristianEliteBowman | UnitKind::MuslimEliteBowman => "Elite Bowman",
+        UnitKind::ChristianArmoredCrossbowman | UnitKind::MuslimArmoredCrossbowman => {
+            "Armored Crossbowman"
+        }
+        UnitKind::ChristianPathfinder | UnitKind::MuslimPathfinder => "Pathfinder",
+        UnitKind::ChristianMountedScout | UnitKind::MuslimMountedScout => "Mounted Scout",
+        UnitKind::ChristianCardinal | UnitKind::MuslimCardinal => "Cardinal",
+        UnitKind::ChristianFlagellant | UnitKind::MuslimFlagellant => "Flagellant",
+        UnitKind::ChristianEliteShieldInfantry | UnitKind::MuslimEliteShieldInfantry => {
+            "Elite Shield Infantry"
+        }
+        UnitKind::ChristianHalberdier | UnitKind::MuslimHalberdier => "Halberdier",
+        UnitKind::ChristianHeavyKnight | UnitKind::MuslimHeavyKnight => "Heavy Knight",
+        UnitKind::ChristianEliteBannerman | UnitKind::MuslimEliteBannerman => "Elite Bannerman",
+        UnitKind::ChristianLongbowman | UnitKind::MuslimLongbowman => "Longbowman",
+        UnitKind::ChristianEliteCrossbowman | UnitKind::MuslimEliteCrossbowman => {
+            "Elite Crossbowman"
+        }
+        UnitKind::ChristianHoundmaster | UnitKind::MuslimHoundmaster => "Houndmaster",
+        UnitKind::ChristianShockCavalry | UnitKind::MuslimShockCavalry => "Shock Cavalry",
+        UnitKind::ChristianEliteCardinal | UnitKind::MuslimEliteCardinal => "Elite Cardinal",
+        UnitKind::ChristianEliteFlagellant | UnitKind::MuslimEliteFlagellant => "Elite Flagellant",
+        UnitKind::ChristianCitadelGuard | UnitKind::MuslimCitadelGuard => "Citadel Guard",
+        UnitKind::ChristianArmoredHalberdier | UnitKind::MuslimArmoredHalberdier => {
+            "Armored Halberdier"
+        }
+        UnitKind::ChristianEliteHeavyKnight | UnitKind::MuslimEliteHeavyKnight => {
+            "Elite Heavy Knight"
+        }
+        UnitKind::ChristianGodsChosen | UnitKind::MuslimGodsChosen => "God's Chosen",
+        UnitKind::ChristianEliteLongbowman | UnitKind::MuslimEliteLongbowman => "Elite Longbowman",
+        UnitKind::ChristianSiegeCrossbowman | UnitKind::MuslimSiegeCrossbowman => {
+            "Siege Crossbowman"
+        }
+        UnitKind::ChristianEliteHoundmaster | UnitKind::MuslimEliteHoundmaster => {
+            "Elite Houndmaster"
+        }
+        UnitKind::ChristianEliteShockCavalry | UnitKind::MuslimEliteShockCavalry => {
+            "Elite Shock Cavalry"
+        }
+        UnitKind::ChristianDivineSpeaker | UnitKind::MuslimDivineSpeaker => "Divine Speaker",
+        UnitKind::ChristianDivineJudge | UnitKind::MuslimDivineJudge => "Divine Judge",
+        UnitKind::RescuableChristianPeasantInfantry | UnitKind::RescuableMuslimPeasantInfantry => {
+            "Rescuable Peasant Infantry"
+        }
+        UnitKind::RescuableChristianPeasantArcher | UnitKind::RescuableMuslimPeasantArcher => {
+            "Rescuable Peasant Archer"
+        }
+        UnitKind::RescuableChristianPeasantPriest | UnitKind::RescuableMuslimPeasantPriest => {
+            "Rescuable Peasant Priest"
+        }
     }
 }
 
@@ -2532,248 +2628,22 @@ fn friendly_profile_for_kind(
     art: &ArtAssets,
     kind: UnitKind,
 ) -> Option<FriendlyKindProfile> {
+    if !kind.is_friendly_recruit() {
+        return None;
+    }
     let stats = friendly_stats_for_kind(data, kind)?;
-    let (
-        texture,
-        collider_radius,
-        has_melee,
-        has_ranged,
-        priest_kind,
-        tracker_kind,
-        scout_kind,
-        armor_locked_zero,
-    ) = match kind {
-        UnitKind::ChristianPeasantInfantry
-        | UnitKind::ChristianMenAtArms
-        | UnitKind::ChristianShieldInfantry
-        | UnitKind::ChristianExperiencedShieldInfantry
-        | UnitKind::ChristianEliteShieldInfantry
-        | UnitKind::ChristianSpearman
-        | UnitKind::ChristianShieldedSpearman
-        | UnitKind::ChristianHalberdier
-        | UnitKind::ChristianUnmountedKnight
-        | UnitKind::ChristianKnight
-        | UnitKind::ChristianHeavyKnight
-        | UnitKind::ChristianCitadelGuard
-        | UnitKind::ChristianArmoredHalberdier
-        | UnitKind::ChristianEliteHeavyKnight => (
-            art.friendly_peasant_infantry_idle.clone(),
-            12.0,
-            true,
-            false,
-            false,
-            false,
-            false,
-            false,
-        ),
-        UnitKind::ChristianPeasantArcher
-        | UnitKind::ChristianBowman
-        | UnitKind::ChristianExperiencedBowman
-        | UnitKind::ChristianEliteBowman
-        | UnitKind::ChristianLongbowman
-        | UnitKind::ChristianCrossbowman
-        | UnitKind::ChristianArmoredCrossbowman
-        | UnitKind::ChristianEliteCrossbowman
-        | UnitKind::ChristianSiegeCrossbowman
-        | UnitKind::ChristianTracker
-        | UnitKind::ChristianPathfinder
-        | UnitKind::ChristianHoundmaster
-        | UnitKind::ChristianEliteHoundmaster
-        | UnitKind::ChristianScout
-        | UnitKind::ChristianMountedScout
-        | UnitKind::ChristianShockCavalry
-        | UnitKind::ChristianEliteLongbowman
-        | UnitKind::ChristianEliteShockCavalry => (
-            art.friendly_peasant_archer_idle.clone(),
-            11.0,
-            true,
-            !matches!(
-                kind,
-                UnitKind::ChristianScout
-                    | UnitKind::ChristianMountedScout
-                    | UnitKind::ChristianShockCavalry
-                    | UnitKind::ChristianEliteShockCavalry
-            ),
-            false,
-            matches!(
-                kind,
-                UnitKind::ChristianTracker
-                    | UnitKind::ChristianPathfinder
-                    | UnitKind::ChristianHoundmaster
-                    | UnitKind::ChristianEliteHoundmaster
-            ),
-            matches!(
-                kind,
-                UnitKind::ChristianScout
-                    | UnitKind::ChristianMountedScout
-                    | UnitKind::ChristianShockCavalry
-                    | UnitKind::ChristianEliteShockCavalry
-            ),
-            false,
-        ),
-        UnitKind::ChristianPeasantPriest
-        | UnitKind::ChristianDevoted
-        | UnitKind::ChristianSquire
-        | UnitKind::ChristianBannerman
-        | UnitKind::ChristianEliteBannerman
-        | UnitKind::ChristianGodsChosen
-        | UnitKind::ChristianDevotedOne
-        | UnitKind::ChristianCardinal
-        | UnitKind::ChristianEliteCardinal
-        | UnitKind::ChristianDivineSpeaker
-        | UnitKind::ChristianFanatic
-        | UnitKind::ChristianFlagellant
-        | UnitKind::ChristianEliteFlagellant
-        | UnitKind::ChristianDivineJudge => (
-            art.friendly_peasant_priest_idle.clone(),
-            11.0,
-            matches!(
-                kind,
-                UnitKind::ChristianFanatic
-                    | UnitKind::ChristianFlagellant
-                    | UnitKind::ChristianEliteFlagellant
-                    | UnitKind::ChristianDivineJudge
-            ),
-            false,
-            matches!(
-                kind,
-                UnitKind::ChristianPeasantPriest
-                    | UnitKind::ChristianDevoted
-                    | UnitKind::ChristianSquire
-                    | UnitKind::ChristianBannerman
-                    | UnitKind::ChristianEliteBannerman
-                    | UnitKind::ChristianGodsChosen
-                    | UnitKind::ChristianDevotedOne
-                    | UnitKind::ChristianCardinal
-                    | UnitKind::ChristianEliteCardinal
-                    | UnitKind::ChristianDivineSpeaker
-            ),
-            false,
-            false,
-            matches!(
-                kind,
-                UnitKind::ChristianFanatic
-                    | UnitKind::ChristianFlagellant
-                    | UnitKind::ChristianEliteFlagellant
-                    | UnitKind::ChristianDivineJudge
-            ),
-        ),
-        UnitKind::MuslimPeasantInfantry
-        | UnitKind::MuslimMenAtArms
-        | UnitKind::MuslimShieldInfantry
-        | UnitKind::MuslimExperiencedShieldInfantry
-        | UnitKind::MuslimEliteShieldInfantry
-        | UnitKind::MuslimSpearman
-        | UnitKind::MuslimShieldedSpearman
-        | UnitKind::MuslimHalberdier
-        | UnitKind::MuslimUnmountedKnight
-        | UnitKind::MuslimKnight
-        | UnitKind::MuslimHeavyKnight
-        | UnitKind::MuslimCitadelGuard
-        | UnitKind::MuslimArmoredHalberdier
-        | UnitKind::MuslimEliteHeavyKnight => (
-            art.muslim_peasant_infantry_idle.clone(),
-            12.0,
-            true,
-            false,
-            false,
-            false,
-            false,
-            false,
-        ),
-        UnitKind::MuslimPeasantArcher
-        | UnitKind::MuslimBowman
-        | UnitKind::MuslimExperiencedBowman
-        | UnitKind::MuslimEliteBowman
-        | UnitKind::MuslimLongbowman
-        | UnitKind::MuslimCrossbowman
-        | UnitKind::MuslimArmoredCrossbowman
-        | UnitKind::MuslimEliteCrossbowman
-        | UnitKind::MuslimSiegeCrossbowman
-        | UnitKind::MuslimTracker
-        | UnitKind::MuslimPathfinder
-        | UnitKind::MuslimHoundmaster
-        | UnitKind::MuslimEliteHoundmaster
-        | UnitKind::MuslimScout
-        | UnitKind::MuslimMountedScout
-        | UnitKind::MuslimShockCavalry
-        | UnitKind::MuslimEliteLongbowman
-        | UnitKind::MuslimEliteShockCavalry => (
-            art.muslim_peasant_archer_idle.clone(),
-            11.0,
-            true,
-            !matches!(
-                kind,
-                UnitKind::MuslimScout
-                    | UnitKind::MuslimMountedScout
-                    | UnitKind::MuslimShockCavalry
-                    | UnitKind::MuslimEliteShockCavalry
-            ),
-            false,
-            matches!(
-                kind,
-                UnitKind::MuslimTracker
-                    | UnitKind::MuslimPathfinder
-                    | UnitKind::MuslimHoundmaster
-                    | UnitKind::MuslimEliteHoundmaster
-            ),
-            matches!(
-                kind,
-                UnitKind::MuslimScout
-                    | UnitKind::MuslimMountedScout
-                    | UnitKind::MuslimShockCavalry
-                    | UnitKind::MuslimEliteShockCavalry
-            ),
-            false,
-        ),
-        UnitKind::MuslimPeasantPriest
-        | UnitKind::MuslimDevoted
-        | UnitKind::MuslimSquire
-        | UnitKind::MuslimBannerman
-        | UnitKind::MuslimEliteBannerman
-        | UnitKind::MuslimGodsChosen
-        | UnitKind::MuslimDevotedOne
-        | UnitKind::MuslimCardinal
-        | UnitKind::MuslimEliteCardinal
-        | UnitKind::MuslimDivineSpeaker
-        | UnitKind::MuslimFanatic
-        | UnitKind::MuslimFlagellant
-        | UnitKind::MuslimEliteFlagellant
-        | UnitKind::MuslimDivineJudge => (
-            art.muslim_peasant_priest_idle.clone(),
-            11.0,
-            matches!(
-                kind,
-                UnitKind::MuslimFanatic
-                    | UnitKind::MuslimFlagellant
-                    | UnitKind::MuslimEliteFlagellant
-                    | UnitKind::MuslimDivineJudge
-            ),
-            false,
-            matches!(
-                kind,
-                UnitKind::MuslimPeasantPriest
-                    | UnitKind::MuslimDevoted
-                    | UnitKind::MuslimSquire
-                    | UnitKind::MuslimBannerman
-                    | UnitKind::MuslimEliteBannerman
-                    | UnitKind::MuslimGodsChosen
-                    | UnitKind::MuslimDevotedOne
-                    | UnitKind::MuslimCardinal
-                    | UnitKind::MuslimEliteCardinal
-                    | UnitKind::MuslimDivineSpeaker
-            ),
-            false,
-            false,
-            matches!(
-                kind,
-                UnitKind::MuslimFanatic
-                    | UnitKind::MuslimFlagellant
-                    | UnitKind::MuslimEliteFlagellant
-                    | UnitKind::MuslimDivineJudge
-            ),
-        ),
-        _ => return None,
+    let faction = kind.faction()?;
+    let texture = friendly_texture_for_kind(art, faction, kind);
+    let tracker_kind = kind.is_tracker_line();
+    let scout_kind = kind.is_scout_line();
+    let armor_locked_zero = kind.is_fanatic_line();
+    let priest_kind = kind.is_support_priest_line();
+    let has_ranged = kind.is_archer_line() && !scout_kind;
+    let has_melee = !priest_kind || armor_locked_zero;
+    let collider_radius = if kind.is_archer_line() || kind.is_priest_family_line() {
+        11.0
+    } else {
+        12.0
     };
 
     Some(FriendlyKindProfile {
@@ -2787,6 +2657,29 @@ fn friendly_profile_for_kind(
         scout_kind,
         armor_locked_zero,
     })
+}
+
+fn friendly_texture_for_kind(
+    art: &ArtAssets,
+    faction: PlayerFaction,
+    kind: UnitKind,
+) -> Handle<Image> {
+    if kind.is_archer_line() {
+        return match faction {
+            PlayerFaction::Christian => art.friendly_peasant_archer_idle.clone(),
+            PlayerFaction::Muslim => art.muslim_peasant_archer_idle.clone(),
+        };
+    }
+    if kind.is_priest_family_line() {
+        return match faction {
+            PlayerFaction::Christian => art.friendly_peasant_priest_idle.clone(),
+            PlayerFaction::Muslim => art.muslim_peasant_priest_idle.clone(),
+        };
+    }
+    match faction {
+        PlayerFaction::Christian => art.friendly_peasant_infantry_idle.clone(),
+        PlayerFaction::Muslim => art.muslim_peasant_infantry_idle.clone(),
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2921,13 +2814,14 @@ mod tests {
     use crate::formation::{ActiveFormation, FormationModifiers};
     use crate::model::{
         Armor, AttackProfile, CommanderUnit, DamageEvent, EnemyUnit, FriendlyUnit, GameState,
-        Health, MoveSpeed, RecruitEvent, RecruitUnitKind, StartRunEvent, Team, Unit, UnitKind,
-        UnitTier,
+        Health, MoveSpeed, PlayerFaction, RecruitEvent, RecruitUnitKind, StartRunEvent, Team, Unit,
+        UnitKind, UnitTier,
     };
     use crate::squad::{
-        ArmorLockedZero, ConvertTierZeroUnitsEvent, OutOfFormation, PriestSupportCaster,
-        PromoteUnitsEvent, RosterEconomy, RosterEconomyFeedback, ScoutRaidBehavior, SquadPlugin,
-        TrackerHoundSummoner, enemy_inside_active_formation, is_upgrade_tier_unlocked,
+        ArmorLockedZero, ConvertTierZeroUnitsEvent, HeroRecruitSubtype, OutOfFormation,
+        PriestSupportCaster, PromoteUnitsEvent, RecruitHeroEvent, RosterEconomy,
+        RosterEconomyFeedback, ScoutRaidBehavior, SquadPlugin, TrackerHoundSummoner,
+        enemy_inside_active_formation, is_hero_tier_unlocked, is_upgrade_tier_unlocked,
         movement_multiplier_from_inside_enemy_count, priest_should_cast,
         refresh_priest_blessing_remaining, tick_priest_cooldown, tier0_conversion_gold_cost,
         unlock_boss_wave_for_tier, unlocked_upgrade_tier_for_major_wave,
@@ -3232,6 +3126,7 @@ mod tests {
         app.insert_resource(FormationModifiers::default());
         app.insert_resource(Progression {
             gold: 0.0,
+            hear_the_call_tokens: 0,
             level: 100,
             pending_level_ups: 0,
         });
@@ -3278,6 +3173,147 @@ mod tests {
 
         let feedback = app.world().resource::<RosterEconomyFeedback>();
         assert!(feedback.blocked_upgrade_reason.is_some());
+    }
+
+    #[test]
+    fn promotion_graph_resolves_for_all_known_unit_ids() {
+        let all_known_ids = [
+            "peasant_infantry",
+            "peasant_archer",
+            "peasant_priest",
+            "men_at_arms",
+            "bowman",
+            "devoted",
+            "shield_infantry",
+            "spearman",
+            "unmounted_knight",
+            "squire",
+            "experienced_bowman",
+            "crossbowman",
+            "tracker",
+            "scout",
+            "devoted_one",
+            "fanatic",
+            "experienced_shield_infantry",
+            "shielded_spearman",
+            "knight",
+            "bannerman",
+            "elite_bowman",
+            "armored_crossbowman",
+            "pathfinder",
+            "mounted_scout",
+            "cardinal",
+            "flagellant",
+            "elite_shield_infantry",
+            "halberdier",
+            "heavy_knight",
+            "elite_bannerman",
+            "longbowman",
+            "elite_crossbowman",
+            "houndmaster",
+            "shock_cavalry",
+            "elite_cardinal",
+            "elite_flagellant",
+            "citadel_guard",
+            "armored_halberdier",
+            "elite_heavy_knight",
+            "gods_chosen",
+            "elite_longbowman",
+            "siege_crossbowman",
+            "elite_houndmaster",
+            "elite_shock_cavalry",
+            "divine_speaker",
+            "divine_judge",
+        ];
+
+        for faction in PlayerFaction::all() {
+            for unit_id in all_known_ids {
+                assert!(
+                    UnitKind::from_faction_and_unit_id(faction, unit_id, false).is_some(),
+                    "missing resolver for faction={faction:?} unit_id={unit_id}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn promotion_targets_are_faction_scoped_and_progress_one_tier() {
+        let source_ids = [
+            "peasant_infantry",
+            "peasant_archer",
+            "peasant_priest",
+            "men_at_arms",
+            "bowman",
+            "devoted",
+            "shield_infantry",
+            "spearman",
+            "unmounted_knight",
+            "squire",
+            "experienced_bowman",
+            "crossbowman",
+            "tracker",
+            "scout",
+            "devoted_one",
+            "fanatic",
+            "experienced_shield_infantry",
+            "shielded_spearman",
+            "knight",
+            "bannerman",
+            "elite_bowman",
+            "armored_crossbowman",
+            "pathfinder",
+            "mounted_scout",
+            "cardinal",
+            "flagellant",
+            "elite_shield_infantry",
+            "halberdier",
+            "heavy_knight",
+            "elite_bannerman",
+            "longbowman",
+            "elite_crossbowman",
+            "houndmaster",
+            "shock_cavalry",
+            "elite_cardinal",
+            "elite_flagellant",
+        ];
+
+        for faction in PlayerFaction::all() {
+            for source_id in source_ids {
+                let from = UnitKind::from_faction_and_unit_id(faction, source_id, false)
+                    .expect("source id should resolve for faction");
+                let from_tier =
+                    super::friendly_tier_for_kind(from).expect("source tier should resolve");
+                let expected_target_ids = super::promotion_target_ids_for_unit_id(source_id);
+                let targets = super::promotion_targets_for_kind(from);
+                let actual_target_ids: Vec<&str> =
+                    targets.iter().map(|kind| kind.unit_id()).collect();
+                assert_eq!(
+                    actual_target_ids, expected_target_ids,
+                    "target ids mismatch for faction={faction:?} source_id={source_id}"
+                );
+                for target in targets {
+                    assert_eq!(target.faction(), Some(faction));
+                    let target_tier =
+                        super::friendly_tier_for_kind(target).expect("target tier should resolve");
+                    assert_eq!(
+                        target_tier,
+                        from_tier + 1,
+                        "promotion should advance exactly one tier for {source_id}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn rescuable_units_have_no_promotion_targets() {
+        assert!(
+            super::promotion_targets_for_kind(UnitKind::RescuableChristianPeasantInfantry)
+                .is_empty()
+        );
+        assert!(
+            super::promotion_targets_for_kind(UnitKind::RescuableMuslimPeasantArcher).is_empty()
+        );
     }
 
     #[test]
@@ -3413,6 +3449,31 @@ mod tests {
     }
 
     #[test]
+    fn promotion_step_cost_accepts_tier5_branch_paths() {
+        assert_eq!(
+            crate::squad::promotion_step_cost(
+                UnitKind::ChristianEliteShieldInfantry,
+                UnitKind::ChristianCitadelGuard
+            ),
+            Some(1)
+        );
+        assert_eq!(
+            crate::squad::promotion_step_cost(
+                UnitKind::ChristianHoundmaster,
+                UnitKind::ChristianEliteHoundmaster
+            ),
+            Some(1)
+        );
+        assert_eq!(
+            crate::squad::promotion_step_cost(
+                UnitKind::ChristianEliteFlagellant,
+                UnitKind::ChristianDivineJudge
+            ),
+            Some(1)
+        );
+    }
+
+    #[test]
     fn promotion_step_cost_rejects_illegal_tier2_cross_links() {
         assert_eq!(
             crate::squad::promotion_step_cost(
@@ -3461,6 +3522,24 @@ mod tests {
             crate::squad::promotion_step_cost(
                 UnitKind::ChristianCardinal,
                 UnitKind::ChristianHeavyKnight
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn promotion_step_cost_rejects_illegal_tier5_cross_links() {
+        assert_eq!(
+            crate::squad::promotion_step_cost(
+                UnitKind::ChristianHoundmaster,
+                UnitKind::ChristianDivineSpeaker
+            ),
+            None
+        );
+        assert_eq!(
+            crate::squad::promotion_step_cost(
+                UnitKind::ChristianEliteCardinal,
+                UnitKind::ChristianEliteHeavyKnight
             ),
             None
         );
@@ -3584,6 +3663,7 @@ mod tests {
         app.insert_resource(FormationModifiers::default());
         app.insert_resource(Progression {
             gold: 1_200.0,
+            hear_the_call_tokens: 0,
             level: 40,
             pending_level_ups: 0,
         });
@@ -3678,6 +3758,7 @@ mod tests {
         app.insert_resource(FormationModifiers::default());
         app.insert_resource(Progression {
             gold: 2_400.0,
+            hear_the_call_tokens: 0,
             level: 60,
             pending_level_ups: 0,
         });
@@ -3773,6 +3854,129 @@ mod tests {
     }
 
     #[test]
+    fn tier5_branch_promotions_preserve_tracker_and_scout_behaviors() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, bevy::state::app::StatesPlugin));
+        app.init_state::<GameState>();
+        app.add_event::<StartRunEvent>();
+        app.insert_resource(
+            GameData::load_from_dir(std::path::Path::new("assets/data")).expect("data"),
+        );
+        app.insert_resource(ArtAssets::default());
+        app.insert_resource(ActiveFormation::Square);
+        app.insert_resource(FormationModifiers::default());
+        app.insert_resource(Progression {
+            gold: 4_200.0,
+            hear_the_call_tokens: 0,
+            level: 80,
+            pending_level_ups: 0,
+        });
+        app.add_plugins(SquadPlugin);
+
+        app.world_mut().send_event(StartRunEvent);
+        app.update();
+        app.world_mut()
+            .resource_mut::<NextState<GameState>>()
+            .set(GameState::InRun);
+        app.update();
+
+        app.world_mut().send_event(RecruitEvent {
+            world_position: Vec2::new(10.0, 5.0),
+            recruit_kind: RecruitUnitKind::ChristianPeasantArcher,
+        });
+        app.world_mut().send_event(RecruitEvent {
+            world_position: Vec2::new(16.0, 8.0),
+            recruit_kind: RecruitUnitKind::ChristianPeasantArcher,
+        });
+        app.world_mut()
+            .send_event(crate::enemies::WaveCompletedEvent { wave_number: 10 });
+        app.world_mut()
+            .send_event(crate::enemies::WaveCompletedEvent { wave_number: 20 });
+        app.world_mut()
+            .send_event(crate::enemies::WaveCompletedEvent { wave_number: 30 });
+        app.world_mut()
+            .send_event(crate::enemies::WaveCompletedEvent { wave_number: 40 });
+        app.world_mut()
+            .send_event(crate::enemies::WaveCompletedEvent { wave_number: 50 });
+        app.update();
+
+        app.world_mut().send_event(PromoteUnitsEvent {
+            from_kind: UnitKind::ChristianPeasantArcher,
+            to_kind: UnitKind::ChristianBowman,
+            count: 2,
+        });
+        app.update();
+        app.world_mut().send_event(PromoteUnitsEvent {
+            from_kind: UnitKind::ChristianBowman,
+            to_kind: UnitKind::ChristianTracker,
+            count: 1,
+        });
+        app.update();
+        app.world_mut().send_event(PromoteUnitsEvent {
+            from_kind: UnitKind::ChristianBowman,
+            to_kind: UnitKind::ChristianScout,
+            count: 1,
+        });
+        app.update();
+        app.world_mut().send_event(PromoteUnitsEvent {
+            from_kind: UnitKind::ChristianTracker,
+            to_kind: UnitKind::ChristianPathfinder,
+            count: 1,
+        });
+        app.update();
+        app.world_mut().send_event(PromoteUnitsEvent {
+            from_kind: UnitKind::ChristianScout,
+            to_kind: UnitKind::ChristianMountedScout,
+            count: 1,
+        });
+        app.update();
+        app.world_mut().send_event(PromoteUnitsEvent {
+            from_kind: UnitKind::ChristianPathfinder,
+            to_kind: UnitKind::ChristianHoundmaster,
+            count: 1,
+        });
+        app.update();
+        app.world_mut().send_event(PromoteUnitsEvent {
+            from_kind: UnitKind::ChristianMountedScout,
+            to_kind: UnitKind::ChristianShockCavalry,
+            count: 1,
+        });
+        app.update();
+        app.world_mut().send_event(PromoteUnitsEvent {
+            from_kind: UnitKind::ChristianHoundmaster,
+            to_kind: UnitKind::ChristianEliteHoundmaster,
+            count: 1,
+        });
+        app.update();
+        app.world_mut().send_event(PromoteUnitsEvent {
+            from_kind: UnitKind::ChristianShockCavalry,
+            to_kind: UnitKind::ChristianEliteShockCavalry,
+            count: 1,
+        });
+        app.update();
+
+        let world = app.world_mut();
+        let mut query = world.query::<(
+            &Unit,
+            &UnitTier,
+            Option<&TrackerHoundSummoner>,
+            Option<&ScoutRaidBehavior>,
+        )>();
+        let elite_houndmaster = query
+            .iter(world)
+            .find(|(unit, _, _, _)| unit.kind == UnitKind::ChristianEliteHoundmaster)
+            .expect("elite houndmaster should exist");
+        assert_eq!(elite_houndmaster.1.0, 5);
+        assert!(elite_houndmaster.2.is_some());
+        let elite_shock_cavalry = query
+            .iter(world)
+            .find(|(unit, _, _, _)| unit.kind == UnitKind::ChristianEliteShockCavalry)
+            .expect("elite shock cavalry should exist");
+        assert_eq!(elite_shock_cavalry.1.0, 5);
+        assert!(elite_shock_cavalry.3.is_some());
+    }
+
+    #[test]
     fn tier1_promotion_requires_unlock_then_succeeds() {
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, bevy::state::app::StatesPlugin));
@@ -3786,6 +3990,7 @@ mod tests {
         app.insert_resource(FormationModifiers::default());
         app.insert_resource(Progression {
             gold: 150.0,
+            hear_the_call_tokens: 0,
             level: 10,
             pending_level_ups: 0,
         });
@@ -3870,6 +4075,7 @@ mod tests {
         app.insert_resource(FormationModifiers::default());
         app.insert_resource(Progression {
             gold: 450.0,
+            hear_the_call_tokens: 0,
             level: 30,
             pending_level_ups: 0,
         });
@@ -3931,6 +4137,7 @@ mod tests {
         app.insert_resource(FormationModifiers::default());
         app.insert_resource(Progression {
             gold: 950.0,
+            hear_the_call_tokens: 0,
             level: 50,
             pending_level_ups: 0,
         });
@@ -3997,6 +4204,94 @@ mod tests {
     }
 
     #[test]
+    fn divine_judge_promotion_keeps_armor_lock() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, bevy::state::app::StatesPlugin));
+        app.init_state::<GameState>();
+        app.add_event::<StartRunEvent>();
+        app.insert_resource(
+            GameData::load_from_dir(std::path::Path::new("assets/data")).expect("data"),
+        );
+        app.insert_resource(ArtAssets::default());
+        app.insert_resource(ActiveFormation::Square);
+        app.insert_resource(FormationModifiers::default());
+        app.insert_resource(Progression {
+            gold: 2_100.0,
+            hear_the_call_tokens: 0,
+            level: 70,
+            pending_level_ups: 0,
+        });
+        app.add_plugins(SquadPlugin);
+
+        app.world_mut().send_event(StartRunEvent);
+        app.update();
+        app.world_mut()
+            .resource_mut::<NextState<GameState>>()
+            .set(GameState::InRun);
+        app.update();
+
+        app.world_mut().send_event(RecruitEvent {
+            world_position: Vec2::new(10.0, 5.0),
+            recruit_kind: RecruitUnitKind::ChristianPeasantPriest,
+        });
+        app.update();
+
+        app.world_mut()
+            .send_event(crate::enemies::WaveCompletedEvent { wave_number: 10 });
+        app.world_mut()
+            .send_event(crate::enemies::WaveCompletedEvent { wave_number: 20 });
+        app.world_mut()
+            .send_event(crate::enemies::WaveCompletedEvent { wave_number: 30 });
+        app.world_mut()
+            .send_event(crate::enemies::WaveCompletedEvent { wave_number: 40 });
+        app.world_mut()
+            .send_event(crate::enemies::WaveCompletedEvent { wave_number: 50 });
+        app.update();
+
+        app.world_mut().send_event(PromoteUnitsEvent {
+            from_kind: UnitKind::ChristianPeasantPriest,
+            to_kind: UnitKind::ChristianDevoted,
+            count: 1,
+        });
+        app.update();
+        app.world_mut().send_event(PromoteUnitsEvent {
+            from_kind: UnitKind::ChristianDevoted,
+            to_kind: UnitKind::ChristianFanatic,
+            count: 1,
+        });
+        app.update();
+        app.world_mut().send_event(PromoteUnitsEvent {
+            from_kind: UnitKind::ChristianFanatic,
+            to_kind: UnitKind::ChristianFlagellant,
+            count: 1,
+        });
+        app.update();
+        app.world_mut().send_event(PromoteUnitsEvent {
+            from_kind: UnitKind::ChristianFlagellant,
+            to_kind: UnitKind::ChristianEliteFlagellant,
+            count: 1,
+        });
+        app.update();
+        app.world_mut().send_event(PromoteUnitsEvent {
+            from_kind: UnitKind::ChristianEliteFlagellant,
+            to_kind: UnitKind::ChristianDivineJudge,
+            count: 1,
+        });
+        app.update();
+
+        let world = app.world_mut();
+        let mut query =
+            world.query::<(&Unit, &UnitTier, Option<&ArmorLockedZero>, Option<&Armor>)>();
+        let divine_judge = query
+            .iter(world)
+            .find(|(unit, _, _, _)| unit.kind == UnitKind::ChristianDivineJudge)
+            .expect("divine judge should exist after promotion");
+        assert_eq!(divine_judge.1.0, 5);
+        assert!(divine_judge.2.is_some());
+        assert_eq!(divine_judge.3.map(|armor| armor.0), Some(0.0));
+    }
+
+    #[test]
     fn tier0_conversion_cost_has_fixed_gold_price() {
         assert!((tier0_conversion_gold_cost() - 18.0).abs() < 0.001);
     }
@@ -4015,6 +4310,7 @@ mod tests {
         app.insert_resource(FormationModifiers::default());
         app.insert_resource(Progression {
             gold: 30.0,
+            hear_the_call_tokens: 0,
             level: 8,
             pending_level_ups: 0,
         });
@@ -4077,6 +4373,7 @@ mod tests {
         app.insert_resource(FormationModifiers::default());
         app.insert_resource(Progression {
             gold: 4.0,
+            hear_the_call_tokens: 0,
             level: 8,
             pending_level_ups: 0,
         });
@@ -4198,6 +4495,7 @@ mod tests {
         app.insert_resource(FormationModifiers::default());
         app.insert_resource(Progression {
             gold: 0.0,
+            hear_the_call_tokens: 0,
             level: 5,
             pending_level_ups: 0,
         });
@@ -4276,5 +4574,181 @@ mod tests {
         assert!(is_upgrade_tier_unlocked(1, 1));
         assert!(!is_upgrade_tier_unlocked(3, 2));
         assert!(is_upgrade_tier_unlocked(3, 3));
+
+        assert!(!is_hero_tier_unlocked(50));
+        assert!(!is_hero_tier_unlocked(59));
+        assert!(is_hero_tier_unlocked(60));
+        assert!(is_hero_tier_unlocked(80));
+    }
+
+    #[test]
+    fn hero_tier_unlock_state_stays_locked_before_wave_60_major_defeat() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, bevy::state::app::StatesPlugin));
+        app.init_state::<GameState>();
+        app.add_event::<StartRunEvent>();
+        app.insert_resource(
+            GameData::load_from_dir(std::path::Path::new("assets/data")).expect("data"),
+        );
+        app.insert_resource(ArtAssets::default());
+        app.insert_resource(ActiveFormation::Square);
+        app.insert_resource(FormationModifiers::default());
+        app.add_plugins(SquadPlugin);
+
+        app.world_mut()
+            .send_event(crate::enemies::WaveCompletedEvent { wave_number: 50 });
+        app.update();
+        let unlock_state = app.world().resource::<super::UpgradeTierUnlockState>();
+        assert!(!unlock_state.hero_tier_unlocked);
+
+        app.world_mut()
+            .send_event(crate::enemies::WaveCompletedEvent { wave_number: 60 });
+        app.update();
+        let unlock_state = app.world().resource::<super::UpgradeTierUnlockState>();
+        assert!(unlock_state.hero_tier_unlocked);
+    }
+
+    #[test]
+    fn hero_subtype_resolution_is_faction_aware_and_unit_id_driven() {
+        for faction in PlayerFaction::all() {
+            let sword_shield =
+                super::hero_unit_kind_for_subtype(faction, HeroRecruitSubtype::InfantrySwordShield)
+                    .expect("hero subtype should resolve");
+            let beast_master =
+                super::hero_unit_kind_for_subtype(faction, HeroRecruitSubtype::RangedBeastMaster)
+                    .expect("hero subtype should resolve");
+            let super_fanatic =
+                super::hero_unit_kind_for_subtype(faction, HeroRecruitSubtype::SupportSuperFanatic)
+                    .expect("hero subtype should resolve");
+
+            assert_eq!(sword_shield.unit_id(), "citadel_guard");
+            assert_eq!(beast_master.unit_id(), "elite_houndmaster");
+            assert_eq!(super_fanatic.unit_id(), "divine_judge");
+            assert_eq!(sword_shield.faction(), Some(faction));
+            assert_eq!(beast_master.faction(), Some(faction));
+            assert_eq!(super_fanatic.faction(), Some(faction));
+        }
+    }
+
+    #[test]
+    fn hero_recruit_requires_unlock_and_consumes_token_on_success() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, bevy::state::app::StatesPlugin));
+        app.init_state::<GameState>();
+        app.add_event::<StartRunEvent>();
+        app.insert_resource(
+            GameData::load_from_dir(std::path::Path::new("assets/data")).expect("data"),
+        );
+        app.insert_resource(ArtAssets::default());
+        app.insert_resource(ActiveFormation::Square);
+        app.insert_resource(FormationModifiers::default());
+        app.insert_resource(Progression {
+            gold: 400.0,
+            hear_the_call_tokens: 1,
+            level: 70,
+            pending_level_ups: 0,
+        });
+        app.add_plugins(SquadPlugin);
+
+        app.world_mut().send_event(StartRunEvent);
+        app.update();
+        app.world_mut()
+            .resource_mut::<NextState<GameState>>()
+            .set(GameState::InRun);
+        app.update();
+
+        app.world_mut().send_event(RecruitHeroEvent {
+            subtype: HeroRecruitSubtype::InfantrySwordShield,
+        });
+        app.update();
+
+        let progression_after_locked_try = app.world().resource::<Progression>();
+        assert_eq!(progression_after_locked_try.hear_the_call_tokens, 1);
+        let feedback_locked = app.world().resource::<RosterEconomyFeedback>();
+        assert!(
+            feedback_locked
+                .blocked_upgrade_reason
+                .as_deref()
+                .unwrap_or_default()
+                .contains("Requires wave 60 boss unlock")
+        );
+
+        app.world_mut()
+            .send_event(crate::enemies::WaveCompletedEvent { wave_number: 60 });
+        app.update();
+
+        app.world_mut().send_event(RecruitHeroEvent {
+            subtype: HeroRecruitSubtype::InfantrySwordShield,
+        });
+        app.update();
+
+        let progression_after_success = app.world().resource::<Progression>();
+        assert_eq!(progression_after_success.hear_the_call_tokens, 0);
+        let expected_gold = 400.0
+            - super::hero_recruit_gold_cost_for_subtype(HeroRecruitSubtype::InfantrySwordShield);
+        assert!((progression_after_success.gold - expected_gold).abs() < 0.01);
+
+        let world = app.world_mut();
+        let mut query = world.query::<(
+            &Unit,
+            &UnitTier,
+            &super::UnitLevelCost,
+            Option<&FriendlyUnit>,
+        )>();
+        let hero = query
+            .iter(world)
+            .find(|(unit, tier, _, friendly)| {
+                unit.kind == UnitKind::ChristianCitadelGuard && tier.0 == 5 && friendly.is_some()
+            })
+            .expect("expected recruited hero placeholder unit");
+        assert_eq!(hero.2.0, 5);
+    }
+
+    #[test]
+    fn hero_recruit_requires_gold_and_does_not_consume_token_on_failure() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, bevy::state::app::StatesPlugin));
+        app.init_state::<GameState>();
+        app.add_event::<StartRunEvent>();
+        app.insert_resource(
+            GameData::load_from_dir(std::path::Path::new("assets/data")).expect("data"),
+        );
+        app.insert_resource(ArtAssets::default());
+        app.insert_resource(ActiveFormation::Square);
+        app.insert_resource(FormationModifiers::default());
+        app.insert_resource(Progression {
+            gold: 50.0,
+            hear_the_call_tokens: 1,
+            level: 70,
+            pending_level_ups: 0,
+        });
+        app.add_plugins(SquadPlugin);
+
+        app.world_mut().send_event(StartRunEvent);
+        app.update();
+        app.world_mut()
+            .resource_mut::<NextState<GameState>>()
+            .set(GameState::InRun);
+        app.update();
+        app.world_mut()
+            .send_event(crate::enemies::WaveCompletedEvent { wave_number: 60 });
+        app.update();
+
+        app.world_mut().send_event(RecruitHeroEvent {
+            subtype: HeroRecruitSubtype::InfantrySwordShield,
+        });
+        app.update();
+
+        let progression_after = app.world().resource::<Progression>();
+        assert_eq!(progression_after.hear_the_call_tokens, 1);
+        assert!((progression_after.gold - 50.0).abs() < 0.001);
+        let feedback = app.world().resource::<RosterEconomyFeedback>();
+        assert!(
+            feedback
+                .blocked_upgrade_reason
+                .as_deref()
+                .unwrap_or_default()
+                .contains("requires")
+        );
     }
 }

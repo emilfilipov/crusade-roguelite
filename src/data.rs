@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -6,7 +6,9 @@ use anyhow::{Context, Result, bail};
 use bevy::prelude::*;
 use serde::Deserialize;
 
-use crate::model::{GameDifficulty, GameState, PlayerFaction, RecruitUnitKind, UnitKind};
+use crate::model::{
+    GameDifficulty, GameState, PlayerFaction, RecruitArchetype, RecruitUnitKind, UnitKind,
+};
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct UnitStatsConfig {
@@ -71,13 +73,33 @@ impl UnitsConfigFile {
     }
 
     pub fn recruit_for_kind(&self, kind: RecruitUnitKind) -> &UnitStatsConfig {
-        match kind {
-            RecruitUnitKind::ChristianPeasantInfantry => &self.recruit_christian_peasant_infantry,
-            RecruitUnitKind::ChristianPeasantArcher => &self.recruit_christian_peasant_archer,
-            RecruitUnitKind::ChristianPeasantPriest => &self.recruit_christian_peasant_priest,
-            RecruitUnitKind::MuslimPeasantInfantry => &self.recruit_muslim_peasant_infantry,
-            RecruitUnitKind::MuslimPeasantArcher => &self.recruit_muslim_peasant_archer,
-            RecruitUnitKind::MuslimPeasantPriest => &self.recruit_muslim_peasant_priest,
+        self.recruit_for_faction_and_archetype(kind.faction(), kind.archetype())
+    }
+
+    pub fn recruit_for_faction_and_archetype(
+        &self,
+        faction: PlayerFaction,
+        archetype: RecruitArchetype,
+    ) -> &UnitStatsConfig {
+        match (faction, archetype) {
+            (PlayerFaction::Christian, RecruitArchetype::Infantry) => {
+                &self.recruit_christian_peasant_infantry
+            }
+            (PlayerFaction::Christian, RecruitArchetype::Archer) => {
+                &self.recruit_christian_peasant_archer
+            }
+            (PlayerFaction::Christian, RecruitArchetype::Priest) => {
+                &self.recruit_christian_peasant_priest
+            }
+            (PlayerFaction::Muslim, RecruitArchetype::Infantry) => {
+                &self.recruit_muslim_peasant_infantry
+            }
+            (PlayerFaction::Muslim, RecruitArchetype::Archer) => {
+                &self.recruit_muslim_peasant_archer
+            }
+            (PlayerFaction::Muslim, RecruitArchetype::Priest) => {
+                &self.recruit_muslim_peasant_priest
+            }
         }
     }
 
@@ -282,29 +304,89 @@ pub struct EnemiesConfigFile {
 
 impl EnemiesConfigFile {
     pub fn enemy_profile_for_kind(&self, kind: UnitKind) -> Option<&EnemyStatsConfig> {
-        match kind {
-            UnitKind::ChristianPeasantInfantry => Some(&self.enemy_christian_peasant_infantry),
-            UnitKind::ChristianPeasantArcher => Some(&self.enemy_christian_peasant_archer),
-            UnitKind::ChristianPeasantPriest => Some(&self.enemy_christian_peasant_priest),
-            UnitKind::MuslimPeasantInfantry => Some(&self.enemy_muslim_peasant_infantry),
-            UnitKind::MuslimPeasantArcher => Some(&self.enemy_muslim_peasant_archer),
-            UnitKind::MuslimPeasantPriest => Some(&self.enemy_muslim_peasant_priest),
-            _ => None,
+        if kind.is_rescuable_variant() {
+            return None;
+        }
+        let faction = kind.faction()?;
+        let archetype = kind.recruit_archetype().or_else(|| {
+            if kind.is_support_priest_line() || kind.is_fanatic_line() {
+                Some(RecruitArchetype::Priest)
+            } else if kind.is_archer_line() {
+                Some(RecruitArchetype::Archer)
+            } else if kind.is_block_infantry_line() {
+                Some(RecruitArchetype::Infantry)
+            } else {
+                None
+            }
+        })?;
+        self.enemy_profile_for_faction_and_archetype(faction, archetype)
+    }
+
+    pub fn enemy_profile_for_faction_and_archetype(
+        &self,
+        faction: PlayerFaction,
+        archetype: RecruitArchetype,
+    ) -> Option<&EnemyStatsConfig> {
+        match (faction, archetype) {
+            (PlayerFaction::Christian, RecruitArchetype::Infantry) => {
+                Some(&self.enemy_christian_peasant_infantry)
+            }
+            (PlayerFaction::Christian, RecruitArchetype::Archer) => {
+                Some(&self.enemy_christian_peasant_archer)
+            }
+            (PlayerFaction::Christian, RecruitArchetype::Priest) => {
+                Some(&self.enemy_christian_peasant_priest)
+            }
+            (PlayerFaction::Muslim, RecruitArchetype::Infantry) => {
+                Some(&self.enemy_muslim_peasant_infantry)
+            }
+            (PlayerFaction::Muslim, RecruitArchetype::Archer) => {
+                Some(&self.enemy_muslim_peasant_archer)
+            }
+            (PlayerFaction::Muslim, RecruitArchetype::Priest) => {
+                Some(&self.enemy_muslim_peasant_priest)
+            }
         }
     }
 
     pub fn opposing_enemy_pool(&self, player_faction: PlayerFaction) -> [UnitKind; 3] {
-        match player_faction.opposing() {
-            PlayerFaction::Christian => [
-                UnitKind::ChristianPeasantInfantry,
-                UnitKind::ChristianPeasantArcher,
-                UnitKind::ChristianPeasantPriest,
-            ],
-            PlayerFaction::Muslim => [
-                UnitKind::MuslimPeasantInfantry,
-                UnitKind::MuslimPeasantArcher,
-                UnitKind::MuslimPeasantPriest,
-            ],
+        let kinds = RecruitUnitKind::all_for_faction(player_faction.opposing());
+        [
+            kinds[0].as_unit_kind(),
+            kinds[1].as_unit_kind(),
+            kinds[2].as_unit_kind(),
+        ]
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct EnemyTierPoolTierConfig {
+    pub tier: u8,
+    pub melee: Vec<String>,
+    pub ranged: Vec<String>,
+    pub support: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct EnemyTierPoolsConfigFile {
+    pub tiers: Vec<EnemyTierPoolTierConfig>,
+}
+
+impl EnemyTierPoolsConfigFile {
+    fn tier_entry(&self, tier: u8) -> Option<&EnemyTierPoolTierConfig> {
+        self.tiers.iter().find(|entry| entry.tier == tier)
+    }
+
+    pub fn unit_ids_for_tier_and_archetype(
+        &self,
+        tier: u8,
+        archetype: RecruitArchetype,
+    ) -> Option<&[String]> {
+        let entry = self.tier_entry(tier)?;
+        match archetype {
+            RecruitArchetype::Infantry => Some(entry.melee.as_slice()),
+            RecruitArchetype::Archer => Some(entry.ranged.as_slice()),
+            RecruitArchetype::Priest => Some(entry.support.as_slice()),
         }
     }
 }
@@ -422,6 +504,17 @@ pub enum RescueRecruitKindConfig {
 }
 
 impl RescueRecruitKindConfig {
+    pub const fn from_recruit_unit_kind(kind: RecruitUnitKind) -> Self {
+        match kind {
+            RecruitUnitKind::ChristianPeasantInfantry => Self::ChristianPeasantInfantry,
+            RecruitUnitKind::ChristianPeasantArcher => Self::ChristianPeasantArcher,
+            RecruitUnitKind::ChristianPeasantPriest => Self::ChristianPeasantPriest,
+            RecruitUnitKind::MuslimPeasantInfantry => Self::MuslimPeasantInfantry,
+            RecruitUnitKind::MuslimPeasantArcher => Self::MuslimPeasantArcher,
+            RecruitUnitKind::MuslimPeasantPriest => Self::MuslimPeasantPriest,
+        }
+    }
+
     pub const fn as_recruit_unit_kind(self) -> RecruitUnitKind {
         match self {
             Self::ChristianPeasantInfantry => RecruitUnitKind::ChristianPeasantInfantry,
@@ -574,6 +667,7 @@ impl RosterTuningConfigFile {
 pub struct GameData {
     pub units: UnitsConfigFile,
     pub enemies: EnemiesConfigFile,
+    pub enemy_tier_pools: EnemyTierPoolsConfigFile,
     pub formations: FormationsConfigFile,
     pub waves: WavesConfigFile,
     pub upgrades: UpgradesConfigFile,
@@ -589,6 +683,8 @@ impl GameData {
     pub fn load_from_dir(base_dir: &Path) -> Result<Self> {
         let units: UnitsConfigFile = read_json(base_dir.join("units.json"))?;
         let enemies: EnemiesConfigFile = read_json(base_dir.join("enemies.json"))?;
+        let enemy_tier_pools: EnemyTierPoolsConfigFile =
+            read_json(base_dir.join("enemy_tier_pools.json"))?;
         let formations: FormationsConfigFile = read_json(base_dir.join("formations.json"))?;
         let waves: WavesConfigFile = read_json(base_dir.join("waves.json"))?;
         let upgrades: UpgradesConfigFile = read_json(base_dir.join("upgrades.json"))?;
@@ -601,6 +697,7 @@ impl GameData {
 
         validate_units(&units)?;
         validate_enemies(&enemies)?;
+        validate_enemy_tier_pools(&enemy_tier_pools)?;
         validate_formations(&formations)?;
         validate_waves(&waves)?;
         validate_upgrades(&upgrades)?;
@@ -614,6 +711,7 @@ impl GameData {
         Ok(Self {
             units,
             enemies,
+            enemy_tier_pools,
             formations,
             waves,
             upgrades,
@@ -665,14 +763,15 @@ fn default_multiplier() -> f32 {
 }
 
 fn default_rescue_recruit_pool() -> Vec<RescueRecruitKindConfig> {
-    vec![
-        RescueRecruitKindConfig::ChristianPeasantInfantry,
-        RescueRecruitKindConfig::ChristianPeasantArcher,
-        RescueRecruitKindConfig::ChristianPeasantPriest,
-        RescueRecruitKindConfig::MuslimPeasantInfantry,
-        RescueRecruitKindConfig::MuslimPeasantArcher,
-        RescueRecruitKindConfig::MuslimPeasantPriest,
-    ]
+    let mut pool = Vec::with_capacity(PlayerFaction::all().len() * 3);
+    for faction in PlayerFaction::all() {
+        for recruit_kind in RecruitUnitKind::all_for_faction(faction) {
+            pool.push(RescueRecruitKindConfig::from_recruit_unit_kind(
+                recruit_kind,
+            ));
+        }
+    }
+    pool
 }
 
 fn default_enemy_collision_radius() -> f32 {
@@ -811,6 +910,82 @@ fn validate_enemy_stats(enemy: &EnemyStatsConfig, label: &str) -> Result<()> {
     let has_any_ranged = ranged_fields.iter().any(|value| *value > 0.0);
     if has_any_ranged && ranged_fields.iter().any(|value| *value <= 0.0) {
         bail!("{label} ranged fields must all be > 0 when any ranged field is set");
+    }
+    Ok(())
+}
+
+fn validate_enemy_tier_pools(config: &EnemyTierPoolsConfigFile) -> Result<()> {
+    if config.tiers.is_empty() {
+        bail!("enemy_tier_pools.tiers must contain at least one entry");
+    }
+    let mut seen_tiers = HashSet::new();
+    for entry in &config.tiers {
+        if entry.tier > 5 {
+            bail!(
+                "enemy_tier_pools tier {} is out of range (expected 0..=5)",
+                entry.tier
+            );
+        }
+        if !seen_tiers.insert(entry.tier) {
+            bail!("enemy_tier_pools has duplicate tier entry {}", entry.tier);
+        }
+        validate_enemy_tier_pool_ids(entry.tier, RecruitArchetype::Infantry, &entry.melee)?;
+        validate_enemy_tier_pool_ids(entry.tier, RecruitArchetype::Archer, &entry.ranged)?;
+        validate_enemy_tier_pool_ids(entry.tier, RecruitArchetype::Priest, &entry.support)?;
+    }
+    for required in 0..=5 {
+        if !seen_tiers.contains(&required) {
+            bail!("enemy_tier_pools is missing required tier {}", required);
+        }
+    }
+    Ok(())
+}
+
+fn validate_enemy_tier_pool_ids(
+    tier: u8,
+    archetype: RecruitArchetype,
+    ids: &[String],
+) -> Result<()> {
+    if ids.is_empty() {
+        bail!(
+            "enemy_tier_pools tier {} {:?} list cannot be empty",
+            tier,
+            archetype
+        );
+    }
+    for unit_id in ids {
+        for faction in PlayerFaction::all() {
+            let Some(kind) = UnitKind::from_faction_and_unit_id(faction, unit_id, false) else {
+                bail!(
+                    "enemy_tier_pools tier {} references unknown unit_id '{}' for faction {:?}",
+                    tier,
+                    unit_id,
+                    faction
+                );
+            };
+            if kind.tier_hint() != Some(tier) {
+                bail!(
+                    "enemy_tier_pools unit_id '{}' for faction {:?} resolves to tier {:?}, expected {}",
+                    unit_id,
+                    faction,
+                    kind.tier_hint(),
+                    tier
+                );
+            }
+            let valid_archetype = match archetype {
+                RecruitArchetype::Infantry => kind.is_block_infantry_line(),
+                RecruitArchetype::Archer => kind.is_archer_line(),
+                RecruitArchetype::Priest => kind.is_priest_family_line(),
+            };
+            if !valid_archetype {
+                bail!(
+                    "enemy_tier_pools unit_id '{}' for faction {:?} is not valid for {:?} tier bucket",
+                    unit_id,
+                    faction,
+                    archetype
+                );
+            }
+        }
     }
     Ok(())
 }
@@ -1237,7 +1412,7 @@ mod tests {
 
     use tempfile::TempDir;
 
-    use crate::model::{PlayerFaction, UnitKind};
+    use crate::model::{PlayerFaction, RecruitArchetype, UnitKind};
 
     use super::GameData;
 
@@ -1270,6 +1445,20 @@ mod tests {
               "enemy_muslim_peasant_infantry":{"id":"em_i","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0},
               "enemy_muslim_peasant_archer":{"id":"em_a","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0},
               "enemy_muslim_peasant_priest":{"id":"em_p","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0}
+            }"#,
+        );
+        write_config(
+            dir,
+            "enemy_tier_pools.json",
+            r#"{
+              "tiers":[
+                {"tier":0,"melee":["peasant_infantry"],"ranged":["peasant_archer"],"support":["peasant_priest"]},
+                {"tier":1,"melee":["men_at_arms"],"ranged":["bowman"],"support":["devoted"]},
+                {"tier":2,"melee":["shield_infantry"],"ranged":["experienced_bowman"],"support":["devoted_one"]},
+                {"tier":3,"melee":["experienced_shield_infantry"],"ranged":["elite_bowman"],"support":["cardinal"]},
+                {"tier":4,"melee":["elite_shield_infantry"],"ranged":["longbowman"],"support":["elite_cardinal"]},
+                {"tier":5,"melee":["citadel_guard"],"ranged":["elite_longbowman"],"support":["divine_speaker"]}
+              ]
             }"#,
         );
         write_config(
@@ -1476,6 +1665,51 @@ mod tests {
     }
 
     #[test]
+    fn unit_and_enemy_resolvers_support_faction_plus_archetype_queries() {
+        let tmp = TempDir::new().expect("tmp");
+        write_valid_set(tmp.path());
+        let data = GameData::load_from_dir(tmp.path()).expect("load");
+
+        let muslim_archer = data
+            .units
+            .recruit_for_faction_and_archetype(PlayerFaction::Muslim, RecruitArchetype::Archer);
+        assert_eq!(muslim_archer.id, "m2");
+
+        let christian_priest_enemy = data
+            .enemies
+            .enemy_profile_for_faction_and_archetype(
+                PlayerFaction::Christian,
+                RecruitArchetype::Priest,
+            )
+            .expect("christian priest enemy profile");
+        assert_eq!(christian_priest_enemy.id, "ec_p");
+
+        let christian_tier3_archer = data
+            .enemies
+            .enemy_profile_for_kind(UnitKind::ChristianEliteBowman)
+            .expect("tier-3 archer line should resolve enemy archer profile");
+        assert_eq!(christian_tier3_archer.id, "ec_a");
+
+        let muslim_tier5_support = data
+            .enemies
+            .enemy_profile_for_kind(UnitKind::MuslimDivineSpeaker)
+            .expect("tier-5 support line should resolve enemy priest profile");
+        assert_eq!(muslim_tier5_support.id, "em_p");
+    }
+
+    #[test]
+    fn enemy_profile_for_kind_rejects_rescuable_variants() {
+        let tmp = TempDir::new().expect("tmp");
+        write_valid_set(tmp.path());
+        let data = GameData::load_from_dir(tmp.path()).expect("load");
+        assert!(
+            data.enemies
+                .enemy_profile_for_kind(UnitKind::RescuableChristianPeasantInfantry)
+                .is_none()
+        );
+    }
+
+    #[test]
     fn rejects_invalid_unit_cooldown() {
         let tmp = TempDir::new().expect("tmp");
         write_valid_set(tmp.path());
@@ -1527,6 +1761,24 @@ mod tests {
         fs::remove_file(tmp.path().join("waves.json")).expect("remove");
         let err = GameData::load_from_dir(tmp.path()).expect_err("expected missing file");
         assert!(err.to_string().contains("waves.json"));
+    }
+
+    #[test]
+    fn rejects_enemy_tier_pools_without_all_required_tiers() {
+        let tmp = TempDir::new().expect("tmp");
+        write_valid_set(tmp.path());
+        write_config(
+            tmp.path(),
+            "enemy_tier_pools.json",
+            r#"{
+              "tiers":[
+                {"tier":0,"melee":["peasant_infantry"],"ranged":["peasant_archer"],"support":["peasant_priest"]}
+              ]
+            }"#,
+        );
+        let err =
+            GameData::load_from_dir(tmp.path()).expect_err("expected invalid enemy tier pools");
+        assert!(err.to_string().contains("missing required tier"));
     }
 
     #[test]
