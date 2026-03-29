@@ -8,13 +8,54 @@
     "anti_cavalry_multiplier": 1.0,
     "move_speed_multiplier": 1.0
   },
+  "circle": {
+    "id": "circle",
+    "slot_spacing": 30.0,
+    "offense_multiplier": 0.95,
+    "offense_while_moving_multiplier": 0.95,
+    "defense_multiplier": 1.12,
+    "anti_cavalry_multiplier": 1.02,
+    "move_speed_multiplier": 0.95
+  },
+  "skean": {
+    "id": "skean",
+    "slot_spacing": 30.0,
+    "offense_multiplier": 1.0,
+    "offense_while_moving_multiplier": 1.28,
+    "defense_multiplier": 0.82,
+    "anti_cavalry_multiplier": 0.92,
+    "move_speed_multiplier": 1.16
+  },
   "diamond": {
     "id": "diamond",
     "slot_spacing": 30.0,
     "offense_multiplier": 1.0,
-    "offense_while_moving_multiplier": 1.2,
-    "defense_multiplier": 0.9,
+    "offense_while_moving_multiplier": 1.22,
+    "defense_multiplier": 0.95,
     "anti_cavalry_multiplier": 0.95,
-    "move_speed_multiplier": 1.08
+    "move_speed_multiplier": 1.14,
+    "anti_entry": true
+  },
+  "shield_wall": {
+    "id": "shield_wall",
+    "slot_spacing": 30.0,
+    "offense_multiplier": 0.92,
+    "offense_while_moving_multiplier": 0.85,
+    "defense_multiplier": 1.2,
+    "anti_cavalry_multiplier": 1.1,
+    "move_speed_multiplier": 0.72,
+    "anti_entry": true,
+    "shielded_block_bonus": 0.1,
+    "melee_reflect_ratio": 0.3
+  },
+  "loose": {
+    "id": "loose",
+    "slot_spacing": 44.0,
+    "offense_multiplier": 1.04,
+    "offense_while_moving_multiplier": 1.04,
+    "defense_multiplier": 0.94,
+    "anti_cavalry_multiplier": 0.94,
+    "move_speed_multiplier": 1.08,
+    "allow_unlimited_enemy_inside": true
   }
 }

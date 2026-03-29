@@ -8,21 +8,25 @@ use std::collections::HashMap;
 use crate::archive::{ArchiveCategory, ArchiveDataset, ArchiveEntry};
 use crate::banner::{BannerState, banner_pickup_progress_ratio};
 use crate::data::{CommanderOptionConfig, GameData};
-use crate::drops::{EquipmentChestDrop, GoldPack, MagnetPickup, chest_pickup_progress_ratio};
+use crate::drops::{
+    EquipmentChestDrop, GoldPack, HearTheCallDrop, MagnetPickup, chest_pickup_progress_ratio,
+    hear_the_call_pickup_progress_ratio,
+};
 use crate::enemies::WaveRuntime;
 use crate::formation::{ActiveFormation, FormationModifiers, FormationSkillBar, SkillBarSkillKind};
 use crate::inventory::{
     BACKPACK_SLOT_CAPACITY, CHEST_SLOT_CAPACITY, EquipmentChestState, EquipmentUnitType,
     GearItemEntry, GearRarity, InventoryPlaceError, InventorySlotRef, InventoryState,
-    default_icon_key_for_item_type, gear_item_tooltip, get_item_from_slot,
-    item_rarity_tier_for_display, item_scrap_gold_value, place_item_into_slot, take_item_from_slot,
+    UnitCombatRole, commander_armywide_bonuses_with_banner_state, default_icon_key_for_item_type,
+    gear_item_tooltip, get_item_from_slot, item_rarity_tier_for_display, item_scrap_gold_value,
+    place_item_into_slot, take_item_from_slot,
 };
 use crate::map::MapBounds;
 use crate::model::{
-    CommanderUnit, DamageTextEvent, EnemyUnit, FrameRateCap, FriendlyUnit, GameDifficulty,
-    GameState, Health, MatchSetupSelection, Morale, PlayerFaction, RecruitUnitKind, RescuableUnit,
-    RunModalAction, RunModalRequestEvent, RunModalScreen, RunModalState, RunSession, StartRunEvent,
-    Team, Unit, UnitKind, level_cap_from_locked_budget,
+    CommanderUnit, DamageTextEvent, DamageTextKind, EnemyUnit, FrameRateCap, FriendlyUnit,
+    GameDifficulty, GameState, Health, MatchSetupSelection, Morale, PlayerFaction, RecruitUnitKind,
+    RescuableUnit, RunModalAction, RunModalRequestEvent, RunModalScreen, RunModalState, RunSession,
+    StartRunEvent, Team, Unit, UnitKind, level_cap_from_locked_budget,
 };
 use crate::morale::{
     MoraleThresholdCrossedEvent, average_morale_ratio, commander_aura_radius,
@@ -33,7 +37,8 @@ use crate::settings::AppSettings;
 use crate::squad::{
     ConvertTierZeroUnitsEvent, HeroRecruitSubtype, PriestAttackSpeedBlessing, PromoteUnitsEvent,
     RecruitHeroEvent, RosterEconomy, RosterEconomyFeedback, SquadRoster, UpgradeTierUnlockState,
-    friendly_stats_for_kind, friendly_tier_for_kind, hero_recruit_gold_cost_for_subtype,
+    friendly_stats_for_kind, friendly_tier_for_kind, hero_recruit_gold_cost_for_subtype_with_data,
+    hero_subtype_key_matchups, hero_subtype_strengths, hero_subtype_weaknesses,
     promotion_gold_cost, promotion_step_cost, promotion_targets_for_kind,
     tier0_conversion_gold_cost, unit_kind_label, unlock_boss_wave_for_tier,
 };
@@ -92,6 +97,7 @@ struct HealthBarFill;
 const HEALTH_BAR_WIDTH: f32 = 22.0;
 const HEALTH_BAR_HEIGHT: f32 = 3.0;
 const HEALTH_BAR_Y_OFFSET: f32 = 24.0;
+const HEALTH_BAR_SEGMENT_COUNT: u32 = 5;
 
 #[derive(Component, Clone, Copy, Debug)]
 struct FloatingDamageText;
@@ -269,6 +275,26 @@ impl Default for MoraleToastRuntime {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct StatBandSnapshot {
+    damage_bonus: QualitativeBand,
+    armor_bonus: QualitativeBand,
+    move_speed_bonus: QualitativeBand,
+    luck_bonus: QualitativeBand,
+}
+
+#[derive(Resource, Clone, Copy, Debug, Default)]
+struct StatBandFeedbackRuntime {
+    snapshot: Option<StatBandSnapshot>,
+}
+
+#[derive(Event, Clone, Copy, Debug, Eq, PartialEq)]
+struct StatBandThresholdCrossedEvent {
+    stat_label: &'static str,
+    from_band: QualitativeBand,
+    to_band: QualitativeBand,
+}
+
 #[derive(Component, Clone, Copy, Debug)]
 struct MinimapDotsRoot;
 
@@ -389,8 +415,11 @@ struct UnitUpgradeUiState {
 
 impl Default for UnitUpgradeUiState {
     fn default() -> Self {
+        let selected_source =
+            UnitKind::from_faction_and_unit_id(PlayerFaction::Christian, "peasant_infantry", false)
+                .expect("default unit upgrade source should resolve");
         Self {
-            selected_source: UnitKind::ChristianPeasantInfantry,
+            selected_source,
             swap_targets: HashMap::new(),
             context_swap_source: None,
             graph_scroll_offset: 0.0,
@@ -478,6 +507,7 @@ struct UnitUpgradePanelData {
     allowed_max_level: u32,
     locked_levels: u32,
     unlocked_tier: u8,
+    player_faction: PlayerFaction,
     hero_unlocked: bool,
     selected_source: UnitKind,
     roster_entries: Vec<UnitUpgradeRosterEntry>,
@@ -588,12 +618,14 @@ const MINIMAP_ENEMY_COLOR: Color = Color::srgb(0.9, 0.28, 0.22);
 const MINIMAP_RESCUABLE_COLOR: Color = Color::srgb(0.45, 0.72, 0.94);
 const MINIMAP_DROPPED_BANNER_COLOR: Color = Color::srgb(0.95, 0.8, 0.32);
 const MINIMAP_GOLD_COLOR: Color = Color::srgb(0.98, 0.87, 0.22);
+const MINIMAP_HEAR_THE_CALL_COLOR: Color = Color::srgb(1.0, 0.67, 0.2);
 const MINIMAP_MAX_ENEMY_BLIPS: usize = 220;
 const MINIMAP_MAX_FRIENDLY_BLIPS: usize = 260;
 const MINIMAP_MAX_RESCUABLE_BLIPS: usize = 80;
 const MINIMAP_MAX_GOLD_BLIPS: usize = 320;
 const MINIMAP_MAX_MAGNET_BLIPS: usize = 4;
 const MINIMAP_MAX_CHEST_BLIPS: usize = 8;
+const MINIMAP_MAX_HEAR_THE_CALL_BLIPS: usize = 8;
 const SKILL_BAR_SLOT_BG: Color = Color::srgba(0.05, 0.045, 0.04, 0.82);
 const SKILL_BAR_SLOT_BORDER: Color = Color::srgba(0.78, 0.72, 0.58, 0.4);
 const SKILL_BAR_SLOT_ACTIVE_BORDER: Color = Color::srgb(0.94, 0.82, 0.43);
@@ -611,7 +643,6 @@ const UI_REFERENCE_WIDTH: f32 = 1280.0;
 const UI_REFERENCE_HEIGHT: f32 = 720.0;
 const UI_SCALE_MIN: f32 = 0.7;
 const UI_SCALE_MAX: f32 = 3.0;
-const BASE_CRIT_DAMAGE_MULTIPLIER: f32 = 1.2;
 const RUN_MODAL_PANEL_WIDTH: f32 = 980.0;
 const RUN_MODAL_PANEL_HEIGHT: f32 = 620.0;
 const INVENTORY_DOUBLE_CLICK_WINDOW_SECS: f64 = 0.28;
@@ -620,6 +651,10 @@ const UNIT_UPGRADE_GRAPH_CONNECTOR_WIDTH: f32 = 18.0;
 const UNIT_UPGRADE_GRAPH_HERO_GAP_WIDTH: f32 = 24.0;
 const UNIT_UPGRADE_GRAPH_VIEWPORT_HEIGHT: f32 = 354.0;
 const UNIT_UPGRADE_GRAPH_SCROLL_STEP: f32 = 160.0;
+const DAMAGE_BONUS_BAND_THRESHOLDS: [f32; 4] = [5.0, 15.0, 30.0, 50.0];
+const ARMOR_BONUS_BAND_THRESHOLDS: [f32; 4] = [2.0, 6.0, 12.0, 20.0];
+const MOVE_SPEED_BONUS_BAND_THRESHOLDS: [f32; 4] = [5.0, 15.0, 30.0, 50.0];
+const LUCK_BONUS_BAND_THRESHOLDS: [f32; 4] = [5.0, 15.0, 30.0, 50.0];
 
 pub struct UiPlugin;
 
@@ -627,11 +662,13 @@ impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<HudSnapshot>()
             .init_resource::<MoraleToastRuntime>()
+            .init_resource::<StatBandFeedbackRuntime>()
             .init_resource::<MinimapRefreshRuntime>()
             .init_resource::<UnitUpgradeUiState>()
             .init_resource::<InventorySlotSelection>()
             .init_resource::<InventoryDoubleClickState>()
             .init_resource::<InventoryContextMenuState>()
+            .add_event::<StatBandThresholdCrossedEvent>()
             .add_systems(OnEnter(GameState::MainMenu), spawn_main_menu)
             .add_systems(OnExit(GameState::MainMenu), despawn_main_menu)
             .add_systems(OnEnter(GameState::MatchSetup), spawn_match_setup_menu)
@@ -715,6 +752,7 @@ impl Plugin for UiPlugin {
                 Update,
                 refresh_hud_snapshot.run_if(in_state(GameState::InRun)),
             )
+            .add_systems(Update, reset_stat_band_feedback_on_run_start)
             .add_systems(
                 Update,
                 handle_unit_upgrade_buttons.run_if(in_state(GameState::InRun)),
@@ -740,11 +778,14 @@ impl Plugin for UiPlugin {
                 Update,
                 (
                     update_in_run_hud,
+                    emit_stat_band_threshold_events,
                     consume_morale_threshold_events,
+                    consume_stat_band_threshold_events,
                     update_morale_threshold_toast,
                     update_rescue_progress_hud,
                     update_skill_bar_hud,
                 )
+                    .chain()
                     .run_if(in_state(GameState::InRun)),
             )
             .add_systems(
@@ -2129,6 +2170,7 @@ fn upgrade_icon_for(icon_kind: UpgradeCardIcon, art: &crate::visuals::ArtAssets)
         UpgradeCardIcon::Damage => art.upgrade_damage_icon.clone(),
         UpgradeCardIcon::AttackSpeed => art.upgrade_attack_speed_icon.clone(),
         UpgradeCardIcon::FastLearner => art.upgrade_pickup_radius_icon.clone(),
+        UpgradeCardIcon::Luck => art.chest_drop_closed.clone(),
         UpgradeCardIcon::CritChance => art.upgrade_crit_chance_icon.clone(),
         UpgradeCardIcon::CritDamage => art.upgrade_crit_damage_icon.clone(),
         UpgradeCardIcon::Armor => art.upgrade_armor_icon.clone(),
@@ -2764,326 +2806,352 @@ fn run_modal_titles(screen: RunModalScreen) -> (&'static str, Option<&'static st
 }
 
 fn unit_role_label(kind: UnitKind) -> &'static str {
-    match kind {
-        UnitKind::ChristianPeasantInfantry | UnitKind::MuslimPeasantInfantry => "Tier 0 Melee",
-        UnitKind::ChristianMenAtArms | UnitKind::MuslimMenAtArms => "Tier 1 Frontline",
-        UnitKind::ChristianShieldInfantry | UnitKind::MuslimShieldInfantry => "Tier 2 Tank",
-        UnitKind::ChristianSpearman | UnitKind::MuslimSpearman => "Tier 2 Anti-Cavalry",
-        UnitKind::ChristianUnmountedKnight | UnitKind::MuslimUnmountedKnight => "Tier 2 Bruiser",
-        UnitKind::ChristianSquire | UnitKind::MuslimSquire => "Tier 2 Support",
-        UnitKind::ChristianExperiencedShieldInfantry
-        | UnitKind::MuslimExperiencedShieldInfantry => "Tier 3 Tank",
-        UnitKind::ChristianEliteShieldInfantry | UnitKind::MuslimEliteShieldInfantry => {
-            "Tier 4 Tank"
-        }
-        UnitKind::ChristianCitadelGuard | UnitKind::MuslimCitadelGuard => "Tier 5 Tank",
-        UnitKind::ChristianShieldedSpearman | UnitKind::MuslimShieldedSpearman => {
-            "Tier 3 Anti-Cavalry"
-        }
-        UnitKind::ChristianHalberdier | UnitKind::MuslimHalberdier => "Tier 4 Anti-Cavalry",
-        UnitKind::ChristianArmoredHalberdier | UnitKind::MuslimArmoredHalberdier => {
-            "Tier 5 Anti-Cavalry"
-        }
-        UnitKind::ChristianKnight | UnitKind::MuslimKnight => "Tier 3 Bruiser",
-        UnitKind::ChristianHeavyKnight | UnitKind::MuslimHeavyKnight => "Tier 4 Bruiser",
-        UnitKind::ChristianEliteHeavyKnight | UnitKind::MuslimEliteHeavyKnight => "Tier 5 Bruiser",
-        UnitKind::ChristianBannerman | UnitKind::MuslimBannerman => "Tier 3 Support",
-        UnitKind::ChristianEliteBannerman | UnitKind::MuslimEliteBannerman => "Tier 4 Support",
-        UnitKind::ChristianGodsChosen | UnitKind::MuslimGodsChosen => "Tier 5 Support",
-        UnitKind::ChristianPeasantArcher | UnitKind::MuslimPeasantArcher => "Tier 0 Hybrid Ranged",
-        UnitKind::ChristianBowman | UnitKind::MuslimBowman => "Tier 1 Ranged",
-        UnitKind::ChristianExperiencedBowman | UnitKind::MuslimExperiencedBowman => "Tier 2 Ranged",
-        UnitKind::ChristianCrossbowman | UnitKind::MuslimCrossbowman => "Tier 2 Heavy Ranged",
-        UnitKind::ChristianTracker | UnitKind::MuslimTracker => "Tier 2 Skirmish Ranged",
-        UnitKind::ChristianScout | UnitKind::MuslimScout => "Tier 2 Raider",
-        UnitKind::ChristianEliteBowman | UnitKind::MuslimEliteBowman => "Tier 3 Ranged",
-        UnitKind::ChristianLongbowman | UnitKind::MuslimLongbowman => "Tier 4 Ranged",
-        UnitKind::ChristianEliteLongbowman | UnitKind::MuslimEliteLongbowman => "Tier 5 Ranged",
-        UnitKind::ChristianArmoredCrossbowman | UnitKind::MuslimArmoredCrossbowman => {
-            "Tier 3 Heavy Ranged"
-        }
-        UnitKind::ChristianEliteCrossbowman | UnitKind::MuslimEliteCrossbowman => {
-            "Tier 4 Heavy Ranged"
-        }
-        UnitKind::ChristianSiegeCrossbowman | UnitKind::MuslimSiegeCrossbowman => {
-            "Tier 5 Heavy Ranged"
-        }
-        UnitKind::ChristianPathfinder | UnitKind::MuslimPathfinder => "Tier 3 Skirmish Ranged",
-        UnitKind::ChristianHoundmaster | UnitKind::MuslimHoundmaster => "Tier 4 Skirmish Ranged",
-        UnitKind::ChristianEliteHoundmaster | UnitKind::MuslimEliteHoundmaster => {
-            "Tier 5 Skirmish Ranged"
-        }
-        UnitKind::ChristianMountedScout | UnitKind::MuslimMountedScout => "Tier 3 Raider",
-        UnitKind::ChristianShockCavalry | UnitKind::MuslimShockCavalry => "Tier 4 Raider",
-        UnitKind::ChristianEliteShockCavalry | UnitKind::MuslimEliteShockCavalry => "Tier 5 Raider",
-        UnitKind::ChristianPeasantPriest | UnitKind::MuslimPeasantPriest => "Tier 0 Support",
-        UnitKind::ChristianDevoted | UnitKind::MuslimDevoted => "Tier 1 Support",
-        UnitKind::ChristianDevotedOne | UnitKind::MuslimDevotedOne => "Tier 2 Support",
-        UnitKind::ChristianFanatic | UnitKind::MuslimFanatic => "Tier 2 Zealot",
-        UnitKind::ChristianCardinal | UnitKind::MuslimCardinal => "Tier 3 Support",
-        UnitKind::ChristianEliteCardinal | UnitKind::MuslimEliteCardinal => "Tier 4 Support",
-        UnitKind::ChristianDivineSpeaker | UnitKind::MuslimDivineSpeaker => "Tier 5 Support",
-        UnitKind::ChristianFlagellant | UnitKind::MuslimFlagellant => "Tier 3 Zealot",
-        UnitKind::ChristianEliteFlagellant | UnitKind::MuslimEliteFlagellant => "Tier 4 Zealot",
-        UnitKind::ChristianDivineJudge | UnitKind::MuslimDivineJudge => "Tier 5 Zealot",
-        UnitKind::Commander => "Commander",
+    if kind == UnitKind::Commander {
+        return "Commander";
+    }
+
+    match kind.unit_id() {
+        "peasant_infantry" => "Tier 0 Melee",
+        "men_at_arms" => "Tier 1 Frontline",
+        "shield_infantry" => "Tier 2 Tank",
+        "spearman" => "Tier 2 Anti-Cavalry",
+        "unmounted_knight" => "Tier 2 Bruiser",
+        "squire" => "Tier 2 Support",
+        "experienced_shield_infantry" => "Tier 3 Tank",
+        "elite_shield_infantry" => "Tier 4 Tank",
+        "citadel_guard" => "Tier 5 Tank",
+        "shielded_spearman" => "Tier 3 Anti-Cavalry",
+        "halberdier" => "Tier 4 Anti-Cavalry",
+        "armored_halberdier" => "Tier 5 Anti-Cavalry",
+        "knight" => "Tier 3 Bruiser",
+        "heavy_knight" => "Tier 4 Bruiser",
+        "elite_heavy_knight" => "Tier 5 Bruiser",
+        "bannerman" => "Tier 3 Support",
+        "elite_bannerman" => "Tier 4 Support",
+        "gods_chosen" => "Tier 5 Support",
+        "peasant_archer" => "Tier 0 Hybrid Ranged",
+        "bowman" => "Tier 1 Ranged",
+        "experienced_bowman" => "Tier 2 Ranged",
+        "crossbowman" => "Tier 2 Heavy Ranged",
+        "tracker" => "Tier 2 Skirmish Ranged",
+        "scout" => "Tier 2 Raider",
+        "elite_bowman" => "Tier 3 Ranged",
+        "longbowman" => "Tier 4 Ranged",
+        "elite_longbowman" => "Tier 5 Ranged",
+        "armored_crossbowman" => "Tier 3 Heavy Ranged",
+        "elite_crossbowman" => "Tier 4 Heavy Ranged",
+        "siege_crossbowman" => "Tier 5 Heavy Ranged",
+        "pathfinder" => "Tier 3 Skirmish Ranged",
+        "houndmaster" => "Tier 4 Skirmish Ranged",
+        "elite_houndmaster" => "Tier 5 Skirmish Ranged",
+        "mounted_scout" => "Tier 3 Raider",
+        "shock_cavalry" => "Tier 4 Raider",
+        "elite_shock_cavalry" => "Tier 5 Raider",
+        "peasant_priest" => "Tier 0 Support",
+        "devoted" => "Tier 1 Support",
+        "devoted_one" => "Tier 2 Support",
+        "fanatic" => "Tier 2 Zealot",
+        "cardinal" => "Tier 3 Support",
+        "elite_cardinal" => "Tier 4 Support",
+        "divine_speaker" => "Tier 5 Support",
+        "flagellant" => "Tier 3 Zealot",
+        "elite_flagellant" => "Tier 4 Zealot",
+        "divine_judge" => "Tier 5 Zealot",
         _ => "Unit",
     }
 }
 
 fn unit_description(kind: UnitKind) -> &'static str {
-    match kind {
-        UnitKind::ChristianPeasantInfantry | UnitKind::MuslimPeasantInfantry => {
-            "Frontline peasant infantry focused on close combat."
-        }
-        UnitKind::ChristianMenAtArms | UnitKind::MuslimMenAtArms => {
-            "Heavier frontline infantry: more armor and stamina, slower tempo."
-        }
-        UnitKind::ChristianShieldInfantry | UnitKind::MuslimShieldInfantry => {
-            "Defensive branch with high durability and strong frontline hold."
-        }
-        UnitKind::ChristianSpearman | UnitKind::MuslimSpearman => {
-            "Reach-focused anti-cavalry branch with balanced armor and control."
-        }
-        UnitKind::ChristianUnmountedKnight | UnitKind::MuslimUnmountedKnight => {
-            "High-pressure melee branch with stronger offense and armor."
-        }
-        UnitKind::ChristianSquire | UnitKind::MuslimSquire => {
-            "Support branch that buffs allies and stabilizes morale."
-        }
-        UnitKind::ChristianExperiencedShieldInfantry
-        | UnitKind::MuslimExperiencedShieldInfantry => {
+    if kind == UnitKind::Commander {
+        return "Army command center with leadership-focused progression.";
+    }
+
+    match kind.unit_id() {
+        "peasant_infantry" => "Frontline peasant infantry focused on close combat.",
+        "men_at_arms" => "Heavier frontline infantry: more armor and stamina, slower tempo.",
+        "shield_infantry" => "Defensive branch with high durability and strong frontline hold.",
+        "spearman" => "Reach-focused anti-cavalry branch with balanced armor and control.",
+        "unmounted_knight" => "High-pressure melee branch with stronger offense and armor.",
+        "squire" => "Support branch that buffs allies and stabilizes morale.",
+        "experienced_shield_infantry" => {
             "Tier-3 defensive anchor: improved survivability and formation endurance."
         }
-        UnitKind::ChristianEliteShieldInfantry | UnitKind::MuslimEliteShieldInfantry => {
+        "elite_shield_infantry" => {
             "Tier-4 defensive anchor with superior durability and frontline staying power."
         }
-        UnitKind::ChristianCitadelGuard | UnitKind::MuslimCitadelGuard => {
-            "Tier-5 defensive capstone with maximum frontline hold and mitigation."
-        }
-        UnitKind::ChristianShieldedSpearman | UnitKind::MuslimShieldedSpearman => {
+        "citadel_guard" => "Tier-5 defensive capstone with maximum frontline hold and mitigation.",
+        "shielded_spearman" => {
             "Tier-3 anti-cavalry specialist with better reach and tougher defenses."
         }
-        UnitKind::ChristianHalberdier | UnitKind::MuslimHalberdier => {
-            "Tier-4 anti-cavalry specialist with stronger reach pressure and armor."
-        }
-        UnitKind::ChristianArmoredHalberdier | UnitKind::MuslimArmoredHalberdier => {
+        "halberdier" => "Tier-4 anti-cavalry specialist with stronger reach pressure and armor.",
+        "armored_halberdier" => {
             "Tier-5 anti-cavalry capstone with elite armor and punishing reach control."
         }
-        UnitKind::ChristianKnight | UnitKind::MuslimKnight => {
-            "Tier-3 melee bruiser with stronger burst and sustained pressure."
-        }
-        UnitKind::ChristianHeavyKnight | UnitKind::MuslimHeavyKnight => {
-            "Tier-4 melee bruiser with stronger armor and sustained offense."
-        }
-        UnitKind::ChristianEliteHeavyKnight | UnitKind::MuslimEliteHeavyKnight => {
+        "knight" => "Tier-3 melee bruiser with stronger burst and sustained pressure.",
+        "heavy_knight" => "Tier-4 melee bruiser with stronger armor and sustained offense.",
+        "elite_heavy_knight" => {
             "Tier-5 melee capstone with elite armor and overwhelming sustained pressure."
         }
-        UnitKind::ChristianBannerman | UnitKind::MuslimBannerman => {
-            "Tier-3 support unit focused on durable aura uptime."
-        }
-        UnitKind::ChristianEliteBannerman | UnitKind::MuslimEliteBannerman => {
-            "Tier-4 support standard bearer with stronger resilience and uptime."
-        }
-        UnitKind::ChristianGodsChosen | UnitKind::MuslimGodsChosen => {
-            "Tier-5 support capstone with elite aura uptime and retinue resilience."
-        }
-        UnitKind::ChristianPeasantArcher | UnitKind::MuslimPeasantArcher => {
-            "Hybrid archer: strong ranged pressure with weak melee fallback."
-        }
-        UnitKind::ChristianBowman | UnitKind::MuslimBowman => {
-            "Dedicated bow line: longer range and faster volleys with lighter armor."
-        }
-        UnitKind::ChristianExperiencedBowman | UnitKind::MuslimExperiencedBowman => {
-            "Tier-2 ranged upgrade with stronger sustained volleys."
-        }
-        UnitKind::ChristianCrossbowman | UnitKind::MuslimCrossbowman => {
-            "Tier-2 heavy ranged branch with slower but harder shots."
-        }
-        UnitKind::ChristianTracker | UnitKind::MuslimTracker => {
-            "Tier-2 skirmish branch that periodically summons hound strikes."
-        }
-        UnitKind::ChristianScout | UnitKind::MuslimScout => {
-            "Tier-2 raider branch that periodically breaks formation to strike."
-        }
-        UnitKind::ChristianEliteBowman | UnitKind::MuslimEliteBowman => {
-            "Tier-3 ranged branch with higher precision and sustained pressure."
-        }
-        UnitKind::ChristianLongbowman | UnitKind::MuslimLongbowman => {
-            "Tier-4 ranged branch with longer reach and stronger sustained volleys."
-        }
-        UnitKind::ChristianEliteLongbowman | UnitKind::MuslimEliteLongbowman => {
+        "bannerman" => "Tier-3 support unit focused on durable aura uptime.",
+        "elite_bannerman" => "Tier-4 support standard bearer with stronger resilience and uptime.",
+        "gods_chosen" => "Tier-5 support capstone with elite aura uptime and retinue resilience.",
+        "peasant_archer" => "Hybrid archer: strong ranged pressure with weak melee fallback.",
+        "bowman" => "Dedicated bow line: longer range and faster volleys with lighter armor.",
+        "experienced_bowman" => "Tier-2 ranged upgrade with stronger sustained volleys.",
+        "crossbowman" => "Tier-2 heavy ranged branch with slower but harder shots.",
+        "tracker" => "Tier-2 skirmish branch that periodically summons hound strikes.",
+        "scout" => "Tier-2 raider branch that periodically breaks formation to strike.",
+        "elite_bowman" => "Tier-3 ranged branch with higher precision and sustained pressure.",
+        "longbowman" => "Tier-4 ranged branch with longer reach and stronger sustained volleys.",
+        "elite_longbowman" => {
             "Tier-5 ranged capstone with superior reach and sustained ranged pressure."
         }
-        UnitKind::ChristianArmoredCrossbowman | UnitKind::MuslimArmoredCrossbowman => {
+        "armored_crossbowman" => {
             "Tier-3 heavy ranged branch with stronger bolts and improved armor."
         }
-        UnitKind::ChristianEliteCrossbowman | UnitKind::MuslimEliteCrossbowman => {
+        "elite_crossbowman" => {
             "Tier-4 heavy ranged branch with higher bolt pressure and durability."
         }
-        UnitKind::ChristianSiegeCrossbowman | UnitKind::MuslimSiegeCrossbowman => {
+        "siege_crossbowman" => {
             "Tier-5 heavy ranged capstone with devastating bolts and strong durability."
         }
-        UnitKind::ChristianPathfinder | UnitKind::MuslimPathfinder => {
-            "Tier-3 skirmisher with improved hound pressure and mobility."
-        }
-        UnitKind::ChristianHoundmaster | UnitKind::MuslimHoundmaster => {
-            "Tier-4 skirmisher with stronger hound pressure and ranged pacing."
-        }
-        UnitKind::ChristianEliteHoundmaster | UnitKind::MuslimEliteHoundmaster => {
+        "pathfinder" => "Tier-3 skirmisher with improved hound pressure and mobility.",
+        "houndmaster" => "Tier-4 skirmisher with stronger hound pressure and ranged pacing.",
+        "elite_houndmaster" => {
             "Tier-5 skirmisher capstone with relentless hound pressure and mobility."
         }
-        UnitKind::ChristianMountedScout | UnitKind::MuslimMountedScout => {
-            "Tier-3 raider with faster autonomous strike rotations."
-        }
-        UnitKind::ChristianShockCavalry | UnitKind::MuslimShockCavalry => {
-            "Tier-4 raider with stronger charge tempo and autonomous strike impact."
-        }
-        UnitKind::ChristianEliteShockCavalry | UnitKind::MuslimEliteShockCavalry => {
-            "Tier-5 raider capstone with dominant autonomous strike cadence."
-        }
-        UnitKind::ChristianPeasantPriest | UnitKind::MuslimPeasantPriest => {
-            "Support priest that periodically buffs nearby allies."
-        }
-        UnitKind::ChristianDevoted | UnitKind::MuslimDevoted => {
-            "Tier-1 support priest with stronger survivability and morale stability."
-        }
-        UnitKind::ChristianDevotedOne | UnitKind::MuslimDevotedOne => {
-            "Tier-2 support upgrade with stronger blessing uptime."
-        }
-        UnitKind::ChristianFanatic | UnitKind::MuslimFanatic => {
-            "Tier-2 zealot branch with high damage, no armor growth, and life leech."
-        }
-        UnitKind::ChristianCardinal | UnitKind::MuslimCardinal => {
-            "Tier-3 support branch with stronger blessing durability."
-        }
-        UnitKind::ChristianEliteCardinal | UnitKind::MuslimEliteCardinal => {
-            "Tier-4 support branch with stronger survivability and aura uptime."
-        }
-        UnitKind::ChristianDivineSpeaker | UnitKind::MuslimDivineSpeaker => {
+        "mounted_scout" => "Tier-3 raider with faster autonomous strike rotations.",
+        "shock_cavalry" => "Tier-4 raider with stronger charge tempo and autonomous strike impact.",
+        "elite_shock_cavalry" => "Tier-5 raider capstone with dominant autonomous strike cadence.",
+        "peasant_priest" => "Support priest that periodically buffs nearby allies.",
+        "devoted" => "Tier-1 support priest with stronger survivability and morale stability.",
+        "devoted_one" => "Tier-2 support upgrade with stronger blessing uptime.",
+        "fanatic" => "Tier-2 zealot branch with high damage, no armor growth, and life leech.",
+        "cardinal" => "Tier-3 support branch with stronger blessing durability.",
+        "elite_cardinal" => "Tier-4 support branch with stronger survivability and aura uptime.",
+        "divine_speaker" => {
             "Tier-5 support capstone with maximum blessing uptime and morale stability."
         }
-        UnitKind::ChristianFlagellant | UnitKind::MuslimFlagellant => {
+        "flagellant" => {
             "Tier-3 zealot branch with stronger life leech pressure and no armor scaling."
         }
-        UnitKind::ChristianEliteFlagellant | UnitKind::MuslimEliteFlagellant => {
+        "elite_flagellant" => {
             "Tier-4 zealot branch with amplified life leech pressure and no armor scaling."
         }
-        UnitKind::ChristianDivineJudge | UnitKind::MuslimDivineJudge => {
+        "divine_judge" => {
             "Tier-5 zealot capstone with peak life leech pressure and no armor scaling."
         }
-        UnitKind::Commander => "Army command center with leadership-focused progression.",
         _ => "Inactive node for future roster expansion.",
     }
 }
 
 fn unit_abilities(kind: UnitKind) -> &'static str {
-    match kind {
-        UnitKind::ChristianPeasantInfantry
-        | UnitKind::ChristianMenAtArms
-        | UnitKind::ChristianShieldInfantry
-        | UnitKind::ChristianExperiencedShieldInfantry
-        | UnitKind::ChristianEliteShieldInfantry
-        | UnitKind::ChristianCitadelGuard
-        | UnitKind::MuslimPeasantInfantry
-        | UnitKind::MuslimMenAtArms
-        | UnitKind::MuslimShieldInfantry
-        | UnitKind::MuslimExperiencedShieldInfantry
-        | UnitKind::MuslimEliteShieldInfantry
-        | UnitKind::MuslimCitadelGuard => "Basic melee auto-attack.",
-        UnitKind::ChristianSpearman
-        | UnitKind::ChristianShieldedSpearman
-        | UnitKind::ChristianHalberdier
-        | UnitKind::ChristianArmoredHalberdier
-        | UnitKind::MuslimSpearman
-        | UnitKind::MuslimShieldedSpearman
-        | UnitKind::MuslimHalberdier
-        | UnitKind::MuslimArmoredHalberdier => "Melee auto-attack with extended reach.",
-        UnitKind::ChristianUnmountedKnight
-        | UnitKind::ChristianKnight
-        | UnitKind::ChristianHeavyKnight
-        | UnitKind::ChristianEliteHeavyKnight
-        | UnitKind::MuslimUnmountedKnight
-        | UnitKind::MuslimKnight
-        | UnitKind::MuslimHeavyKnight
-        | UnitKind::MuslimEliteHeavyKnight => "Aggressive melee auto-attack.",
-        UnitKind::ChristianPeasantArcher
-        | UnitKind::ChristianBowman
-        | UnitKind::ChristianExperiencedBowman
-        | UnitKind::ChristianEliteBowman
-        | UnitKind::ChristianLongbowman
-        | UnitKind::ChristianEliteLongbowman
-        | UnitKind::ChristianCrossbowman
-        | UnitKind::ChristianArmoredCrossbowman
-        | UnitKind::ChristianEliteCrossbowman
-        | UnitKind::ChristianSiegeCrossbowman
-        | UnitKind::MuslimPeasantArcher
-        | UnitKind::MuslimBowman
-        | UnitKind::MuslimExperiencedBowman
-        | UnitKind::MuslimEliteBowman
-        | UnitKind::MuslimLongbowman
-        | UnitKind::MuslimEliteLongbowman
-        | UnitKind::MuslimCrossbowman
-        | UnitKind::MuslimArmoredCrossbowman
-        | UnitKind::MuslimEliteCrossbowman
-        | UnitKind::MuslimSiegeCrossbowman => {
-            "Auto-ranged attack; switches to melee at close range."
+    if kind == UnitKind::Commander {
+        return "Auras, formations, battle-support combat.";
+    }
+
+    match kind.unit_id() {
+        "peasant_infantry"
+        | "men_at_arms"
+        | "shield_infantry"
+        | "experienced_shield_infantry"
+        | "elite_shield_infantry"
+        | "citadel_guard" => "Basic melee auto-attack.",
+        "spearman" | "shielded_spearman" | "halberdier" | "armored_halberdier" => {
+            "Melee auto-attack with extended reach."
         }
-        UnitKind::ChristianTracker
-        | UnitKind::ChristianPathfinder
-        | UnitKind::ChristianHoundmaster
-        | UnitKind::ChristianEliteHoundmaster
-        | UnitKind::MuslimTracker
-        | UnitKind::MuslimPathfinder
-        | UnitKind::MuslimHoundmaster
-        | UnitKind::MuslimEliteHoundmaster => {
+        "unmounted_knight" | "knight" | "heavy_knight" | "elite_heavy_knight" => {
+            "Aggressive melee auto-attack."
+        }
+        "peasant_archer"
+        | "bowman"
+        | "experienced_bowman"
+        | "elite_bowman"
+        | "longbowman"
+        | "elite_longbowman"
+        | "crossbowman"
+        | "armored_crossbowman"
+        | "elite_crossbowman"
+        | "siege_crossbowman" => "Auto-ranged attack; switches to melee at close range.",
+        "tracker" | "pathfinder" | "houndmaster" | "elite_houndmaster" => {
             "Auto-ranged attack and periodic hound strike summons."
         }
-        UnitKind::ChristianScout
-        | UnitKind::ChristianMountedScout
-        | UnitKind::ChristianShockCavalry
-        | UnitKind::ChristianEliteShockCavalry
-        | UnitKind::MuslimScout
-        | UnitKind::MuslimMountedScout
-        | UnitKind::MuslimShockCavalry
-        | UnitKind::MuslimEliteShockCavalry => {
+        "scout" | "mounted_scout" | "shock_cavalry" | "elite_shock_cavalry" => {
             "Periodic autonomous raid movement and melee strikes."
         }
-        UnitKind::ChristianPeasantPriest
-        | UnitKind::ChristianDevoted
-        | UnitKind::ChristianSquire
-        | UnitKind::ChristianBannerman
-        | UnitKind::ChristianEliteBannerman
-        | UnitKind::ChristianGodsChosen
-        | UnitKind::ChristianDevotedOne
-        | UnitKind::ChristianCardinal
-        | UnitKind::ChristianEliteCardinal
-        | UnitKind::ChristianDivineSpeaker
-        | UnitKind::MuslimPeasantPriest
-        | UnitKind::MuslimDevoted
-        | UnitKind::MuslimSquire
-        | UnitKind::MuslimBannerman
-        | UnitKind::MuslimEliteBannerman
-        | UnitKind::MuslimGodsChosen
-        | UnitKind::MuslimDevotedOne
-        | UnitKind::MuslimCardinal
-        | UnitKind::MuslimEliteCardinal
-        | UnitKind::MuslimDivineSpeaker => {
+        "peasant_priest" | "devoted" | "squire" | "bannerman" | "elite_bannerman"
+        | "gods_chosen" | "devoted_one" | "cardinal" | "elite_cardinal" | "divine_speaker" => {
             "Auto-cast priest blessing (attack speed buff aura pulse)."
         }
-        UnitKind::ChristianFanatic
-        | UnitKind::ChristianFlagellant
-        | UnitKind::ChristianEliteFlagellant
-        | UnitKind::ChristianDivineJudge
-        | UnitKind::MuslimFanatic
-        | UnitKind::MuslimFlagellant
-        | UnitKind::MuslimEliteFlagellant
-        | UnitKind::MuslimDivineJudge => {
+        "fanatic" | "flagellant" | "elite_flagellant" | "divine_judge" => {
             "Melee auto-attack with life leech and armor lock at zero."
         }
-        UnitKind::Commander => "Auras, formations, battle-support combat.",
         _ => "No active ability.",
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum QualitativeBand {
+    VeryLow,
+    Low,
+    Moderate,
+    High,
+    VeryHigh,
+}
+
+impl QualitativeBand {
+    const fn score(self) -> u8 {
+        match self {
+            Self::VeryLow => 1,
+            Self::Low => 2,
+            Self::Moderate => 3,
+            Self::High => 4,
+            Self::VeryHigh => 5,
+        }
+    }
+
+    const fn label(self) -> &'static str {
+        match self {
+            Self::VeryLow => "Very Low",
+            Self::Low => "Low",
+            Self::Moderate => "Moderate",
+            Self::High => "High",
+            Self::VeryHigh => "Very High",
+        }
+    }
+}
+
+fn qualitative_band_from_thresholds(value: f32, thresholds: [f32; 4]) -> QualitativeBand {
+    if value <= thresholds[0] {
+        QualitativeBand::VeryLow
+    } else if value <= thresholds[1] {
+        QualitativeBand::Low
+    } else if value <= thresholds[2] {
+        QualitativeBand::Moderate
+    } else if value <= thresholds[3] {
+        QualitativeBand::High
+    } else {
+        QualitativeBand::VeryHigh
+    }
+}
+
+fn qualitative_band_from_descending_thresholds(
+    value: f32,
+    thresholds: [f32; 4],
+) -> QualitativeBand {
+    if value >= thresholds[0] {
+        QualitativeBand::VeryLow
+    } else if value >= thresholds[1] {
+        QualitativeBand::Low
+    } else if value >= thresholds[2] {
+        QualitativeBand::Moderate
+    } else if value >= thresholds[3] {
+        QualitativeBand::High
+    } else {
+        QualitativeBand::VeryHigh
+    }
+}
+
+fn qualitative_band_meter(band: QualitativeBand) -> &'static str {
+    match band.score() {
+        1 => "|....",
+        2 => "||...",
+        3 => "|||..",
+        4 => "||||.",
+        _ => "|||||",
+    }
+}
+
+fn qualitative_stat_line(label: &str, band: QualitativeBand) -> String {
+    format!("{label} {} {}", qualitative_band_meter(band), band.label())
+}
+
+fn unit_trait_badges(kind: UnitKind) -> String {
+    let mut traits: Vec<&'static str> = Vec::new();
+    if kind.has_shielded_trait() {
+        traits.push("Shielded");
+    }
+    if traits.is_empty() {
+        "None".to_string()
+    } else {
+        traits.join(", ")
+    }
+}
+
+fn comma_join_or_none(values: &[&str]) -> String {
+    if values.is_empty() {
+        "None".to_string()
+    } else {
+        values.join(", ")
+    }
+}
+
+fn unit_counter_strengths(kind: UnitKind) -> String {
+    let mut strengths: Vec<&'static str> = Vec::new();
+    if kind.has_role_tag(crate::model::UnitRoleTag::Frontline) {
+        strengths.push("Durable frontline anchor");
+    }
+    if kind.has_shielded_trait() {
+        strengths.push("Block-capable");
+    }
+    if kind.has_role_tag(crate::model::UnitRoleTag::AntiCavalry) {
+        strengths.push("Strong vs cavalry");
+    }
+    if kind.has_role_tag(crate::model::UnitRoleTag::Cavalry) {
+        strengths.push("Charge pressure vs frontline");
+    }
+    if kind.has_role_tag(crate::model::UnitRoleTag::AntiArmor) {
+        strengths.push("Strong vs armored/heavy");
+    }
+    if kind.has_role_tag(crate::model::UnitRoleTag::Skirmisher) {
+        strengths.push("Backline/support disruption");
+    }
+    if kind.has_role_tag(crate::model::UnitRoleTag::Support) {
+        strengths.push("Sustain/utility support");
+    }
+    comma_join_or_none(strengths.as_slice())
+}
+
+fn unit_counter_weaknesses(kind: UnitKind) -> String {
+    let mut weaknesses: Vec<&'static str> = Vec::new();
+    if kind.has_role_tag(crate::model::UnitRoleTag::Cavalry) {
+        weaknesses.push("Vulnerable to anti-cavalry");
+    }
+    if kind.has_role_tag(crate::model::UnitRoleTag::AntiArmor) {
+        weaknesses.push("Lower value vs unarmored swarms");
+    }
+    if kind.is_archer_line() && !kind.has_role_tag(crate::model::UnitRoleTag::AntiCavalry) {
+        weaknesses.push("Punishable by cavalry dives");
+    }
+    if kind.has_role_tag(crate::model::UnitRoleTag::Support) {
+        weaknesses.push("Low direct frontline damage");
+    }
+    if kind.has_role_tag(crate::model::UnitRoleTag::Skirmisher)
+        && !kind.has_role_tag(crate::model::UnitRoleTag::Frontline)
+    {
+        weaknesses.push("Fragile in prolonged brawls");
+    }
+    comma_join_or_none(weaknesses.as_slice())
+}
+
+fn unit_counter_key_matchups(kind: UnitKind) -> String {
+    let mut notes: Vec<&'static str> = Vec::new();
+    if kind.has_role_tag(crate::model::UnitRoleTag::AntiCavalry) {
+        notes.push("Anti-cavalry > cavalry");
+    }
+    if kind.has_role_tag(crate::model::UnitRoleTag::Cavalry) {
+        notes.push("Cavalry > frontline, < anti-cavalry");
+    }
+    if kind.has_role_tag(crate::model::UnitRoleTag::AntiArmor) {
+        notes.push("Anti-armor > armored/heavy, < unarmored");
+    }
+    if kind.has_role_tag(crate::model::UnitRoleTag::Skirmisher) {
+        notes.push("Skirmisher > support");
+    }
+    if kind.has_role_tag(crate::model::UnitRoleTag::Support) {
+        notes.push("Support should avoid solo frontline trades");
+    }
+    comma_join_or_none(notes.as_slice())
 }
 
 fn unit_box_tooltip(kind: UnitKind, data: &GameData, swap_cost: Option<f32>) -> String {
@@ -3096,27 +3164,74 @@ fn unit_box_tooltip(kind: UnitKind, data: &GameData, swap_cost: Option<f32>) -> 
         String::new()
     };
     if let Some(stats) = friendly_stats_for_kind(data, kind) {
+        let durability = qualitative_stat_line(
+            "Durability",
+            qualitative_band_from_thresholds(stats.max_hp, [60.0, 100.0, 160.0, 240.0]),
+        );
+        let armor = qualitative_stat_line(
+            "Armor",
+            qualitative_band_from_thresholds(stats.armor, [1.0, 3.0, 6.0, 10.0]),
+        );
+        let damage = qualitative_stat_line(
+            "Damage",
+            qualitative_band_from_thresholds(stats.damage, [4.0, 8.0, 14.0, 22.0]),
+        );
+        let attack_tempo = qualitative_stat_line(
+            "Attack Tempo",
+            qualitative_band_from_descending_thresholds(
+                stats.attack_cooldown_secs,
+                [2.0, 1.5, 1.0, 0.6],
+            ),
+        );
+        let range = qualitative_stat_line(
+            "Range",
+            qualitative_band_from_thresholds(stats.attack_range, [35.0, 55.0, 85.0, 120.0]),
+        );
+        let move_speed = qualitative_stat_line(
+            "Move Speed",
+            qualitative_band_from_thresholds(stats.move_speed, [70.0, 100.0, 130.0, 170.0]),
+        );
+        let morale = qualitative_stat_line(
+            "Morale",
+            qualitative_band_from_thresholds(stats.morale, [55.0, 75.0, 95.0, 120.0]),
+        );
+        let traits = unit_trait_badges(kind);
+        let strengths = unit_counter_strengths(kind);
+        let weaknesses = unit_counter_weaknesses(kind);
+        let matchups = unit_counter_key_matchups(kind);
         format!(
-            "{}\nType: {}\nDescription: {}\nStats: HP {:.0}, Armor {:.1}, Damage {:.1}, AS {:.2}s, Range {:.1}, Move {:.1}, Morale {:.0}\nAbilities: {}{}",
+            "{}\nType: {}\nDescription: {}\nStats:\n- {}\n- {}\n- {}\n- {}\n- {}\n- {}\n- {}\nTraits: {}\nStrengths: {}\nWeaknesses: {}\nKey Matchups: {}\nAbilities: {}{}",
             unit_kind_label(kind),
             unit_role_label(kind),
             unit_description(kind),
-            stats.max_hp,
-            stats.armor,
-            stats.damage,
-            stats.attack_cooldown_secs,
-            stats.attack_range,
-            stats.move_speed,
-            stats.morale,
+            durability,
+            armor,
+            damage,
+            attack_tempo,
+            range,
+            move_speed,
+            morale,
+            traits,
+            strengths,
+            weaknesses,
+            matchups,
             unit_abilities(kind),
             swap_hint
         )
     } else {
+        let traits = unit_trait_badges(kind);
+        let strengths = unit_counter_strengths(kind);
+        let weaknesses = unit_counter_weaknesses(kind);
+        let matchups = unit_counter_key_matchups(kind);
         format!(
-            "{}\nType: {}\nDescription: {}\nStats: N/A\nAbilities: {}{}",
+            "{}\nType: {}\nDescription: {}\nStats: N/A\nTraits: {}\nStrengths: {}\nWeaknesses: {}\nKey Matchups: {}\nAbilities: {}{}",
             unit_kind_label(kind),
             unit_role_label(kind),
             unit_description(kind),
+            traits,
+            strengths,
+            weaknesses,
+            matchups,
             unit_abilities(kind),
             swap_hint
         )
@@ -3154,6 +3269,8 @@ fn tier_placeholder_tooltip(source_kind: UnitKind, tier: u8) -> String {
 }
 
 fn hero_recruit_disabled_reason(
+    data: &GameData,
+    player_faction: PlayerFaction,
     hero_unlocked: bool,
     hear_the_call_tokens: u32,
     current_gold: f32,
@@ -3161,10 +3278,16 @@ fn hero_recruit_disabled_reason(
 ) -> Option<String> {
     if !hero_unlocked {
         Some("Requires wave 60 boss unlock".to_string())
+    } else if data
+        .heroes
+        .entries_for_faction_and_subtype(player_faction, subtype.config_id())
+        .is_none_or(|entries| entries.is_empty())
+    {
+        Some("No hero pool configured".to_string())
     } else if hear_the_call_tokens == 0 {
         Some("Requires Hear the Call".to_string())
     } else {
-        let gold_cost = hero_recruit_gold_cost_for_subtype(subtype);
+        let gold_cost = hero_recruit_gold_cost_for_subtype_with_data(data, subtype);
         if current_gold + 0.001 < gold_cost {
             Some(format!("Requires {:.1} gold", gold_cost))
         } else {
@@ -3173,8 +3296,8 @@ fn hero_recruit_disabled_reason(
     }
 }
 
-fn hero_recruit_cost_text(subtype: HeroRecruitSubtype) -> String {
-    let gold_cost = hero_recruit_gold_cost_for_subtype(subtype);
+fn hero_recruit_cost_text(data: &GameData, subtype: HeroRecruitSubtype) -> String {
+    let gold_cost = hero_recruit_gold_cost_for_subtype_with_data(data, subtype);
     if gold_cost <= 0.0 {
         "1 Hear the Call token".to_string()
     } else {
@@ -3201,12 +3324,10 @@ const HERO_SUBTYPES_SUPPORT: [HeroRecruitSubtype; 2] = [
 ];
 
 fn hero_recruit_subtypes_for_source(source_kind: UnitKind) -> &'static [HeroRecruitSubtype] {
-    match source_kind {
-        UnitKind::ChristianPeasantInfantry | UnitKind::MuslimPeasantInfantry => {
-            &HERO_SUBTYPES_INFANTRY_AND_CAVALRY
-        }
-        UnitKind::ChristianPeasantArcher | UnitKind::MuslimPeasantArcher => &HERO_SUBTYPES_RANGED,
-        UnitKind::ChristianPeasantPriest | UnitKind::MuslimPeasantPriest => &HERO_SUBTYPES_SUPPORT,
+    match source_kind.unit_id() {
+        "peasant_infantry" => &HERO_SUBTYPES_INFANTRY_AND_CAVALRY,
+        "peasant_archer" => &HERO_SUBTYPES_RANGED,
+        "peasant_priest" => &HERO_SUBTYPES_SUPPORT,
         _ => &[],
     }
 }
@@ -3226,21 +3347,80 @@ fn hero_recruit_subtype_label(subtype: HeroRecruitSubtype) -> &'static str {
 }
 
 fn hero_recruit_tooltip(
+    data: &GameData,
+    player_faction: PlayerFaction,
     source_kind: UnitKind,
     subtype: HeroRecruitSubtype,
     hero_unlocked: bool,
     hear_the_call_tokens: u32,
     current_gold: f32,
 ) -> String {
-    let requirement_text =
-        hero_recruit_disabled_reason(hero_unlocked, hear_the_call_tokens, current_gold, subtype)
-            .unwrap_or_else(|| "Ready to recruit".to_string());
+    let subtype_id = subtype.config_id();
+    let requirement_text = hero_recruit_disabled_reason(
+        data,
+        player_faction,
+        hero_unlocked,
+        hear_the_call_tokens,
+        current_gold,
+        subtype,
+    )
+    .unwrap_or_else(|| "Ready to recruit".to_string());
+    let subtype_description = data
+        .heroes
+        .subtype_for_id(subtype_id)
+        .map(|subtype_cfg| subtype_cfg.description.as_str())
+        .unwrap_or("Hero recruit subtype configuration missing.");
+    let entries = data
+        .heroes
+        .entries_for_faction_and_subtype(player_faction, subtype_id)
+        .unwrap_or_default();
+    let pool_preview = if entries.is_empty() {
+        "N/A".to_string()
+    } else {
+        entries
+            .iter()
+            .take(3)
+            .map(|entry| entry.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let ability_preview = entries
+        .first()
+        .map(|entry| {
+            if entry.abilities.is_empty() {
+                "N/A".to_string()
+            } else {
+                entry.abilities.join(", ")
+            }
+        })
+        .unwrap_or_else(|| "N/A".to_string());
+    let stat_notes_preview = entries
+        .first()
+        .map(|entry| {
+            if entry.stat_notes.is_empty() {
+                "N/A".to_string()
+            } else {
+                entry.stat_notes.join(", ")
+            }
+        })
+        .unwrap_or_else(|| "N/A".to_string());
+    let subtype_strengths = comma_join_or_none(hero_subtype_strengths(subtype));
+    let subtype_weaknesses = comma_join_or_none(hero_subtype_weaknesses(subtype));
+    let subtype_matchups = comma_join_or_none(hero_subtype_key_matchups(subtype));
     format!(
-        "{} Hero\nType: Hero Recruit\nSubtype: {}\nDescription: Recruit hero placeholder from selected subtype.\nRequirements: {}\nCost: {}\nHear the Call Tokens: {}\nCurrent Gold: {:.1}",
+        "{} Hero\nType: Hero Recruit\nSubtype: {}\nDescription: {}\nPool Size: {}\nPool Preview: {}\nAbilities: {}\nStat Notes: {}\nStrengths: {}\nWeaknesses: {}\nKey Matchups: {}\nRequirements: {}\nCost: {}\nHear the Call Tokens: {}\nCurrent Gold: {:.1}",
         unit_kind_label(source_kind),
         hero_recruit_subtype_label(subtype),
+        subtype_description,
+        entries.len(),
+        pool_preview,
+        ability_preview,
+        stat_notes_preview,
+        subtype_strengths,
+        subtype_weaknesses,
+        subtype_matchups,
         requirement_text,
-        hero_recruit_cost_text(subtype),
+        hero_recruit_cost_text(data, subtype),
         hear_the_call_tokens,
         current_gold
     )
@@ -3301,9 +3481,7 @@ fn build_stats_panel_data(
     let passive_level_percent = level.saturating_sub(1) as f32;
     let damage_upgrade_percent = (buffs.damage_multiplier - 1.0) * 100.0;
     let attack_speed_upgrade_percent = (buffs.attack_speed_multiplier - 1.0) * 100.0;
-    let crit_chance_percent = buffs.crit_chance_bonus * 100.0;
-    let crit_damage_bonus_percent =
-        (buffs.crit_damage_multiplier - BASE_CRIT_DAMAGE_MULTIPLIER) * 100.0;
+    let luck_bonus_percent = luck_percent_from_buffs(buffs);
     let authority_resist_percent = buffs.authority_friendly_loss_resistance * 100.0;
 
     let mut active_buffs = vec![format!("Formation: {}", active_formation.display_name())];
@@ -3373,14 +3551,9 @@ fn build_stats_panel_data(
                 format_percent_bonus((buffs.gold_gain_multiplier - 1.0) * 100.0),
             ),
             stats_bonus_row(
-                "Crit Chance",
-                crit_chance_percent,
-                format_percent_bonus(crit_chance_percent),
-            ),
-            stats_bonus_row(
-                "Crit Damage",
-                crit_damage_bonus_percent,
-                format_percent_bonus(crit_damage_bonus_percent),
+                "Luck",
+                luck_bonus_percent,
+                format_percent_bonus(luck_bonus_percent),
             ),
             stats_bonus_row(
                 "Armor",
@@ -3701,11 +3874,19 @@ fn build_skill_book_panel_data(
     data: &GameData,
 ) -> SkillBookPanelData {
     let mut formations: Vec<SkillBookPanelEntry> = Vec::new();
+    let mut listed_formations: Vec<ActiveFormation> = Vec::new();
     for slot in &skillbar.slots {
         let SkillBarSkillKind::Formation(formation) = slot.kind;
+        if !listed_formations.contains(&formation) {
+            listed_formations.push(formation);
+        }
         let icon = match formation {
             ActiveFormation::Square => UpgradeCardIcon::FormationSquare,
+            ActiveFormation::Circle => UpgradeCardIcon::FormationSquare,
+            ActiveFormation::Skean => UpgradeCardIcon::FormationDiamond,
             ActiveFormation::Diamond => UpgradeCardIcon::FormationDiamond,
+            ActiveFormation::ShieldWall => UpgradeCardIcon::FormationSquare,
+            ActiveFormation::Loose => UpgradeCardIcon::FormationSquare,
         };
         formations.push(SkillBookPanelEntry {
             title: slot.label.clone(),
@@ -3713,6 +3894,33 @@ fn build_skill_book_panel_data(
             icon,
             stacks: 1,
             active: Some(formation == active_formation),
+        });
+    }
+    for upgrade in data
+        .upgrades
+        .upgrades
+        .iter()
+        .filter(|entry| entry.kind == "unlock_formation")
+    {
+        let Some(formation_id) = upgrade.formation_id.as_deref() else {
+            continue;
+        };
+        let Some(formation) = ActiveFormation::from_id(formation_id) else {
+            continue;
+        };
+        if listed_formations.contains(&formation) {
+            continue;
+        }
+        listed_formations.push(formation);
+        formations.push(SkillBookPanelEntry {
+            title: format!("{} (Locked)", upgrade_display_title(upgrade)),
+            description: format!(
+                "Locked - appears only in Major level-up rewards. {}",
+                upgrade_display_description(upgrade)
+            ),
+            icon: upgrade_card_icon(upgrade),
+            stacks: 0,
+            active: Some(false),
         });
     }
 
@@ -3778,15 +3986,60 @@ fn build_skill_book_panel_data(
 fn formation_skill_description(formation: ActiveFormation, data: &GameData) -> String {
     let config = match formation {
         ActiveFormation::Square => &data.formations.square,
+        ActiveFormation::Circle => &data.formations.circle,
+        ActiveFormation::Skean => &data.formations.skean,
         ActiveFormation::Diamond => &data.formations.diamond,
+        ActiveFormation::ShieldWall => &data.formations.shield_wall,
+        ActiveFormation::Loose => &data.formations.loose,
     };
+    let (strengths, weaknesses, use_case) = formation_tradeoff_text(formation);
     format!(
-        "Offense x{:.2}, Moving offense x{:.2}, Defense x{:.2}, Move x{:.2}.",
+        "Offense x{:.2}, Moving offense x{:.2}, Defense x{:.2}, Move x{:.2}. Strengths: {} Weaknesses: {} Use case: {}",
         config.offense_multiplier,
         config.offense_while_moving_multiplier,
         config.defense_multiplier,
         config.move_speed_multiplier,
+        strengths,
+        weaknesses,
+        use_case,
     )
+}
+
+fn formation_tradeoff_text(
+    formation: ActiveFormation,
+) -> (&'static str, &'static str, &'static str) {
+    match formation {
+        ActiveFormation::Square => (
+            "Balanced shell with reliable lane discipline.",
+            "No specialization spikes.",
+            "Default all-round profile.",
+        ),
+        ActiveFormation::Circle => (
+            "High survivability with enclosed defensive shell.",
+            "Lower pressure and slower repositioning.",
+            "Hold ground against mixed pressure.",
+        ),
+        ActiveFormation::Skean => (
+            "Fast relocation and high moving-offense pressure.",
+            "Lower armor and punishable if pinned.",
+            "Aggressive reposition and chase windows.",
+        ),
+        ActiveFormation::Diamond => (
+            "High momentum with anti-entry protection.",
+            "Less forgiving than square if isolated.",
+            "Push through lanes while moving.",
+        ),
+        ActiveFormation::ShieldWall => (
+            "Hard anti-entry, shielded block bonus, melee reflect.",
+            "Slow movement and weaker moving offense.",
+            "Absorb melee swarms and force attrition.",
+        ),
+        ActiveFormation::Loose => (
+            "Wide spacing, better spread against clustered pressure.",
+            "No interior occupancy protection.",
+            "Ranged-heavy kiting and map-control play.",
+        ),
+    }
 }
 
 fn skill_book_category(kind: &str) -> &'static str {
@@ -4738,6 +4991,7 @@ fn build_unit_upgrade_panel_data(
         allowed_max_level: economy.allowed_max_level,
         locked_levels: economy.locked_levels,
         unlocked_tier: unlock_state.unlocked_tier,
+        player_faction,
         hero_unlocked: unlock_state.hero_tier_unlocked,
         selected_source,
         roster_entries,
@@ -5839,6 +6093,8 @@ fn spawn_unit_upgrade_modal_sections(
                                     for subtype in hero_subtypes {
                                         let subtype = *subtype;
                                         let hero_disabled_reason = hero_recruit_disabled_reason(
+                                            data,
+                                            panel_data.player_faction,
                                             panel_data.hero_unlocked,
                                             panel_data.hear_the_call_tokens,
                                             panel_data.current_gold,
@@ -5872,6 +6128,8 @@ fn spawn_unit_upgrade_modal_sections(
                                             UnitUpgradeHeroRecruitButton { subtype },
                                             UnitUpgradeTooltipTarget {
                                                 tooltip: hero_recruit_tooltip(
+                                                    data,
+                                                    panel_data.player_faction,
                                                     entry.kind,
                                                     subtype,
                                                     panel_data.hero_unlocked,
@@ -6216,8 +6474,20 @@ fn skillbar_icon_handle(kind: SkillBarSkillKind, art: &crate::visuals::ArtAssets
         SkillBarSkillKind::Formation(crate::formation::ActiveFormation::Square) => {
             art.formation_square_icon.clone()
         }
+        SkillBarSkillKind::Formation(crate::formation::ActiveFormation::Circle) => {
+            art.formation_square_icon.clone()
+        }
+        SkillBarSkillKind::Formation(crate::formation::ActiveFormation::Skean) => {
+            art.formation_diamond_icon.clone()
+        }
         SkillBarSkillKind::Formation(crate::formation::ActiveFormation::Diamond) => {
             art.formation_diamond_icon.clone()
+        }
+        SkillBarSkillKind::Formation(crate::formation::ActiveFormation::ShieldWall) => {
+            art.formation_square_icon.clone()
+        }
+        SkillBarSkillKind::Formation(crate::formation::ActiveFormation::Loose) => {
+            art.formation_square_icon.clone()
         }
     }
 }
@@ -7256,6 +7526,7 @@ fn handle_level_up_buttons(
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn handle_unit_upgrade_buttons(
     modal_state: Res<RunModalState>,
+    data: Res<GameData>,
     setup_selection: Option<Res<MatchSetupSelection>>,
     mouse_buttons: Option<Res<ButtonInput<MouseButton>>>,
     mut source_buttons: Query<
@@ -7636,6 +7907,8 @@ fn handle_unit_upgrade_buttons(
         &mut hero_recruit_buttons
     {
         let disabled_reason = hero_recruit_disabled_reason(
+            &data,
+            player_faction,
             runtime.unlock_state.hero_tier_unlocked,
             runtime.progression.hear_the_call_tokens,
             runtime.progression.gold,
@@ -8657,6 +8930,167 @@ fn update_in_run_hud(
     }
 }
 
+fn reset_stat_band_feedback_on_run_start(
+    mut start_events: EventReader<StartRunEvent>,
+    mut runtime: ResMut<StatBandFeedbackRuntime>,
+) {
+    if start_events.is_empty() {
+        return;
+    }
+    for _ in start_events.read() {}
+    runtime.snapshot = None;
+}
+
+fn emit_stat_band_threshold_events(
+    buffs: Res<crate::model::GlobalBuffs>,
+    inventory: Res<InventoryState>,
+    banner_state: Option<Res<BannerState>>,
+    mut runtime: ResMut<StatBandFeedbackRuntime>,
+    mut events: EventWriter<StatBandThresholdCrossedEvent>,
+) {
+    let banner_item_active = !banner_state
+        .as_deref()
+        .map(|state| state.is_dropped)
+        .unwrap_or(false);
+    let current = current_stat_band_snapshot(&buffs, &inventory, banner_item_active);
+    let Some(previous) = runtime.snapshot else {
+        runtime.snapshot = Some(current);
+        return;
+    };
+    for event in stat_band_transitions(previous, current) {
+        events.send(event);
+    }
+    runtime.snapshot = Some(current);
+}
+
+fn current_stat_band_snapshot(
+    buffs: &crate::model::GlobalBuffs,
+    inventory: &InventoryState,
+    banner_item_active: bool,
+) -> StatBandSnapshot {
+    let commander_melee = commander_armywide_bonuses_with_banner_state(
+        inventory,
+        UnitCombatRole::Melee,
+        banner_item_active,
+    );
+    let commander_ranged = commander_armywide_bonuses_with_banner_state(
+        inventory,
+        UnitCombatRole::Ranged,
+        banner_item_active,
+    );
+    let commander_support = commander_armywide_bonuses_with_banner_state(
+        inventory,
+        UnitCombatRole::Support,
+        banner_item_active,
+    );
+
+    let role_max = |melee: f32, ranged: f32, support: f32| melee.max(ranged).max(support);
+    let damage_bonus_percent = ((buffs.damage_multiplier - 1.0) * 100.0
+        + role_max(
+            commander_melee.melee_damage_multiplier * 100.0,
+            commander_ranged.ranged_damage_multiplier * 100.0,
+            commander_support.melee_damage_multiplier * 100.0,
+        ))
+    .max(0.0);
+    let armor_bonus = (buffs.armor_bonus
+        + role_max(
+            commander_melee.armor_bonus,
+            commander_ranged.armor_bonus,
+            commander_support.armor_bonus,
+        ))
+    .max(0.0);
+    let move_speed_bonus = (buffs.move_speed_bonus
+        + role_max(
+            commander_melee.move_speed_bonus,
+            commander_ranged.move_speed_bonus,
+            commander_support.move_speed_bonus,
+        ))
+    .max(0.0);
+    let luck_bonus_percent = luck_percent_from_buffs(buffs).max(0.0);
+
+    StatBandSnapshot {
+        damage_bonus: qualitative_band_from_thresholds(
+            damage_bonus_percent,
+            DAMAGE_BONUS_BAND_THRESHOLDS,
+        ),
+        armor_bonus: qualitative_band_from_thresholds(armor_bonus, ARMOR_BONUS_BAND_THRESHOLDS),
+        move_speed_bonus: qualitative_band_from_thresholds(
+            move_speed_bonus,
+            MOVE_SPEED_BONUS_BAND_THRESHOLDS,
+        ),
+        luck_bonus: qualitative_band_from_thresholds(
+            luck_bonus_percent,
+            LUCK_BONUS_BAND_THRESHOLDS,
+        ),
+    }
+}
+
+fn luck_percent_from_buffs(buffs: &crate::model::GlobalBuffs) -> f32 {
+    (buffs.luck_bonus * 100.0).max(0.0)
+}
+
+fn stat_band_transitions(
+    previous: StatBandSnapshot,
+    current: StatBandSnapshot,
+) -> Vec<StatBandThresholdCrossedEvent> {
+    let mut events = Vec::new();
+    maybe_push_band_transition(
+        &mut events,
+        "Damage",
+        previous.damage_bonus,
+        current.damage_bonus,
+    );
+    maybe_push_band_transition(
+        &mut events,
+        "Armor",
+        previous.armor_bonus,
+        current.armor_bonus,
+    );
+    maybe_push_band_transition(
+        &mut events,
+        "Move Speed",
+        previous.move_speed_bonus,
+        current.move_speed_bonus,
+    );
+    maybe_push_band_transition(&mut events, "Luck", previous.luck_bonus, current.luck_bonus);
+    events
+}
+
+fn maybe_push_band_transition(
+    events: &mut Vec<StatBandThresholdCrossedEvent>,
+    stat_label: &'static str,
+    previous: QualitativeBand,
+    current: QualitativeBand,
+) {
+    if previous == current {
+        return;
+    }
+    events.push(StatBandThresholdCrossedEvent {
+        stat_label,
+        from_band: previous,
+        to_band: current,
+    });
+}
+
+fn consume_stat_band_threshold_events(
+    mut events: EventReader<StatBandThresholdCrossedEvent>,
+    mut toast: ResMut<MoraleToastRuntime>,
+) {
+    for event in events.read() {
+        toast.text = stat_band_threshold_message(event);
+        toast.remaining_secs = 2.6;
+    }
+}
+
+fn stat_band_threshold_message(event: &StatBandThresholdCrossedEvent) -> String {
+    format!(
+        "{}: {} -> {}",
+        event.stat_label,
+        event.from_band.label(),
+        event.to_band.label()
+    )
+}
+
 fn consume_morale_threshold_events(
     mut events: EventReader<MoraleThresholdCrossedEvent>,
     mut toast: ResMut<MoraleToastRuntime>,
@@ -8727,6 +9161,7 @@ fn update_rescue_progress_hud(
     rescue_bars_root: Query<Entity, With<RescueProgressBarsRoot>>,
     rescuables: Query<&RescueProgress, With<RescuableUnit>>,
     chests: Query<&EquipmentChestDrop>,
+    hear_the_call_chests: Query<&HearTheCallDrop>,
 ) {
     let Ok(root_entity) = rescue_bars_root.get_single() else {
         return;
@@ -8757,6 +9192,12 @@ fn update_rescue_progress_hud(
             .iter()
             .filter_map(chest_pickup_progress_ratio)
             .map(|ratio| (ratio, Color::srgb(0.86, 0.52, 0.22))),
+    );
+    bars.extend(
+        hear_the_call_chests
+            .iter()
+            .filter_map(hear_the_call_pickup_progress_ratio)
+            .map(|ratio| (ratio, Color::srgb(0.96, 0.78, 0.26))),
     );
     bars.extend(
         rescuables
@@ -8812,6 +9253,7 @@ fn update_minimap_hud(
     gold_packs: Query<&Transform, With<GoldPack>>,
     magnets: Query<(&Transform, &MagnetPickup)>,
     chests: Query<&Transform, With<EquipmentChestDrop>>,
+    hear_the_call_chests: Query<&Transform, With<HearTheCallDrop>>,
 ) {
     runtime.timer.tick(time.delta());
     if !runtime.timer.just_finished() {
@@ -8836,6 +9278,7 @@ fn update_minimap_hud(
         let mut gold_count = 0usize;
         let mut magnet_count = 0usize;
         let mut chest_count = 0usize;
+        let mut hear_the_call_count = 0usize;
         for (unit, transform) in &units {
             if commander_seen
                 && friendly_count >= MINIMAP_MAX_FRIENDLY_BLIPS
@@ -8923,6 +9366,17 @@ fn update_minimap_hud(
             };
             chest_count += 1;
             spawn_minimap_icon(parent, draw_pos, 9.0, art.chest_drop_closed.clone());
+        }
+        for transform in &hear_the_call_chests {
+            if hear_the_call_count >= MINIMAP_MAX_HEAR_THE_CALL_BLIPS {
+                break;
+            }
+            let position = transform.translation.truncate();
+            let Some(draw_pos) = world_to_minimap_pos(position, *bounds, MINIMAP_SIZE) else {
+                continue;
+            };
+            hear_the_call_count += 1;
+            spawn_minimap_dot(parent, draw_pos, 3.2, MINIMAP_HEAR_THE_CALL_COLOR);
         }
 
         if banner_state.is_dropped
@@ -9172,9 +9626,6 @@ fn spawn_floating_damage_text(
     let mut active_count = active_texts.iter().len();
     let mut spawned_this_frame = 0usize;
     for event in damage_text_events.read() {
-        if event.amount <= 0.0 {
-            continue;
-        }
         if active_count >= FLOATING_DAMAGE_TEXT_MAX_ACTIVE {
             continue;
         }
@@ -9263,24 +9714,17 @@ fn floating_damage_text_spawn_data(
     let row = ((spawn_index / X_JITTER_LANES.len()) % 3) as f32;
     let x_offset = X_JITTER_LANES[lane_index];
     let y_offset = FLOATING_DAMAGE_TEXT_START_Y_OFFSET + row * 4.0;
-    let (text, base_rgb, font_size) = if event.execute {
-        (
-            "EXECUTE".to_string(),
-            Vec3::new(0.98, 0.28, 0.18),
-            FLOATING_DAMAGE_TEXT_FONT_SIZE,
-        )
-    } else if event.critical {
-        (
-            format!("{}!", format_damage_text_amount(event.amount)),
-            Vec3::new(1.0, 0.12, 0.94),
-            FLOATING_DAMAGE_TEXT_CRIT_FONT_SIZE,
-        )
-    } else {
-        (
-            format_damage_text_amount(event.amount),
+    let (text, base_rgb, font_size) = match event.kind {
+        DamageTextKind::Blocked => (
+            "BLOCK!".to_string(),
             floating_damage_text_team_rgb(event.target_team),
             FLOATING_DAMAGE_TEXT_FONT_SIZE,
-        )
+        ),
+        DamageTextKind::CriticalHit => (
+            "CRITICAL HIT!".to_string(),
+            Vec3::new(1.0, 0.12, 0.94),
+            FLOATING_DAMAGE_TEXT_CRIT_FONT_SIZE,
+        ),
     };
     FloatingDamageTextSpawnData {
         translation: Vec3::new(
@@ -9292,11 +9736,6 @@ fn floating_damage_text_spawn_data(
         base_rgb,
         font_size,
     }
-}
-
-fn format_damage_text_amount(amount: f32) -> String {
-    let rounded = amount.max(1.0).round();
-    format!("{}", rounded as u32)
 }
 
 fn floating_damage_text_team_rgb(team: Team) -> Vec3 {
@@ -9327,15 +9766,26 @@ fn health_bar_team_color(team: Team) -> Color {
 }
 
 pub fn health_bar_fill_width(current: f32, max: f32, full_width: f32) -> f32 {
-    if max <= 0.0 {
+    health_bar_segment_fill_ratio(current, max, HEALTH_BAR_SEGMENT_COUNT) * full_width
+}
+
+fn health_bar_segment_fill_ratio(current: f32, max: f32, segment_count: u32) -> f32 {
+    if max <= 0.0 || segment_count == 0 {
         return 0.0;
     }
-    (current / max).clamp(0.0, 1.0) * full_width
+    let clamped_ratio = (current / max).clamp(0.0, 1.0);
+    if clamped_ratio <= 0.0 {
+        return 0.0;
+    }
+    let segments = segment_count as f32;
+    (clamped_ratio * segments).ceil() / segments
 }
 
 #[cfg(test)]
 mod tests {
     use std::path::Path;
+
+    use bevy::prelude::{App, Events, MinimalPlugins, Update};
 
     use super::HeroRecruitSubtype;
     use crate::archive::{ArchiveCategory, ArchiveDataset, ArchiveEntry};
@@ -9349,8 +9799,8 @@ mod tests {
     };
     use crate::map::MapBounds;
     use crate::model::{
-        DamageTextEvent, FrameRateCap, GameDifficulty, GlobalBuffs, PlayerFaction, RunModalAction,
-        RunModalScreen, Team, UnitKind,
+        DamageTextEvent, DamageTextKind, FrameRateCap, GameDifficulty, GlobalBuffs, PlayerFaction,
+        RunModalAction, RunModalScreen, Team, UnitKind,
     };
     use crate::ui::{
         FLOATING_DAMAGE_TEXT_CRIT_FONT_SIZE, FLOATING_DAMAGE_TEXT_FONT_SIZE, HudSnapshot,
@@ -9401,19 +9851,21 @@ mod tests {
         assert_eq!(health_bar_fill_width(100.0, 100.0, 22.0), 22.0);
         assert_eq!(health_bar_fill_width(150.0, 100.0, 22.0), 22.0);
         assert_eq!(health_bar_fill_width(-10.0, 100.0, 22.0), 0.0);
+        assert_eq!(health_bar_fill_width(99.0, 100.0, 22.0), 22.0);
+        assert!((health_bar_fill_width(80.0, 100.0, 22.0) - 17.6).abs() < 0.001);
+        assert!((health_bar_fill_width(79.0, 100.0, 22.0) - 17.6).abs() < 0.001);
+        assert!((health_bar_fill_width(60.0, 100.0, 22.0) - 13.2).abs() < 0.001);
     }
 
     #[test]
-    fn damage_text_spawn_data_maps_event_payload() {
+    fn damage_text_spawn_data_uses_block_feedback_style() {
         let event = DamageTextEvent {
             world_position: bevy::prelude::Vec2::new(100.0, -50.0),
             target_team: Team::Enemy,
-            amount: 12.6,
-            execute: false,
-            critical: false,
+            kind: DamageTextKind::Blocked,
         };
         let data = floating_damage_text_spawn_data(&event, 0);
-        assert_eq!(data.text, "13");
+        assert_eq!(data.text, "BLOCK!");
         assert!((data.translation.x - 90.0).abs() < 0.001);
         assert!((data.translation.y - -26.0).abs() < 0.001);
         assert!((data.translation.z - 60.0).abs() < 0.001);
@@ -9426,33 +9878,14 @@ mod tests {
         let event = DamageTextEvent {
             world_position: bevy::prelude::Vec2::new(0.0, 0.0),
             target_team: Team::Enemy,
-            amount: 74.6,
-            execute: false,
-            critical: true,
+            kind: DamageTextKind::CriticalHit,
         };
         let data = floating_damage_text_spawn_data(&event, 1);
-        assert_eq!(data.text, "75!");
+        assert_eq!(data.text, "CRITICAL HIT!");
         assert!((data.base_rgb.x - 1.0).abs() < 0.001);
         assert!((data.base_rgb.y - 0.12).abs() < 0.001);
         assert!((data.base_rgb.z - 0.94).abs() < 0.001);
         assert!((data.font_size - FLOATING_DAMAGE_TEXT_CRIT_FONT_SIZE).abs() < 0.001);
-    }
-
-    #[test]
-    fn damage_text_spawn_data_uses_execute_feedback_style() {
-        let event = DamageTextEvent {
-            world_position: bevy::prelude::Vec2::new(0.0, 0.0),
-            target_team: Team::Enemy,
-            amount: 999.0,
-            execute: true,
-            critical: false,
-        };
-        let data = floating_damage_text_spawn_data(&event, 2);
-        assert_eq!(data.text, "EXECUTE");
-        assert!((data.base_rgb.x - 0.98).abs() < 0.001);
-        assert!((data.base_rgb.y - 0.28).abs() < 0.001);
-        assert!((data.base_rgb.z - 0.18).abs() < 0.001);
-        assert!((data.font_size - FLOATING_DAMAGE_TEXT_FONT_SIZE).abs() < 0.001);
     }
 
     #[test]
@@ -9462,6 +9895,88 @@ mod tests {
         assert_eq!(floating_damage_text_alpha(2.0, 1.0), 0.0);
         assert!(!floating_damage_text_is_expired(0.69, 0.7));
         assert!(floating_damage_text_is_expired(0.7, 0.7));
+    }
+
+    #[test]
+    fn floating_damage_text_spawn_is_bounded_per_frame() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.add_event::<DamageTextEvent>();
+        app.add_systems(Update, super::spawn_floating_damage_text);
+
+        let event_count = super::FLOATING_DAMAGE_TEXT_MAX_SPAWNS_PER_FRAME + 40;
+        {
+            let mut events = app.world_mut().resource_mut::<Events<DamageTextEvent>>();
+            for index in 0..event_count {
+                events.send(DamageTextEvent {
+                    world_position: bevy::prelude::Vec2::new(index as f32, 0.0),
+                    target_team: Team::Enemy,
+                    kind: if index % 2 == 0 {
+                        DamageTextKind::Blocked
+                    } else {
+                        DamageTextKind::CriticalHit
+                    },
+                });
+            }
+        }
+
+        app.update();
+
+        let spawned = app
+            .world()
+            .iter_entities()
+            .filter(|entity| entity.contains::<super::FloatingDamageText>())
+            .count();
+        assert_eq!(spawned, super::FLOATING_DAMAGE_TEXT_MAX_SPAWNS_PER_FRAME);
+    }
+
+    #[test]
+    fn floating_damage_text_spawn_is_bounded_by_active_cap() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.add_event::<DamageTextEvent>();
+        app.add_systems(Update, super::spawn_floating_damage_text);
+
+        for _ in 0..(super::FLOATING_DAMAGE_TEXT_MAX_ACTIVE - 1) {
+            app.world_mut().spawn(super::FloatingDamageText);
+        }
+
+        {
+            let mut events = app.world_mut().resource_mut::<Events<DamageTextEvent>>();
+            for _ in 0..20 {
+                events.send(DamageTextEvent {
+                    world_position: bevy::prelude::Vec2::ZERO,
+                    target_team: Team::Enemy,
+                    kind: DamageTextKind::Blocked,
+                });
+            }
+        }
+
+        app.update();
+
+        let active = app
+            .world()
+            .iter_entities()
+            .filter(|entity| entity.contains::<super::FloatingDamageText>())
+            .count();
+        assert_eq!(active, super::FLOATING_DAMAGE_TEXT_MAX_ACTIVE);
+    }
+
+    #[test]
+    fn segmented_health_fill_changes_only_when_thresholds_are_crossed() {
+        let full_width = 25.0;
+
+        let above_threshold_a = health_bar_fill_width(60.9, 100.0, full_width);
+        let above_threshold_b = health_bar_fill_width(60.1, 100.0, full_width);
+        let below_threshold = health_bar_fill_width(59.9, 100.0, full_width);
+        let recovered = health_bar_fill_width(60.2, 100.0, full_width);
+
+        assert!((above_threshold_a - 20.0).abs() < 0.001);
+        assert!((above_threshold_b - 20.0).abs() < 0.001);
+        assert!((below_threshold - 15.0).abs() < 0.001);
+        assert!((recovered - 20.0).abs() < 0.001);
+        assert!(below_threshold < above_threshold_b);
+        assert!((health_bar_fill_width(1.0, 100.0, full_width) - 5.0).abs() < 0.001);
     }
 
     #[test]
@@ -9623,8 +10138,11 @@ mod tests {
 
     #[test]
     fn hero_recruit_disabled_reason_matches_unlock_and_token_gates() {
+        let data = GameData::load_from_dir(Path::new("assets/data")).expect("load data");
         assert_eq!(
             super::hero_recruit_disabled_reason(
+                &data,
+                PlayerFaction::Christian,
                 false,
                 3,
                 1_000.0,
@@ -9634,6 +10152,8 @@ mod tests {
         );
         assert_eq!(
             super::hero_recruit_disabled_reason(
+                &data,
+                PlayerFaction::Christian,
                 true,
                 0,
                 1_000.0,
@@ -9643,6 +10163,8 @@ mod tests {
         );
         assert_eq!(
             super::hero_recruit_disabled_reason(
+                &data,
+                PlayerFaction::Christian,
                 true,
                 1,
                 0.0,
@@ -9650,11 +10172,16 @@ mod tests {
             ),
             Some(format!(
                 "Requires {:.1} gold",
-                super::hero_recruit_gold_cost_for_subtype(HeroRecruitSubtype::InfantrySwordShield)
+                super::hero_recruit_gold_cost_for_subtype_with_data(
+                    &data,
+                    HeroRecruitSubtype::InfantrySwordShield,
+                )
             ))
         );
         assert_eq!(
             super::hero_recruit_disabled_reason(
+                &data,
+                PlayerFaction::Christian,
                 true,
                 1,
                 1_000.0,
@@ -9689,6 +10216,22 @@ mod tests {
     }
 
     #[test]
+    fn hero_subtype_rows_are_faction_agnostic_for_same_source_unit_id() {
+        for unit_id in ["peasant_infantry", "peasant_archer", "peasant_priest"] {
+            let christian =
+                UnitKind::from_faction_and_unit_id(PlayerFaction::Christian, unit_id, false)
+                    .expect("christian source kind");
+            let muslim = UnitKind::from_faction_and_unit_id(PlayerFaction::Muslim, unit_id, false)
+                .expect("muslim source kind");
+            assert_eq!(
+                super::hero_recruit_subtypes_for_source(christian),
+                super::hero_recruit_subtypes_for_source(muslim),
+                "subtypes should match for unit_id={unit_id}"
+            );
+        }
+    }
+
+    #[test]
     fn unit_box_tooltip_contains_required_sections_for_infantry() {
         let data = GameData::load_from_dir(Path::new("assets/data")).expect("load data");
         let tooltip = unit_box_tooltip(UnitKind::ChristianPeasantInfantry, &data, Some(12.0));
@@ -9696,7 +10239,123 @@ mod tests {
         assert!(tooltip.contains("Type:"));
         assert!(tooltip.contains("Description:"));
         assert!(tooltip.contains("Stats:"));
+        assert!(tooltip.contains("Durability"));
+        assert!(tooltip.contains("Attack Tempo"));
+        assert!(tooltip.contains("|||") || tooltip.contains("||||") || tooltip.contains("||"));
+        assert!(tooltip.contains("Traits:"));
+        assert!(tooltip.contains("Shielded"));
+        assert!(tooltip.contains("Strengths:"));
+        assert!(tooltip.contains("Weaknesses:"));
+        assert!(tooltip.contains("Key Matchups:"));
         assert!(tooltip.contains("Abilities:"));
+    }
+
+    #[test]
+    fn hero_recruit_tooltip_contains_counter_sections() {
+        let data = GameData::load_from_dir(Path::new("assets/data")).expect("load data");
+        let tooltip = super::hero_recruit_tooltip(
+            &data,
+            PlayerFaction::Christian,
+            UnitKind::ChristianPeasantArcher,
+            HeroRecruitSubtype::RangedJavelin,
+            true,
+            2,
+            1_000.0,
+        );
+        assert!(tooltip.contains("Strengths:"));
+        assert!(tooltip.contains("Weaknesses:"));
+        assert!(tooltip.contains("Key Matchups:"));
+        assert!(tooltip.contains("anti-armor") || tooltip.contains("armored/heavy"));
+    }
+
+    #[test]
+    fn qualitative_band_helpers_map_thresholds_and_meter() {
+        assert_eq!(
+            super::qualitative_band_from_thresholds(40.0, [50.0, 100.0, 150.0, 200.0]),
+            super::QualitativeBand::VeryLow
+        );
+        assert_eq!(
+            super::qualitative_band_from_thresholds(175.0, [50.0, 100.0, 150.0, 200.0]),
+            super::QualitativeBand::High
+        );
+        assert_eq!(
+            super::qualitative_band_from_descending_thresholds(0.5, [2.0, 1.5, 1.0, 0.6]),
+            super::QualitativeBand::VeryHigh
+        );
+        assert_eq!(
+            super::qualitative_band_meter(super::QualitativeBand::Moderate),
+            "|||.."
+        );
+    }
+
+    #[test]
+    fn unit_trait_badges_marks_only_shielded_units() {
+        assert_eq!(
+            super::unit_trait_badges(UnitKind::ChristianPeasantInfantry),
+            "Shielded"
+        );
+        assert_eq!(
+            super::unit_trait_badges(UnitKind::ChristianPeasantArcher),
+            "None"
+        );
+    }
+
+    #[test]
+    fn unit_metadata_texts_are_faction_agnostic_for_same_unit_id() {
+        let fixtures = ["spearman", "tracker", "divine_speaker", "divine_judge"];
+        for unit_id in fixtures {
+            let christian =
+                UnitKind::from_faction_and_unit_id(PlayerFaction::Christian, unit_id, false)
+                    .expect("christian unit should resolve");
+            let muslim = UnitKind::from_faction_and_unit_id(PlayerFaction::Muslim, unit_id, false)
+                .expect("muslim unit should resolve");
+
+            assert_eq!(
+                super::unit_role_label(christian),
+                super::unit_role_label(muslim)
+            );
+            assert_eq!(
+                super::unit_description(christian),
+                super::unit_description(muslim)
+            );
+            assert_eq!(
+                super::unit_abilities(christian),
+                super::unit_abilities(muslim)
+            );
+        }
+    }
+
+    #[test]
+    fn stat_band_transition_message_formats_expected_text() {
+        let event = super::StatBandThresholdCrossedEvent {
+            stat_label: "Damage",
+            from_band: super::QualitativeBand::Low,
+            to_band: super::QualitativeBand::Moderate,
+        };
+        assert_eq!(
+            super::stat_band_threshold_message(&event),
+            "Damage: Low -> Moderate"
+        );
+    }
+
+    #[test]
+    fn stat_band_transitions_emit_only_for_changed_stats() {
+        let previous = super::StatBandSnapshot {
+            damage_bonus: super::QualitativeBand::Low,
+            armor_bonus: super::QualitativeBand::Low,
+            move_speed_bonus: super::QualitativeBand::Low,
+            luck_bonus: super::QualitativeBand::Low,
+        };
+        let current = super::StatBandSnapshot {
+            damage_bonus: super::QualitativeBand::Moderate,
+            armor_bonus: super::QualitativeBand::Low,
+            move_speed_bonus: super::QualitativeBand::High,
+            luck_bonus: super::QualitativeBand::Low,
+        };
+        let events = super::stat_band_transitions(previous, current);
+        assert_eq!(events.len(), 2);
+        assert!(events.iter().any(|event| event.stat_label == "Damage"));
+        assert!(events.iter().any(|event| event.stat_label == "Move Speed"));
     }
 
     #[test]
@@ -9861,6 +10520,7 @@ mod tests {
             armor_bonus: 3.0,
             attack_speed_multiplier: 1.20,
             gold_gain_multiplier: 1.10,
+            luck_bonus: 0.12,
             crit_chance_bonus: 0.08,
             crit_damage_multiplier: 1.75,
             pickup_radius_bonus: 12.0,
@@ -9895,10 +10555,8 @@ mod tests {
         assert!((hp_row.bonus_value - 7.0).abs() < 0.001);
         let damage_row = find_stats_row(&panel.rows, "Damage").expect("damage row");
         assert!(damage_row.bonus_value > 0.0);
-        let crit_chance_row = find_stats_row(&panel.rows, "Crit Chance").expect("crit chance");
-        assert!(crit_chance_row.bonus_text.contains("+8.0%"));
-        let crit_damage_row = find_stats_row(&panel.rows, "Crit Damage").expect("crit damage");
-        assert!(crit_damage_row.bonus_text.contains("+55.0%"));
+        let luck_row = find_stats_row(&panel.rows, "Luck").expect("luck");
+        assert!(luck_row.bonus_text.contains("+12.0%"));
         let move_row = find_stats_row(&panel.rows, "Move Speed").expect("move row");
         assert!(move_row.bonus_text.contains("+18"));
         assert!(move_row.bonus_text.contains("+8.0%"));
@@ -10006,6 +10664,82 @@ mod tests {
                 .entries
                 .iter()
                 .any(|entry| entry.title == "Authority Aura")
+        );
+    }
+
+    #[test]
+    fn skill_book_panel_lists_all_unlocked_formations_with_tradeoff_sections() {
+        let data = GameData::load_from_dir(Path::new("assets/data")).expect("load data");
+        let mut skillbar = FormationSkillBar::default();
+        for formation in ActiveFormation::all() {
+            if formation != ActiveFormation::Square {
+                assert!(skillbar.try_add_formation(formation));
+            }
+        }
+
+        let panel = build_skill_book_panel_data(
+            &SkillBookLog::default(),
+            &ConditionalUpgradeStatus::default(),
+            &skillbar,
+            ActiveFormation::Loose,
+            &data,
+        );
+        let formations = find_skill_section(&panel, "Formations").expect("formation section");
+        assert_eq!(formations.entries.len(), ActiveFormation::all().len());
+        for formation in ActiveFormation::all() {
+            let entry = formations
+                .entries
+                .iter()
+                .find(|entry| entry.title == formation.display_name())
+                .expect("formation entry should be listed");
+            assert!(entry.description.contains("Strengths:"));
+            assert!(entry.description.contains("Weaknesses:"));
+            assert!(entry.description.contains("Use case:"));
+        }
+        assert_eq!(
+            formations
+                .entries
+                .iter()
+                .filter(|entry| entry.active == Some(true))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn formation_skill_descriptions_include_tradeoff_contract_for_all_profiles() {
+        let data = GameData::load_from_dir(Path::new("assets/data")).expect("load data");
+        for formation in ActiveFormation::all() {
+            let description = super::formation_skill_description(formation, &data);
+            assert!(description.contains("Offense x"));
+            assert!(description.contains("Strengths:"));
+            assert!(description.contains("Weaknesses:"));
+            assert!(description.contains("Use case:"));
+        }
+    }
+
+    #[test]
+    fn skill_book_panel_lists_locked_formations_with_major_reward_requirement() {
+        let data = GameData::load_from_dir(Path::new("assets/data")).expect("load data");
+        let skillbar = FormationSkillBar::default();
+        let panel = build_skill_book_panel_data(
+            &SkillBookLog::default(),
+            &ConditionalUpgradeStatus::default(),
+            &skillbar,
+            ActiveFormation::Square,
+            &data,
+        );
+        let formations = find_skill_section(&panel, "Formations").expect("formation section");
+        let locked_diamond = formations
+            .entries
+            .iter()
+            .find(|entry| entry.title == "Diamond Formation (Locked)")
+            .expect("locked diamond entry");
+        assert_eq!(locked_diamond.active, Some(false));
+        assert!(
+            locked_diamond
+                .description
+                .contains("Major level-up rewards")
         );
     }
 

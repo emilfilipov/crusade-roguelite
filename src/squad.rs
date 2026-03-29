@@ -19,8 +19,8 @@ use crate::model::{
     Armor, AttackCooldown, AttackProfile, BaseMaxHealth, ColliderRadius, CommanderUnit,
     DamageEvent, EnemyUnit, FriendlyUnit, GameState, GlobalBuffs, Health, MatchSetupSelection,
     Morale, MoveSpeed, PlayerControlled, PlayerFaction, RecruitArchetype, RecruitEvent,
-    RecruitUnitKind, RescuableUnit, StartRunEvent, Team, Unit, UnitDiedEvent, UnitKind, UnitTier,
-    level_cap_from_locked_budget,
+    RecruitUnitKind, RescuableUnit, StartRunEvent, Team, Unit, UnitArmorClass, UnitDiedEvent,
+    UnitKind, UnitRoleTag, UnitTier, level_cap_from_locked_budget,
 };
 use crate::morale::morale_movement_multiplier;
 use crate::upgrades::{
@@ -191,6 +191,239 @@ pub enum HeroRecruitSubtype {
     SupportSuperPriest,
     SupportSuperFanatic,
     CavalrySuperKnight,
+}
+
+#[derive(Component, Clone, Copy, Debug, Eq, PartialEq)]
+pub struct HeroSubtypeUnit {
+    pub subtype: HeroRecruitSubtype,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct HeroSubtypeCombatProfile {
+    pub outgoing_damage_multiplier: f32,
+    pub incoming_damage_multiplier: f32,
+    pub attack_speed_multiplier: f32,
+}
+
+impl Default for HeroSubtypeCombatProfile {
+    fn default() -> Self {
+        Self {
+            outgoing_damage_multiplier: 1.0,
+            incoming_damage_multiplier: 1.0,
+            attack_speed_multiplier: 1.0,
+        }
+    }
+}
+
+impl HeroRecruitSubtype {
+    pub const fn config_id(self) -> &'static str {
+        match self {
+            HeroRecruitSubtype::InfantrySwordShield => "sword_shield",
+            HeroRecruitSubtype::InfantrySpear => "spear",
+            HeroRecruitSubtype::InfantryTwoHandedSword => "two_handed_sword",
+            HeroRecruitSubtype::RangedBow => "bow",
+            HeroRecruitSubtype::RangedJavelin => "javelin",
+            HeroRecruitSubtype::RangedBeastMaster => "beast_master",
+            HeroRecruitSubtype::SupportSuperPriest => "super_priest",
+            HeroRecruitSubtype::SupportSuperFanatic => "super_fanatic",
+            HeroRecruitSubtype::CavalrySuperKnight => "super_knight",
+        }
+    }
+}
+
+pub fn hero_subtype_combat_profile(subtype: HeroRecruitSubtype) -> HeroSubtypeCombatProfile {
+    match subtype {
+        HeroRecruitSubtype::InfantrySwordShield => HeroSubtypeCombatProfile {
+            outgoing_damage_multiplier: 0.92,
+            incoming_damage_multiplier: 0.82,
+            attack_speed_multiplier: 0.94,
+        },
+        HeroRecruitSubtype::InfantrySpear => HeroSubtypeCombatProfile {
+            outgoing_damage_multiplier: 1.06,
+            incoming_damage_multiplier: 0.96,
+            attack_speed_multiplier: 0.98,
+        },
+        HeroRecruitSubtype::InfantryTwoHandedSword => HeroSubtypeCombatProfile {
+            outgoing_damage_multiplier: 1.22,
+            incoming_damage_multiplier: 1.14,
+            attack_speed_multiplier: 0.90,
+        },
+        HeroRecruitSubtype::RangedBow => HeroSubtypeCombatProfile {
+            outgoing_damage_multiplier: 1.08,
+            incoming_damage_multiplier: 1.12,
+            attack_speed_multiplier: 1.14,
+        },
+        HeroRecruitSubtype::RangedJavelin => HeroSubtypeCombatProfile {
+            outgoing_damage_multiplier: 1.05,
+            incoming_damage_multiplier: 1.08,
+            attack_speed_multiplier: 0.96,
+        },
+        HeroRecruitSubtype::RangedBeastMaster => HeroSubtypeCombatProfile {
+            outgoing_damage_multiplier: 1.04,
+            incoming_damage_multiplier: 1.10,
+            attack_speed_multiplier: 1.06,
+        },
+        HeroRecruitSubtype::SupportSuperPriest => HeroSubtypeCombatProfile {
+            outgoing_damage_multiplier: 0.78,
+            incoming_damage_multiplier: 0.86,
+            attack_speed_multiplier: 1.04,
+        },
+        HeroRecruitSubtype::SupportSuperFanatic => HeroSubtypeCombatProfile {
+            outgoing_damage_multiplier: 1.20,
+            incoming_damage_multiplier: 1.18,
+            attack_speed_multiplier: 1.05,
+        },
+        HeroRecruitSubtype::CavalrySuperKnight => HeroSubtypeCombatProfile {
+            outgoing_damage_multiplier: 1.16,
+            incoming_damage_multiplier: 1.16,
+            attack_speed_multiplier: 1.10,
+        },
+    }
+}
+
+pub fn hero_subtype_matchup_multiplier(
+    subtype: HeroRecruitSubtype,
+    defender_kind: UnitKind,
+) -> f32 {
+    let mut multiplier: f32 = 1.0;
+    match subtype {
+        HeroRecruitSubtype::InfantrySwordShield => {
+            if defender_kind.has_role_tag(UnitRoleTag::Cavalry) {
+                multiplier -= 0.10;
+            }
+            if defender_kind.has_role_tag(UnitRoleTag::Skirmisher) {
+                multiplier -= 0.06;
+            }
+        }
+        HeroRecruitSubtype::InfantrySpear => {
+            if defender_kind.has_role_tag(UnitRoleTag::Cavalry) {
+                multiplier += 0.24;
+            }
+            if defender_kind.has_role_tag(UnitRoleTag::Support) {
+                multiplier -= 0.08;
+            }
+        }
+        HeroRecruitSubtype::InfantryTwoHandedSword => {
+            if defender_kind.has_role_tag(UnitRoleTag::Frontline) {
+                multiplier += 0.16;
+            }
+            if defender_kind.has_role_tag(UnitRoleTag::Support) {
+                multiplier -= 0.08;
+            }
+        }
+        HeroRecruitSubtype::RangedBow => {
+            if defender_kind.has_role_tag(UnitRoleTag::Skirmisher) {
+                multiplier += 0.08;
+            }
+            if defender_kind.has_role_tag(UnitRoleTag::Cavalry) {
+                multiplier -= 0.14;
+            }
+        }
+        HeroRecruitSubtype::RangedJavelin => {
+            multiplier += match defender_kind.armor_class() {
+                UnitArmorClass::Heavy => 0.30,
+                UnitArmorClass::Armored => 0.22,
+                UnitArmorClass::Light => 0.04,
+                UnitArmorClass::Unarmored => -0.14,
+            };
+        }
+        HeroRecruitSubtype::RangedBeastMaster => {
+            if defender_kind.has_role_tag(UnitRoleTag::Support) {
+                multiplier += 0.18;
+            }
+            if defender_kind.has_role_tag(UnitRoleTag::Frontline) {
+                multiplier -= 0.10;
+            }
+        }
+        HeroRecruitSubtype::SupportSuperPriest => {
+            if defender_kind.has_role_tag(UnitRoleTag::Support) {
+                multiplier += 0.10;
+            }
+            if defender_kind.has_role_tag(UnitRoleTag::Frontline) {
+                multiplier -= 0.12;
+            }
+        }
+        HeroRecruitSubtype::SupportSuperFanatic => {
+            if defender_kind.has_role_tag(UnitRoleTag::Frontline) {
+                multiplier += 0.12;
+            }
+            if defender_kind.has_role_tag(UnitRoleTag::Cavalry) {
+                multiplier -= 0.10;
+            }
+        }
+        HeroRecruitSubtype::CavalrySuperKnight => {
+            if defender_kind.has_role_tag(UnitRoleTag::Frontline) {
+                multiplier += 0.16;
+            }
+            if defender_kind.has_role_tag(UnitRoleTag::AntiCavalry) {
+                multiplier -= 0.20;
+            }
+        }
+    }
+    multiplier.clamp(0.72, 1.40)
+}
+
+pub fn hero_subtype_strengths(subtype: HeroRecruitSubtype) -> &'static [&'static str] {
+    match subtype {
+        HeroRecruitSubtype::InfantrySwordShield => {
+            &["Shield anchor", "High durability", "Strong hold line"]
+        }
+        HeroRecruitSubtype::InfantrySpear => &["Anti-cavalry pressure", "Extended melee reach"],
+        HeroRecruitSubtype::InfantryTwoHandedSword => &["High burst melee", "Frontline breaker"],
+        HeroRecruitSubtype::RangedBow => &["High sustained ranged tempo", "Safe backline pressure"],
+        HeroRecruitSubtype::RangedJavelin => &["Premium anti-armor", "Excels vs heavy targets"],
+        HeroRecruitSubtype::RangedBeastMaster => {
+            &["Backline disruption", "Strong vs support clusters"]
+        }
+        HeroRecruitSubtype::SupportSuperPriest => {
+            &["Durable support uptime", "Army sustain specialist"]
+        }
+        HeroRecruitSubtype::SupportSuperFanatic => &["Aggressive sustain", "High melee threat"],
+        HeroRecruitSubtype::CavalrySuperKnight => &["Charge pressure", "Strong engage tempo"],
+    }
+}
+
+pub fn hero_subtype_weaknesses(subtype: HeroRecruitSubtype) -> &'static [&'static str] {
+    match subtype {
+        HeroRecruitSubtype::InfantrySwordShield => &["Low kill tempo", "Weak chase pressure"],
+        HeroRecruitSubtype::InfantrySpear => &["Lower support pressure"],
+        HeroRecruitSubtype::InfantryTwoHandedSword => {
+            &["Higher damage intake", "Slower swing tempo"]
+        }
+        HeroRecruitSubtype::RangedBow => &["Vulnerable to cavalry dives"],
+        HeroRecruitSubtype::RangedJavelin => &["Lower value vs unarmored swarms"],
+        HeroRecruitSubtype::RangedBeastMaster => &["Reduced frontline DPS"],
+        HeroRecruitSubtype::SupportSuperPriest => &["Low direct damage output"],
+        HeroRecruitSubtype::SupportSuperFanatic => &["Fragile under focused fire"],
+        HeroRecruitSubtype::CavalrySuperKnight => &["Hard countered by anti-cavalry lines"],
+    }
+}
+
+pub fn hero_subtype_key_matchups(subtype: HeroRecruitSubtype) -> &'static [&'static str] {
+    match subtype {
+        HeroRecruitSubtype::InfantrySwordShield => {
+            &["Holds vs frontline", "Avoid prolonged skirmish chase"]
+        }
+        HeroRecruitSubtype::InfantrySpear => &["Wins into cavalry", "Neutral into shield lines"],
+        HeroRecruitSubtype::InfantryTwoHandedSword => &["Cracks frontline", "Avoid support bait"],
+        HeroRecruitSubtype::RangedBow => &["Strong into skirmishers", "Weak into fast cavalry"],
+        HeroRecruitSubtype::RangedJavelin => &[
+            "Best into armored/heavy",
+            "Avoid unarmored trash clear duty",
+        ],
+        HeroRecruitSubtype::RangedBeastMaster => {
+            &["Hunts supports", "Weak into dense shield walls"]
+        }
+        HeroRecruitSubtype::SupportSuperPriest => {
+            &["Sustain mirror advantage", "Poor into hard armor walls"]
+        }
+        HeroRecruitSubtype::SupportSuperFanatic => {
+            &["Good into frontline attrition", "Risky into cavalry spikes"]
+        }
+        HeroRecruitSubtype::CavalrySuperKnight => {
+            &["Punishes frontline drift", "Avoid spear/halberd clusters"]
+        }
+    }
 }
 
 #[derive(Event, Clone, Copy, Debug)]
@@ -414,38 +647,11 @@ fn spawn_recruit(
         data.factions.for_faction(recruit_kind.faction()),
     );
     let unit_kind = recruit_kind.as_unit_kind();
-    let (texture, collider_radius, sprite_tint) = match recruit_kind {
-        RecruitUnitKind::ChristianPeasantInfantry => (
-            art.friendly_peasant_infantry_idle.clone(),
-            12.0,
-            Color::WHITE,
-        ),
-        RecruitUnitKind::ChristianPeasantArcher => (
-            art.friendly_peasant_archer_idle.clone(),
-            11.0,
-            Color::srgb(0.94, 1.0, 0.94),
-        ),
-        RecruitUnitKind::ChristianPeasantPriest => (
-            art.friendly_peasant_priest_idle.clone(),
-            11.0,
-            Color::srgb(0.96, 0.93, 1.0),
-        ),
-        RecruitUnitKind::MuslimPeasantInfantry => (
-            art.muslim_peasant_infantry_idle.clone(),
-            12.0,
-            Color::srgb(0.94, 0.96, 1.0),
-        ),
-        RecruitUnitKind::MuslimPeasantArcher => (
-            art.muslim_peasant_archer_idle.clone(),
-            11.0,
-            Color::srgb(0.88, 0.96, 0.88),
-        ),
-        RecruitUnitKind::MuslimPeasantPriest => (
-            art.muslim_peasant_priest_idle.clone(),
-            11.0,
-            Color::srgb(0.94, 0.9, 1.0),
-        ),
-    };
+    let recruit_archetype = recruit_kind.archetype();
+    let faction = recruit_kind.faction();
+    let texture = recruit_spawn_texture(art, faction, recruit_archetype);
+    let collider_radius = recruit_spawn_collider_radius(recruit_archetype);
+    let sprite_tint = recruit_spawn_tint(faction, recruit_archetype);
     let tier = 0u8;
     let level_cost = 0u32;
     let is_priest = unit_kind.is_priest();
@@ -514,6 +720,47 @@ fn spawn_recruit(
     }
 
     entity.id()
+}
+
+fn recruit_spawn_texture(
+    art: &ArtAssets,
+    faction: PlayerFaction,
+    archetype: RecruitArchetype,
+) -> Handle<Image> {
+    match (faction, archetype) {
+        (PlayerFaction::Christian, RecruitArchetype::Infantry) => {
+            art.friendly_peasant_infantry_idle.clone()
+        }
+        (PlayerFaction::Christian, RecruitArchetype::Archer) => {
+            art.friendly_peasant_archer_idle.clone()
+        }
+        (PlayerFaction::Christian, RecruitArchetype::Priest) => {
+            art.friendly_peasant_priest_idle.clone()
+        }
+        (PlayerFaction::Muslim, RecruitArchetype::Infantry) => {
+            art.muslim_peasant_infantry_idle.clone()
+        }
+        (PlayerFaction::Muslim, RecruitArchetype::Archer) => art.muslim_peasant_archer_idle.clone(),
+        (PlayerFaction::Muslim, RecruitArchetype::Priest) => art.muslim_peasant_priest_idle.clone(),
+    }
+}
+
+fn recruit_spawn_collider_radius(archetype: RecruitArchetype) -> f32 {
+    match archetype {
+        RecruitArchetype::Infantry => 12.0,
+        RecruitArchetype::Archer | RecruitArchetype::Priest => 11.0,
+    }
+}
+
+fn recruit_spawn_tint(faction: PlayerFaction, archetype: RecruitArchetype) -> Color {
+    match (faction, archetype) {
+        (PlayerFaction::Christian, RecruitArchetype::Infantry) => Color::WHITE,
+        (PlayerFaction::Christian, RecruitArchetype::Archer) => Color::srgb(0.94, 1.0, 0.94),
+        (PlayerFaction::Christian, RecruitArchetype::Priest) => Color::srgb(0.96, 0.93, 1.0),
+        (PlayerFaction::Muslim, RecruitArchetype::Infantry) => Color::srgb(0.94, 0.96, 1.0),
+        (PlayerFaction::Muslim, RecruitArchetype::Archer) => Color::srgb(0.88, 0.96, 0.88),
+        (PlayerFaction::Muslim, RecruitArchetype::Priest) => Color::srgb(0.94, 0.9, 1.0),
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1130,14 +1377,21 @@ fn apply_hero_recruit_events(
                 Some("Hero recruit blocked: Requires wave 60 boss unlock.".to_string());
             continue;
         }
-        let Some(hero_kind) = hero_unit_kind_for_subtype(player_faction, event.subtype) else {
+        let hero_seed = hero_recruit_seed(
+            spawn_index as u32,
+            progression.level,
+            unlock_state.highest_major_wave_defeated,
+        );
+        let Some(hero_kind) =
+            hero_unit_kind_for_subtype(&data, player_faction, event.subtype, hero_seed)
+        else {
             feedback.blocked_upgrade_reason = Some(format!(
                 "Hero recruit blocked: unresolved hero subtype '{}'.",
-                hero_recruit_subtype_label(event.subtype)
+                event.subtype.config_id()
             ));
             continue;
         };
-        let gold_cost = hero_recruit_gold_cost_for_subtype(event.subtype);
+        let gold_cost = hero_recruit_gold_cost_for_subtype_with_data(&data, event.subtype);
         if progression.gold + 0.001 < gold_cost {
             feedback.blocked_upgrade_reason = Some(format!(
                 "Hero recruit blocked: requires {:.1} gold, current treasury is {:.1}.",
@@ -1164,7 +1418,10 @@ fn apply_hero_recruit_events(
             spawn_position,
             level_cost,
         );
-        if spawned.is_some() {
+        if let Some(entity) = spawned {
+            commands.entity(entity).insert(HeroSubtypeUnit {
+                subtype: event.subtype,
+            });
             progression.gold = (progression.gold - gold_cost).max(0.0);
             feedback.blocked_upgrade_reason = None;
         } else {
@@ -1181,14 +1438,18 @@ fn hero_recruit_level_cost(kind: UnitKind) -> u32 {
     friendly_tier_for_kind(kind).unwrap_or(5) as u32
 }
 
-pub fn hero_recruit_gold_cost_for_subtype(subtype: HeroRecruitSubtype) -> f32 {
-    let tier = UnitKind::from_faction_and_unit_id(
-        PlayerFaction::Christian,
-        hero_unit_id_for_subtype(subtype),
-        false,
-    )
-    .and_then(friendly_tier_for_kind)
-    .unwrap_or(5);
+pub fn hero_recruit_gold_cost_for_subtype_with_data(
+    data: &GameData,
+    subtype: HeroRecruitSubtype,
+) -> f32 {
+    let tier = data
+        .heroes
+        .unit_id_for_subtype(subtype.config_id())
+        .and_then(|unit_id| {
+            UnitKind::from_faction_and_unit_id(PlayerFaction::Christian, unit_id, false)
+        })
+        .and_then(friendly_tier_for_kind)
+        .unwrap_or(5);
     promotion_gold_cost(1, tier) + HERO_RECRUIT_GOLD_PREMIUM
 }
 
@@ -1206,39 +1467,27 @@ fn hero_recruit_spawn_offset(index: usize) -> Vec2 {
     OFFSETS[index % OFFSETS.len()]
 }
 
-fn hero_recruit_subtype_label(subtype: HeroRecruitSubtype) -> &'static str {
-    match subtype {
-        HeroRecruitSubtype::InfantrySwordShield => "sword_shield",
-        HeroRecruitSubtype::InfantrySpear => "spear",
-        HeroRecruitSubtype::InfantryTwoHandedSword => "two_handed_sword",
-        HeroRecruitSubtype::RangedBow => "bow",
-        HeroRecruitSubtype::RangedJavelin => "javelin",
-        HeroRecruitSubtype::RangedBeastMaster => "beast_master",
-        HeroRecruitSubtype::SupportSuperPriest => "super_priest",
-        HeroRecruitSubtype::SupportSuperFanatic => "super_fanatic",
-        HeroRecruitSubtype::CavalrySuperKnight => "super_knight",
-    }
-}
-
-fn hero_unit_id_for_subtype(subtype: HeroRecruitSubtype) -> &'static str {
-    match subtype {
-        HeroRecruitSubtype::InfantrySwordShield => "citadel_guard",
-        HeroRecruitSubtype::InfantrySpear => "armored_halberdier",
-        HeroRecruitSubtype::InfantryTwoHandedSword => "elite_heavy_knight",
-        HeroRecruitSubtype::RangedBow => "elite_longbowman",
-        HeroRecruitSubtype::RangedJavelin => "siege_crossbowman",
-        HeroRecruitSubtype::RangedBeastMaster => "elite_houndmaster",
-        HeroRecruitSubtype::SupportSuperPriest => "divine_speaker",
-        HeroRecruitSubtype::SupportSuperFanatic => "divine_judge",
-        HeroRecruitSubtype::CavalrySuperKnight => "elite_shock_cavalry",
-    }
-}
-
 fn hero_unit_kind_for_subtype(
+    data: &GameData,
     faction: PlayerFaction,
     subtype: HeroRecruitSubtype,
+    seed: u32,
 ) -> Option<UnitKind> {
-    UnitKind::from_faction_and_unit_id(faction, hero_unit_id_for_subtype(subtype), false)
+    if let Some(entry) =
+        data.heroes
+            .roll_entry_for_faction_and_subtype(faction, subtype.config_id(), seed)
+    {
+        return UnitKind::from_faction_and_unit_id(faction, &entry.unit_id, false);
+    }
+    let fallback_unit_id = data.heroes.unit_id_for_subtype(subtype.config_id())?;
+    UnitKind::from_faction_and_unit_id(faction, fallback_unit_id, false)
+}
+
+fn hero_recruit_seed(spawn_index: u32, level: u32, highest_major_wave_defeated: u32) -> u32 {
+    spawn_index
+        .wrapping_mul(7919)
+        .wrapping_add(level.wrapping_mul(1543))
+        .wrapping_add(highest_major_wave_defeated.wrapping_mul(313))
 }
 
 #[allow(clippy::type_complexity)]
@@ -1798,84 +2047,67 @@ pub fn is_upgrade_tier_unlocked(tier: u8, unlocked_tier: u8) -> bool {
 }
 
 pub fn unit_kind_label(kind: UnitKind) -> &'static str {
-    match kind {
-        UnitKind::Commander => "Commander",
-        UnitKind::ChristianPeasantInfantry | UnitKind::MuslimPeasantInfantry => "Peasant Infantry",
-        UnitKind::ChristianPeasantArcher | UnitKind::MuslimPeasantArcher => "Peasant Archer",
-        UnitKind::ChristianPeasantPriest | UnitKind::MuslimPeasantPriest => "Peasant Priest",
-        UnitKind::ChristianMenAtArms | UnitKind::MuslimMenAtArms => "Men-at-Arms",
-        UnitKind::ChristianBowman | UnitKind::MuslimBowman => "Bowman",
-        UnitKind::ChristianDevoted | UnitKind::MuslimDevoted => "Devoted",
-        UnitKind::ChristianShieldInfantry | UnitKind::MuslimShieldInfantry => "Shield Infantry",
-        UnitKind::ChristianSpearman | UnitKind::MuslimSpearman => "Spearman",
-        UnitKind::ChristianUnmountedKnight | UnitKind::MuslimUnmountedKnight => "Unmounted Knight",
-        UnitKind::ChristianSquire | UnitKind::MuslimSquire => "Squire",
-        UnitKind::ChristianExperiencedBowman | UnitKind::MuslimExperiencedBowman => {
-            "Experienced Bowman"
-        }
-        UnitKind::ChristianCrossbowman | UnitKind::MuslimCrossbowman => "Crossbowman",
-        UnitKind::ChristianTracker | UnitKind::MuslimTracker => "Tracker",
-        UnitKind::ChristianScout | UnitKind::MuslimScout => "Scout",
-        UnitKind::ChristianDevotedOne | UnitKind::MuslimDevotedOne => "Devoted One",
-        UnitKind::ChristianFanatic | UnitKind::MuslimFanatic => "Fanatic",
-        UnitKind::ChristianExperiencedShieldInfantry
-        | UnitKind::MuslimExperiencedShieldInfantry => "Experienced Shield Infantry",
-        UnitKind::ChristianShieldedSpearman | UnitKind::MuslimShieldedSpearman => {
-            "Shielded Spearman"
-        }
-        UnitKind::ChristianKnight | UnitKind::MuslimKnight => "Knight",
-        UnitKind::ChristianBannerman | UnitKind::MuslimBannerman => "Bannerman",
-        UnitKind::ChristianEliteBowman | UnitKind::MuslimEliteBowman => "Elite Bowman",
-        UnitKind::ChristianArmoredCrossbowman | UnitKind::MuslimArmoredCrossbowman => {
-            "Armored Crossbowman"
-        }
-        UnitKind::ChristianPathfinder | UnitKind::MuslimPathfinder => "Pathfinder",
-        UnitKind::ChristianMountedScout | UnitKind::MuslimMountedScout => "Mounted Scout",
-        UnitKind::ChristianCardinal | UnitKind::MuslimCardinal => "Cardinal",
-        UnitKind::ChristianFlagellant | UnitKind::MuslimFlagellant => "Flagellant",
-        UnitKind::ChristianEliteShieldInfantry | UnitKind::MuslimEliteShieldInfantry => {
-            "Elite Shield Infantry"
-        }
-        UnitKind::ChristianHalberdier | UnitKind::MuslimHalberdier => "Halberdier",
-        UnitKind::ChristianHeavyKnight | UnitKind::MuslimHeavyKnight => "Heavy Knight",
-        UnitKind::ChristianEliteBannerman | UnitKind::MuslimEliteBannerman => "Elite Bannerman",
-        UnitKind::ChristianLongbowman | UnitKind::MuslimLongbowman => "Longbowman",
-        UnitKind::ChristianEliteCrossbowman | UnitKind::MuslimEliteCrossbowman => {
-            "Elite Crossbowman"
-        }
-        UnitKind::ChristianHoundmaster | UnitKind::MuslimHoundmaster => "Houndmaster",
-        UnitKind::ChristianShockCavalry | UnitKind::MuslimShockCavalry => "Shock Cavalry",
-        UnitKind::ChristianEliteCardinal | UnitKind::MuslimEliteCardinal => "Elite Cardinal",
-        UnitKind::ChristianEliteFlagellant | UnitKind::MuslimEliteFlagellant => "Elite Flagellant",
-        UnitKind::ChristianCitadelGuard | UnitKind::MuslimCitadelGuard => "Citadel Guard",
-        UnitKind::ChristianArmoredHalberdier | UnitKind::MuslimArmoredHalberdier => {
-            "Armored Halberdier"
-        }
-        UnitKind::ChristianEliteHeavyKnight | UnitKind::MuslimEliteHeavyKnight => {
-            "Elite Heavy Knight"
-        }
-        UnitKind::ChristianGodsChosen | UnitKind::MuslimGodsChosen => "God's Chosen",
-        UnitKind::ChristianEliteLongbowman | UnitKind::MuslimEliteLongbowman => "Elite Longbowman",
-        UnitKind::ChristianSiegeCrossbowman | UnitKind::MuslimSiegeCrossbowman => {
-            "Siege Crossbowman"
-        }
-        UnitKind::ChristianEliteHoundmaster | UnitKind::MuslimEliteHoundmaster => {
-            "Elite Houndmaster"
-        }
-        UnitKind::ChristianEliteShockCavalry | UnitKind::MuslimEliteShockCavalry => {
-            "Elite Shock Cavalry"
-        }
-        UnitKind::ChristianDivineSpeaker | UnitKind::MuslimDivineSpeaker => "Divine Speaker",
-        UnitKind::ChristianDivineJudge | UnitKind::MuslimDivineJudge => "Divine Judge",
-        UnitKind::RescuableChristianPeasantInfantry | UnitKind::RescuableMuslimPeasantInfantry => {
-            "Rescuable Peasant Infantry"
-        }
-        UnitKind::RescuableChristianPeasantArcher | UnitKind::RescuableMuslimPeasantArcher => {
-            "Rescuable Peasant Archer"
-        }
-        UnitKind::RescuableChristianPeasantPriest | UnitKind::RescuableMuslimPeasantPriest => {
-            "Rescuable Peasant Priest"
-        }
+    if kind == UnitKind::Commander {
+        return "Commander";
+    }
+
+    if kind.is_rescuable_variant() {
+        return match kind.unit_id() {
+            "peasant_infantry" => "Rescuable Peasant Infantry",
+            "peasant_archer" => "Rescuable Peasant Archer",
+            "peasant_priest" => "Rescuable Peasant Priest",
+            _ => "Rescuable Unit",
+        };
+    }
+
+    match kind.unit_id() {
+        "peasant_infantry" => "Peasant Infantry",
+        "peasant_archer" => "Peasant Archer",
+        "peasant_priest" => "Peasant Priest",
+        "men_at_arms" => "Men-at-Arms",
+        "bowman" => "Bowman",
+        "devoted" => "Devoted",
+        "shield_infantry" => "Shield Infantry",
+        "spearman" => "Spearman",
+        "unmounted_knight" => "Unmounted Knight",
+        "squire" => "Squire",
+        "experienced_bowman" => "Experienced Bowman",
+        "crossbowman" => "Crossbowman",
+        "tracker" => "Tracker",
+        "scout" => "Scout",
+        "devoted_one" => "Devoted One",
+        "fanatic" => "Fanatic",
+        "experienced_shield_infantry" => "Experienced Shield Infantry",
+        "shielded_spearman" => "Shielded Spearman",
+        "knight" => "Knight",
+        "bannerman" => "Bannerman",
+        "elite_bowman" => "Elite Bowman",
+        "armored_crossbowman" => "Armored Crossbowman",
+        "pathfinder" => "Pathfinder",
+        "mounted_scout" => "Mounted Scout",
+        "cardinal" => "Cardinal",
+        "flagellant" => "Flagellant",
+        "elite_shield_infantry" => "Elite Shield Infantry",
+        "halberdier" => "Halberdier",
+        "heavy_knight" => "Heavy Knight",
+        "elite_bannerman" => "Elite Bannerman",
+        "longbowman" => "Longbowman",
+        "elite_crossbowman" => "Elite Crossbowman",
+        "houndmaster" => "Houndmaster",
+        "shock_cavalry" => "Shock Cavalry",
+        "elite_cardinal" => "Elite Cardinal",
+        "elite_flagellant" => "Elite Flagellant",
+        "citadel_guard" => "Citadel Guard",
+        "armored_halberdier" => "Armored Halberdier",
+        "elite_heavy_knight" => "Elite Heavy Knight",
+        "gods_chosen" => "God's Chosen",
+        "elite_longbowman" => "Elite Longbowman",
+        "siege_crossbowman" => "Siege Crossbowman",
+        "elite_houndmaster" => "Elite Houndmaster",
+        "elite_shock_cavalry" => "Elite Shock Cavalry",
+        "divine_speaker" => "Divine Speaker",
+        "divine_judge" => "Divine Judge",
+        _ => "Unit",
     }
 }
 
@@ -1893,123 +2125,44 @@ struct FriendlyKindProfile {
 }
 
 pub fn friendly_stats_for_kind(data: &GameData, kind: UnitKind) -> Option<UnitStatsConfig> {
-    match kind {
-        UnitKind::ChristianPeasantInfantry => {
-            Some(data.units.recruit_christian_peasant_infantry.clone())
+    if !kind.is_friendly_recruit() {
+        return None;
+    }
+
+    let faction = kind.faction()?;
+    match friendly_tier_for_kind(kind)? {
+        0 => Some(
+            data.units
+                .recruit_for_faction_and_archetype(faction, kind.recruit_archetype()?)
+                .clone(),
+        ),
+        1 => {
+            let faction_id = faction.config_key();
+            let unit_id = kind.unit_id();
+            let config_id = format!("{faction_id}_{unit_id}");
+            match unit_id {
+                "men_at_arms" => Some(tier1_men_at_arms_stats(
+                    data.units
+                        .recruit_for_faction_and_archetype(faction, RecruitArchetype::Infantry),
+                    &config_id,
+                )),
+                "bowman" => Some(tier1_bowman_stats(
+                    data.units
+                        .recruit_for_faction_and_archetype(faction, RecruitArchetype::Archer),
+                    &config_id,
+                )),
+                "devoted" => Some(tier1_devoted_stats(
+                    data.units
+                        .recruit_for_faction_and_archetype(faction, RecruitArchetype::Priest),
+                    &config_id,
+                )),
+                _ => None,
+            }
         }
-        UnitKind::ChristianPeasantArcher => {
-            Some(data.units.recruit_christian_peasant_archer.clone())
-        }
-        UnitKind::ChristianPeasantPriest => {
-            Some(data.units.recruit_christian_peasant_priest.clone())
-        }
-        UnitKind::ChristianMenAtArms => Some(tier1_men_at_arms_stats(
-            &data.units.recruit_christian_peasant_infantry,
-            "christian_men_at_arms",
-        )),
-        UnitKind::ChristianBowman => Some(tier1_bowman_stats(
-            &data.units.recruit_christian_peasant_archer,
-            "christian_bowman",
-        )),
-        UnitKind::ChristianDevoted => Some(tier1_devoted_stats(
-            &data.units.recruit_christian_peasant_priest,
-            "christian_devoted",
-        )),
-        UnitKind::ChristianShieldInfantry
-        | UnitKind::ChristianSpearman
-        | UnitKind::ChristianUnmountedKnight
-        | UnitKind::ChristianSquire
-        | UnitKind::ChristianExperiencedBowman
-        | UnitKind::ChristianCrossbowman
-        | UnitKind::ChristianTracker
-        | UnitKind::ChristianScout
-        | UnitKind::ChristianDevotedOne
-        | UnitKind::ChristianFanatic => data.roster_tuning.tier2_stats_for_kind(kind).cloned(),
-        UnitKind::ChristianExperiencedShieldInfantry
-        | UnitKind::ChristianShieldedSpearman
-        | UnitKind::ChristianKnight
-        | UnitKind::ChristianBannerman
-        | UnitKind::ChristianEliteBowman
-        | UnitKind::ChristianArmoredCrossbowman
-        | UnitKind::ChristianPathfinder
-        | UnitKind::ChristianMountedScout
-        | UnitKind::ChristianCardinal
-        | UnitKind::ChristianFlagellant => tier3_stats_for_kind(data, kind),
-        UnitKind::ChristianEliteShieldInfantry
-        | UnitKind::ChristianHalberdier
-        | UnitKind::ChristianHeavyKnight
-        | UnitKind::ChristianEliteBannerman
-        | UnitKind::ChristianLongbowman
-        | UnitKind::ChristianEliteCrossbowman
-        | UnitKind::ChristianHoundmaster
-        | UnitKind::ChristianShockCavalry
-        | UnitKind::ChristianEliteCardinal
-        | UnitKind::ChristianEliteFlagellant => tier4_stats_for_kind(data, kind),
-        UnitKind::ChristianCitadelGuard
-        | UnitKind::ChristianArmoredHalberdier
-        | UnitKind::ChristianEliteHeavyKnight
-        | UnitKind::ChristianGodsChosen
-        | UnitKind::ChristianEliteLongbowman
-        | UnitKind::ChristianSiegeCrossbowman
-        | UnitKind::ChristianEliteHoundmaster
-        | UnitKind::ChristianEliteShockCavalry
-        | UnitKind::ChristianDivineSpeaker
-        | UnitKind::ChristianDivineJudge => tier5_stats_for_kind(data, kind),
-        UnitKind::MuslimPeasantInfantry => Some(data.units.recruit_muslim_peasant_infantry.clone()),
-        UnitKind::MuslimPeasantArcher => Some(data.units.recruit_muslim_peasant_archer.clone()),
-        UnitKind::MuslimPeasantPriest => Some(data.units.recruit_muslim_peasant_priest.clone()),
-        UnitKind::MuslimMenAtArms => Some(tier1_men_at_arms_stats(
-            &data.units.recruit_muslim_peasant_infantry,
-            "muslim_men_at_arms",
-        )),
-        UnitKind::MuslimBowman => Some(tier1_bowman_stats(
-            &data.units.recruit_muslim_peasant_archer,
-            "muslim_bowman",
-        )),
-        UnitKind::MuslimDevoted => Some(tier1_devoted_stats(
-            &data.units.recruit_muslim_peasant_priest,
-            "muslim_devoted",
-        )),
-        UnitKind::MuslimShieldInfantry
-        | UnitKind::MuslimSpearman
-        | UnitKind::MuslimUnmountedKnight
-        | UnitKind::MuslimSquire
-        | UnitKind::MuslimExperiencedBowman
-        | UnitKind::MuslimCrossbowman
-        | UnitKind::MuslimTracker
-        | UnitKind::MuslimScout
-        | UnitKind::MuslimDevotedOne
-        | UnitKind::MuslimFanatic => data.roster_tuning.tier2_stats_for_kind(kind).cloned(),
-        UnitKind::MuslimExperiencedShieldInfantry
-        | UnitKind::MuslimShieldedSpearman
-        | UnitKind::MuslimKnight
-        | UnitKind::MuslimBannerman
-        | UnitKind::MuslimEliteBowman
-        | UnitKind::MuslimArmoredCrossbowman
-        | UnitKind::MuslimPathfinder
-        | UnitKind::MuslimMountedScout
-        | UnitKind::MuslimCardinal
-        | UnitKind::MuslimFlagellant => tier3_stats_for_kind(data, kind),
-        UnitKind::MuslimEliteShieldInfantry
-        | UnitKind::MuslimHalberdier
-        | UnitKind::MuslimHeavyKnight
-        | UnitKind::MuslimEliteBannerman
-        | UnitKind::MuslimLongbowman
-        | UnitKind::MuslimEliteCrossbowman
-        | UnitKind::MuslimHoundmaster
-        | UnitKind::MuslimShockCavalry
-        | UnitKind::MuslimEliteCardinal
-        | UnitKind::MuslimEliteFlagellant => tier4_stats_for_kind(data, kind),
-        UnitKind::MuslimCitadelGuard
-        | UnitKind::MuslimArmoredHalberdier
-        | UnitKind::MuslimEliteHeavyKnight
-        | UnitKind::MuslimGodsChosen
-        | UnitKind::MuslimEliteLongbowman
-        | UnitKind::MuslimSiegeCrossbowman
-        | UnitKind::MuslimEliteHoundmaster
-        | UnitKind::MuslimEliteShockCavalry
-        | UnitKind::MuslimDivineSpeaker
-        | UnitKind::MuslimDivineJudge => tier5_stats_for_kind(data, kind),
+        2 => data.roster_tuning.tier2_stats_for_kind(kind).cloned(),
+        3 => tier3_stats_for_kind(data, kind),
+        4 => tier4_stats_for_kind(data, kind),
+        5 => tier5_stats_for_kind(data, kind),
         _ => None,
     }
 }
@@ -2060,63 +2213,33 @@ fn tier1_devoted_stats(base: &UnitStatsConfig, id: &str) -> UnitStatsConfig {
 }
 
 fn tier2_source_kind_for_tier3(kind: UnitKind) -> Option<UnitKind> {
-    match kind {
-        UnitKind::ChristianExperiencedShieldInfantry => Some(UnitKind::ChristianShieldInfantry),
-        UnitKind::ChristianShieldedSpearman => Some(UnitKind::ChristianSpearman),
-        UnitKind::ChristianKnight => Some(UnitKind::ChristianUnmountedKnight),
-        UnitKind::ChristianBannerman => Some(UnitKind::ChristianSquire),
-        UnitKind::ChristianEliteBowman => Some(UnitKind::ChristianExperiencedBowman),
-        UnitKind::ChristianArmoredCrossbowman => Some(UnitKind::ChristianCrossbowman),
-        UnitKind::ChristianPathfinder => Some(UnitKind::ChristianTracker),
-        UnitKind::ChristianMountedScout => Some(UnitKind::ChristianScout),
-        UnitKind::ChristianCardinal => Some(UnitKind::ChristianDevotedOne),
-        UnitKind::ChristianFlagellant => Some(UnitKind::ChristianFanatic),
-        UnitKind::MuslimExperiencedShieldInfantry => Some(UnitKind::MuslimShieldInfantry),
-        UnitKind::MuslimShieldedSpearman => Some(UnitKind::MuslimSpearman),
-        UnitKind::MuslimKnight => Some(UnitKind::MuslimUnmountedKnight),
-        UnitKind::MuslimBannerman => Some(UnitKind::MuslimSquire),
-        UnitKind::MuslimEliteBowman => Some(UnitKind::MuslimExperiencedBowman),
-        UnitKind::MuslimArmoredCrossbowman => Some(UnitKind::MuslimCrossbowman),
-        UnitKind::MuslimPathfinder => Some(UnitKind::MuslimTracker),
-        UnitKind::MuslimMountedScout => Some(UnitKind::MuslimScout),
-        UnitKind::MuslimCardinal => Some(UnitKind::MuslimDevotedOne),
-        UnitKind::MuslimFlagellant => Some(UnitKind::MuslimFanatic),
-        _ => None,
-    }
+    let faction = kind.faction()?;
+    let source_id = match kind.unit_id() {
+        "experienced_shield_infantry" => "shield_infantry",
+        "shielded_spearman" => "spearman",
+        "knight" => "unmounted_knight",
+        "bannerman" => "squire",
+        "elite_bowman" => "experienced_bowman",
+        "armored_crossbowman" => "crossbowman",
+        "pathfinder" => "tracker",
+        "mounted_scout" => "scout",
+        "cardinal" => "devoted_one",
+        "flagellant" => "fanatic",
+        _ => return None,
+    };
+    UnitKind::from_faction_and_unit_id(faction, source_id, false)
 }
 
 fn tier3_stats_for_kind(data: &GameData, kind: UnitKind) -> Option<UnitStatsConfig> {
+    let faction = kind.faction()?;
+    let unit_id = kind.unit_id();
     let tier2_kind = tier2_source_kind_for_tier3(kind)?;
     let base = data.roster_tuning.tier2_stats_for_kind(tier2_kind)?;
     let mut stats = base.clone();
-    stats.id = match kind {
-        UnitKind::ChristianExperiencedShieldInfantry => "christian_experienced_shield_infantry",
-        UnitKind::ChristianShieldedSpearman => "christian_shielded_spearman",
-        UnitKind::ChristianKnight => "christian_knight",
-        UnitKind::ChristianBannerman => "christian_bannerman",
-        UnitKind::ChristianEliteBowman => "christian_elite_bowman",
-        UnitKind::ChristianArmoredCrossbowman => "christian_armored_crossbowman",
-        UnitKind::ChristianPathfinder => "christian_pathfinder",
-        UnitKind::ChristianMountedScout => "christian_mounted_scout",
-        UnitKind::ChristianCardinal => "christian_cardinal",
-        UnitKind::ChristianFlagellant => "christian_flagellant",
-        UnitKind::MuslimExperiencedShieldInfantry => "muslim_experienced_shield_infantry",
-        UnitKind::MuslimShieldedSpearman => "muslim_shielded_spearman",
-        UnitKind::MuslimKnight => "muslim_knight",
-        UnitKind::MuslimBannerman => "muslim_bannerman",
-        UnitKind::MuslimEliteBowman => "muslim_elite_bowman",
-        UnitKind::MuslimArmoredCrossbowman => "muslim_armored_crossbowman",
-        UnitKind::MuslimPathfinder => "muslim_pathfinder",
-        UnitKind::MuslimMountedScout => "muslim_mounted_scout",
-        UnitKind::MuslimCardinal => "muslim_cardinal",
-        UnitKind::MuslimFlagellant => "muslim_flagellant",
-        _ => base.id.as_str(),
-    }
-    .to_string();
+    stats.id = format!("{}_{}", faction.config_key(), unit_id);
 
-    match kind {
-        UnitKind::ChristianExperiencedShieldInfantry
-        | UnitKind::MuslimExperiencedShieldInfantry => {
+    match unit_id {
+        "experienced_shield_infantry" => {
             stats.max_hp = (base.max_hp * 1.22).max(base.max_hp + 14.0);
             stats.armor = base.armor + 1.8;
             stats.damage = (base.damage * 1.14).max(base.damage + 0.8);
@@ -2125,7 +2248,7 @@ fn tier3_stats_for_kind(data: &GameData, kind: UnitKind) -> Option<UnitStatsConf
             stats.move_speed = (base.move_speed * 0.97).max(1.0);
             stats.morale = (base.morale * 1.10).max(1.0);
         }
-        UnitKind::ChristianShieldedSpearman | UnitKind::MuslimShieldedSpearman => {
+        "shielded_spearman" => {
             stats.max_hp = (base.max_hp * 1.18).max(base.max_hp + 12.0);
             stats.armor = base.armor + 1.6;
             stats.damage = (base.damage * 1.16).max(base.damage + 1.0);
@@ -2134,7 +2257,7 @@ fn tier3_stats_for_kind(data: &GameData, kind: UnitKind) -> Option<UnitStatsConf
             stats.move_speed = (base.move_speed * 1.01).max(1.0);
             stats.morale = (base.morale * 1.08).max(1.0);
         }
-        UnitKind::ChristianKnight | UnitKind::MuslimKnight => {
+        "knight" => {
             stats.max_hp = (base.max_hp * 1.16).max(base.max_hp + 10.0);
             stats.armor = base.armor + 2.0;
             stats.damage = (base.damage * 1.22).max(base.damage + 1.2);
@@ -2143,7 +2266,7 @@ fn tier3_stats_for_kind(data: &GameData, kind: UnitKind) -> Option<UnitStatsConf
             stats.move_speed = (base.move_speed * 1.02).max(1.0);
             stats.morale = (base.morale * 1.10).max(1.0);
         }
-        UnitKind::ChristianBannerman | UnitKind::MuslimBannerman => {
+        "bannerman" => {
             stats.max_hp = (base.max_hp * 1.16).max(base.max_hp + 10.0);
             stats.armor = base.armor + 1.2;
             stats.damage = 0.0;
@@ -2157,7 +2280,7 @@ fn tier3_stats_for_kind(data: &GameData, kind: UnitKind) -> Option<UnitStatsConf
             stats.ranged_projectile_speed = 0.0;
             stats.ranged_projectile_max_distance = 0.0;
         }
-        UnitKind::ChristianEliteBowman | UnitKind::MuslimEliteBowman => {
+        "elite_bowman" => {
             stats.max_hp = (base.max_hp * 1.12).max(base.max_hp + 8.0);
             stats.armor = base.armor + 0.8;
             stats.damage = (base.damage * 1.08).max(base.damage + 0.5);
@@ -2171,7 +2294,7 @@ fn tier3_stats_for_kind(data: &GameData, kind: UnitKind) -> Option<UnitStatsConf
             stats.ranged_projectile_speed = base.ranged_projectile_speed + 18.0;
             stats.ranged_projectile_max_distance = base.ranged_projectile_max_distance + 50.0;
         }
-        UnitKind::ChristianArmoredCrossbowman | UnitKind::MuslimArmoredCrossbowman => {
+        "armored_crossbowman" => {
             stats.max_hp = (base.max_hp * 1.18).max(base.max_hp + 9.0);
             stats.armor = base.armor + 1.4;
             stats.damage = (base.damage * 1.10).max(base.damage + 0.5);
@@ -2185,7 +2308,7 @@ fn tier3_stats_for_kind(data: &GameData, kind: UnitKind) -> Option<UnitStatsConf
             stats.ranged_projectile_speed = base.ranged_projectile_speed + 22.0;
             stats.ranged_projectile_max_distance = base.ranged_projectile_max_distance + 40.0;
         }
-        UnitKind::ChristianPathfinder | UnitKind::MuslimPathfinder => {
+        "pathfinder" => {
             stats.max_hp = (base.max_hp * 1.12).max(base.max_hp + 8.0);
             stats.armor = base.armor + 0.8;
             stats.damage = (base.damage * 1.10).max(base.damage + 0.4);
@@ -2199,7 +2322,7 @@ fn tier3_stats_for_kind(data: &GameData, kind: UnitKind) -> Option<UnitStatsConf
             stats.ranged_projectile_speed = base.ranged_projectile_speed + 26.0;
             stats.ranged_projectile_max_distance = base.ranged_projectile_max_distance + 38.0;
         }
-        UnitKind::ChristianMountedScout | UnitKind::MuslimMountedScout => {
+        "mounted_scout" => {
             stats.max_hp = (base.max_hp * 1.14).max(base.max_hp + 8.0);
             stats.armor = base.armor + 1.0;
             stats.damage = (base.damage * 1.22).max(base.damage + 1.0);
@@ -2213,7 +2336,7 @@ fn tier3_stats_for_kind(data: &GameData, kind: UnitKind) -> Option<UnitStatsConf
             stats.ranged_projectile_speed = 0.0;
             stats.ranged_projectile_max_distance = 0.0;
         }
-        UnitKind::ChristianCardinal | UnitKind::MuslimCardinal => {
+        "cardinal" => {
             stats.max_hp = (base.max_hp * 1.20).max(base.max_hp + 10.0);
             stats.armor = base.armor + 1.5;
             stats.damage = 0.0;
@@ -2227,7 +2350,7 @@ fn tier3_stats_for_kind(data: &GameData, kind: UnitKind) -> Option<UnitStatsConf
             stats.ranged_projectile_speed = 0.0;
             stats.ranged_projectile_max_distance = 0.0;
         }
-        UnitKind::ChristianFlagellant | UnitKind::MuslimFlagellant => {
+        "flagellant" => {
             stats.max_hp = (base.max_hp * 1.18).max(base.max_hp + 12.0);
             stats.armor = 0.0;
             stats.damage = (base.damage * 1.26).max(base.damage + 1.5);
@@ -2248,64 +2371,33 @@ fn tier3_stats_for_kind(data: &GameData, kind: UnitKind) -> Option<UnitStatsConf
 }
 
 fn tier3_source_kind_for_tier4(kind: UnitKind) -> Option<UnitKind> {
-    match kind {
-        UnitKind::ChristianEliteShieldInfantry => {
-            Some(UnitKind::ChristianExperiencedShieldInfantry)
-        }
-        UnitKind::ChristianHalberdier => Some(UnitKind::ChristianShieldedSpearman),
-        UnitKind::ChristianHeavyKnight => Some(UnitKind::ChristianKnight),
-        UnitKind::ChristianEliteBannerman => Some(UnitKind::ChristianBannerman),
-        UnitKind::ChristianLongbowman => Some(UnitKind::ChristianEliteBowman),
-        UnitKind::ChristianEliteCrossbowman => Some(UnitKind::ChristianArmoredCrossbowman),
-        UnitKind::ChristianHoundmaster => Some(UnitKind::ChristianPathfinder),
-        UnitKind::ChristianShockCavalry => Some(UnitKind::ChristianMountedScout),
-        UnitKind::ChristianEliteCardinal => Some(UnitKind::ChristianCardinal),
-        UnitKind::ChristianEliteFlagellant => Some(UnitKind::ChristianFlagellant),
-        UnitKind::MuslimEliteShieldInfantry => Some(UnitKind::MuslimExperiencedShieldInfantry),
-        UnitKind::MuslimHalberdier => Some(UnitKind::MuslimShieldedSpearman),
-        UnitKind::MuslimHeavyKnight => Some(UnitKind::MuslimKnight),
-        UnitKind::MuslimEliteBannerman => Some(UnitKind::MuslimBannerman),
-        UnitKind::MuslimLongbowman => Some(UnitKind::MuslimEliteBowman),
-        UnitKind::MuslimEliteCrossbowman => Some(UnitKind::MuslimArmoredCrossbowman),
-        UnitKind::MuslimHoundmaster => Some(UnitKind::MuslimPathfinder),
-        UnitKind::MuslimShockCavalry => Some(UnitKind::MuslimMountedScout),
-        UnitKind::MuslimEliteCardinal => Some(UnitKind::MuslimCardinal),
-        UnitKind::MuslimEliteFlagellant => Some(UnitKind::MuslimFlagellant),
-        _ => None,
-    }
+    let faction = kind.faction()?;
+    let source_id = match kind.unit_id() {
+        "elite_shield_infantry" => "experienced_shield_infantry",
+        "halberdier" => "shielded_spearman",
+        "heavy_knight" => "knight",
+        "elite_bannerman" => "bannerman",
+        "longbowman" => "elite_bowman",
+        "elite_crossbowman" => "armored_crossbowman",
+        "houndmaster" => "pathfinder",
+        "shock_cavalry" => "mounted_scout",
+        "elite_cardinal" => "cardinal",
+        "elite_flagellant" => "flagellant",
+        _ => return None,
+    };
+    UnitKind::from_faction_and_unit_id(faction, source_id, false)
 }
 
 fn tier4_stats_for_kind(data: &GameData, kind: UnitKind) -> Option<UnitStatsConfig> {
+    let faction = kind.faction()?;
+    let unit_id = kind.unit_id();
     let tier3_kind = tier3_source_kind_for_tier4(kind)?;
     let base = tier3_stats_for_kind(data, tier3_kind)?;
     let mut stats = base.clone();
-    stats.id = match kind {
-        UnitKind::ChristianEliteShieldInfantry => "christian_elite_shield_infantry",
-        UnitKind::ChristianHalberdier => "christian_halberdier",
-        UnitKind::ChristianHeavyKnight => "christian_heavy_knight",
-        UnitKind::ChristianEliteBannerman => "christian_elite_bannerman",
-        UnitKind::ChristianLongbowman => "christian_longbowman",
-        UnitKind::ChristianEliteCrossbowman => "christian_elite_crossbowman",
-        UnitKind::ChristianHoundmaster => "christian_houndmaster",
-        UnitKind::ChristianShockCavalry => "christian_shock_cavalry",
-        UnitKind::ChristianEliteCardinal => "christian_elite_cardinal",
-        UnitKind::ChristianEliteFlagellant => "christian_elite_flagellant",
-        UnitKind::MuslimEliteShieldInfantry => "muslim_elite_shield_infantry",
-        UnitKind::MuslimHalberdier => "muslim_halberdier",
-        UnitKind::MuslimHeavyKnight => "muslim_heavy_knight",
-        UnitKind::MuslimEliteBannerman => "muslim_elite_bannerman",
-        UnitKind::MuslimLongbowman => "muslim_longbowman",
-        UnitKind::MuslimEliteCrossbowman => "muslim_elite_crossbowman",
-        UnitKind::MuslimHoundmaster => "muslim_houndmaster",
-        UnitKind::MuslimShockCavalry => "muslim_shock_cavalry",
-        UnitKind::MuslimEliteCardinal => "muslim_elite_cardinal",
-        UnitKind::MuslimEliteFlagellant => "muslim_elite_flagellant",
-        _ => base.id.as_str(),
-    }
-    .to_string();
+    stats.id = format!("{}_{}", faction.config_key(), unit_id);
 
-    match kind {
-        UnitKind::ChristianEliteShieldInfantry | UnitKind::MuslimEliteShieldInfantry => {
+    match unit_id {
+        "elite_shield_infantry" => {
             stats.max_hp = (base.max_hp * 1.18).max(base.max_hp + 14.0);
             stats.armor = base.armor + 2.0;
             stats.damage = (base.damage * 1.12).max(base.damage + 1.0);
@@ -2314,7 +2406,7 @@ fn tier4_stats_for_kind(data: &GameData, kind: UnitKind) -> Option<UnitStatsConf
             stats.move_speed = (base.move_speed * 0.98).max(1.0);
             stats.morale = (base.morale * 1.10).max(1.0);
         }
-        UnitKind::ChristianHalberdier | UnitKind::MuslimHalberdier => {
+        "halberdier" => {
             stats.max_hp = (base.max_hp * 1.16).max(base.max_hp + 12.0);
             stats.armor = base.armor + 1.8;
             stats.damage = (base.damage * 1.16).max(base.damage + 1.2);
@@ -2323,7 +2415,7 @@ fn tier4_stats_for_kind(data: &GameData, kind: UnitKind) -> Option<UnitStatsConf
             stats.move_speed = (base.move_speed * 1.01).max(1.0);
             stats.morale = (base.morale * 1.09).max(1.0);
         }
-        UnitKind::ChristianHeavyKnight | UnitKind::MuslimHeavyKnight => {
+        "heavy_knight" => {
             stats.max_hp = (base.max_hp * 1.15).max(base.max_hp + 12.0);
             stats.armor = base.armor + 2.2;
             stats.damage = (base.damage * 1.20).max(base.damage + 1.4);
@@ -2332,7 +2424,7 @@ fn tier4_stats_for_kind(data: &GameData, kind: UnitKind) -> Option<UnitStatsConf
             stats.move_speed = (base.move_speed * 1.02).max(1.0);
             stats.morale = (base.morale * 1.10).max(1.0);
         }
-        UnitKind::ChristianEliteBannerman | UnitKind::MuslimEliteBannerman => {
+        "elite_bannerman" => {
             stats.max_hp = (base.max_hp * 1.16).max(base.max_hp + 12.0);
             stats.armor = base.armor + 1.6;
             stats.damage = 0.0;
@@ -2346,7 +2438,7 @@ fn tier4_stats_for_kind(data: &GameData, kind: UnitKind) -> Option<UnitStatsConf
             stats.ranged_projectile_speed = 0.0;
             stats.ranged_projectile_max_distance = 0.0;
         }
-        UnitKind::ChristianLongbowman | UnitKind::MuslimLongbowman => {
+        "longbowman" => {
             stats.max_hp = (base.max_hp * 1.14).max(base.max_hp + 10.0);
             stats.armor = base.armor + 1.0;
             stats.damage = (base.damage * 1.10).max(base.damage + 0.8);
@@ -2360,7 +2452,7 @@ fn tier4_stats_for_kind(data: &GameData, kind: UnitKind) -> Option<UnitStatsConf
             stats.ranged_projectile_speed = base.ranged_projectile_speed + 22.0;
             stats.ranged_projectile_max_distance = base.ranged_projectile_max_distance + 44.0;
         }
-        UnitKind::ChristianEliteCrossbowman | UnitKind::MuslimEliteCrossbowman => {
+        "elite_crossbowman" => {
             stats.max_hp = (base.max_hp * 1.16).max(base.max_hp + 10.0);
             stats.armor = base.armor + 1.6;
             stats.damage = (base.damage * 1.12).max(base.damage + 0.8);
@@ -2374,7 +2466,7 @@ fn tier4_stats_for_kind(data: &GameData, kind: UnitKind) -> Option<UnitStatsConf
             stats.ranged_projectile_speed = base.ranged_projectile_speed + 24.0;
             stats.ranged_projectile_max_distance = base.ranged_projectile_max_distance + 40.0;
         }
-        UnitKind::ChristianHoundmaster | UnitKind::MuslimHoundmaster => {
+        "houndmaster" => {
             stats.max_hp = (base.max_hp * 1.14).max(base.max_hp + 10.0);
             stats.armor = base.armor + 1.0;
             stats.damage = (base.damage * 1.12).max(base.damage + 0.8);
@@ -2388,7 +2480,7 @@ fn tier4_stats_for_kind(data: &GameData, kind: UnitKind) -> Option<UnitStatsConf
             stats.ranged_projectile_speed = base.ranged_projectile_speed + 28.0;
             stats.ranged_projectile_max_distance = base.ranged_projectile_max_distance + 34.0;
         }
-        UnitKind::ChristianShockCavalry | UnitKind::MuslimShockCavalry => {
+        "shock_cavalry" => {
             stats.max_hp = (base.max_hp * 1.16).max(base.max_hp + 12.0);
             stats.armor = base.armor + 1.8;
             stats.damage = (base.damage * 1.22).max(base.damage + 1.6);
@@ -2402,7 +2494,7 @@ fn tier4_stats_for_kind(data: &GameData, kind: UnitKind) -> Option<UnitStatsConf
             stats.ranged_projectile_speed = 0.0;
             stats.ranged_projectile_max_distance = 0.0;
         }
-        UnitKind::ChristianEliteCardinal | UnitKind::MuslimEliteCardinal => {
+        "elite_cardinal" => {
             stats.max_hp = (base.max_hp * 1.18).max(base.max_hp + 12.0);
             stats.armor = base.armor + 1.8;
             stats.damage = 0.0;
@@ -2416,7 +2508,7 @@ fn tier4_stats_for_kind(data: &GameData, kind: UnitKind) -> Option<UnitStatsConf
             stats.ranged_projectile_speed = 0.0;
             stats.ranged_projectile_max_distance = 0.0;
         }
-        UnitKind::ChristianEliteFlagellant | UnitKind::MuslimEliteFlagellant => {
+        "elite_flagellant" => {
             stats.max_hp = (base.max_hp * 1.16).max(base.max_hp + 14.0);
             stats.armor = 0.0;
             stats.damage = (base.damage * 1.24).max(base.damage + 1.8);
@@ -2437,62 +2529,33 @@ fn tier4_stats_for_kind(data: &GameData, kind: UnitKind) -> Option<UnitStatsConf
 }
 
 fn tier4_source_kind_for_tier5(kind: UnitKind) -> Option<UnitKind> {
-    match kind {
-        UnitKind::ChristianCitadelGuard => Some(UnitKind::ChristianEliteShieldInfantry),
-        UnitKind::ChristianArmoredHalberdier => Some(UnitKind::ChristianHalberdier),
-        UnitKind::ChristianEliteHeavyKnight => Some(UnitKind::ChristianHeavyKnight),
-        UnitKind::ChristianGodsChosen => Some(UnitKind::ChristianEliteBannerman),
-        UnitKind::ChristianEliteLongbowman => Some(UnitKind::ChristianLongbowman),
-        UnitKind::ChristianSiegeCrossbowman => Some(UnitKind::ChristianEliteCrossbowman),
-        UnitKind::ChristianEliteHoundmaster => Some(UnitKind::ChristianHoundmaster),
-        UnitKind::ChristianEliteShockCavalry => Some(UnitKind::ChristianShockCavalry),
-        UnitKind::ChristianDivineSpeaker => Some(UnitKind::ChristianEliteCardinal),
-        UnitKind::ChristianDivineJudge => Some(UnitKind::ChristianEliteFlagellant),
-        UnitKind::MuslimCitadelGuard => Some(UnitKind::MuslimEliteShieldInfantry),
-        UnitKind::MuslimArmoredHalberdier => Some(UnitKind::MuslimHalberdier),
-        UnitKind::MuslimEliteHeavyKnight => Some(UnitKind::MuslimHeavyKnight),
-        UnitKind::MuslimGodsChosen => Some(UnitKind::MuslimEliteBannerman),
-        UnitKind::MuslimEliteLongbowman => Some(UnitKind::MuslimLongbowman),
-        UnitKind::MuslimSiegeCrossbowman => Some(UnitKind::MuslimEliteCrossbowman),
-        UnitKind::MuslimEliteHoundmaster => Some(UnitKind::MuslimHoundmaster),
-        UnitKind::MuslimEliteShockCavalry => Some(UnitKind::MuslimShockCavalry),
-        UnitKind::MuslimDivineSpeaker => Some(UnitKind::MuslimEliteCardinal),
-        UnitKind::MuslimDivineJudge => Some(UnitKind::MuslimEliteFlagellant),
-        _ => None,
-    }
+    let faction = kind.faction()?;
+    let source_id = match kind.unit_id() {
+        "citadel_guard" => "elite_shield_infantry",
+        "armored_halberdier" => "halberdier",
+        "elite_heavy_knight" => "heavy_knight",
+        "gods_chosen" => "elite_bannerman",
+        "elite_longbowman" => "longbowman",
+        "siege_crossbowman" => "elite_crossbowman",
+        "elite_houndmaster" => "houndmaster",
+        "elite_shock_cavalry" => "shock_cavalry",
+        "divine_speaker" => "elite_cardinal",
+        "divine_judge" => "elite_flagellant",
+        _ => return None,
+    };
+    UnitKind::from_faction_and_unit_id(faction, source_id, false)
 }
 
 fn tier5_stats_for_kind(data: &GameData, kind: UnitKind) -> Option<UnitStatsConfig> {
+    let faction = kind.faction()?;
+    let unit_id = kind.unit_id();
     let tier4_kind = tier4_source_kind_for_tier5(kind)?;
     let base = tier4_stats_for_kind(data, tier4_kind)?;
     let mut stats = base.clone();
-    stats.id = match kind {
-        UnitKind::ChristianCitadelGuard => "christian_citadel_guard",
-        UnitKind::ChristianArmoredHalberdier => "christian_armored_halberdier",
-        UnitKind::ChristianEliteHeavyKnight => "christian_elite_heavy_knight",
-        UnitKind::ChristianGodsChosen => "christian_gods_chosen",
-        UnitKind::ChristianEliteLongbowman => "christian_elite_longbowman",
-        UnitKind::ChristianSiegeCrossbowman => "christian_siege_crossbowman",
-        UnitKind::ChristianEliteHoundmaster => "christian_elite_houndmaster",
-        UnitKind::ChristianEliteShockCavalry => "christian_elite_shock_cavalry",
-        UnitKind::ChristianDivineSpeaker => "christian_divine_speaker",
-        UnitKind::ChristianDivineJudge => "christian_divine_judge",
-        UnitKind::MuslimCitadelGuard => "muslim_citadel_guard",
-        UnitKind::MuslimArmoredHalberdier => "muslim_armored_halberdier",
-        UnitKind::MuslimEliteHeavyKnight => "muslim_elite_heavy_knight",
-        UnitKind::MuslimGodsChosen => "muslim_gods_chosen",
-        UnitKind::MuslimEliteLongbowman => "muslim_elite_longbowman",
-        UnitKind::MuslimSiegeCrossbowman => "muslim_siege_crossbowman",
-        UnitKind::MuslimEliteHoundmaster => "muslim_elite_houndmaster",
-        UnitKind::MuslimEliteShockCavalry => "muslim_elite_shock_cavalry",
-        UnitKind::MuslimDivineSpeaker => "muslim_divine_speaker",
-        UnitKind::MuslimDivineJudge => "muslim_divine_judge",
-        _ => base.id.as_str(),
-    }
-    .to_string();
+    stats.id = format!("{}_{}", faction.config_key(), unit_id);
 
-    match kind {
-        UnitKind::ChristianCitadelGuard | UnitKind::MuslimCitadelGuard => {
+    match unit_id {
+        "citadel_guard" => {
             stats.max_hp = (base.max_hp * 1.20).max(base.max_hp + 16.0);
             stats.armor = base.armor + 2.4;
             stats.damage = (base.damage * 1.10).max(base.damage + 1.0);
@@ -2501,7 +2564,7 @@ fn tier5_stats_for_kind(data: &GameData, kind: UnitKind) -> Option<UnitStatsConf
             stats.move_speed = (base.move_speed * 0.97).max(1.0);
             stats.morale = (base.morale * 1.12).max(1.0);
         }
-        UnitKind::ChristianArmoredHalberdier | UnitKind::MuslimArmoredHalberdier => {
+        "armored_halberdier" => {
             stats.max_hp = (base.max_hp * 1.18).max(base.max_hp + 14.0);
             stats.armor = base.armor + 2.1;
             stats.damage = (base.damage * 1.16).max(base.damage + 1.4);
@@ -2510,7 +2573,7 @@ fn tier5_stats_for_kind(data: &GameData, kind: UnitKind) -> Option<UnitStatsConf
             stats.move_speed = (base.move_speed * 1.01).max(1.0);
             stats.morale = (base.morale * 1.10).max(1.0);
         }
-        UnitKind::ChristianEliteHeavyKnight | UnitKind::MuslimEliteHeavyKnight => {
+        "elite_heavy_knight" => {
             stats.max_hp = (base.max_hp * 1.18).max(base.max_hp + 14.0);
             stats.armor = base.armor + 2.5;
             stats.damage = (base.damage * 1.22).max(base.damage + 1.8);
@@ -2519,7 +2582,7 @@ fn tier5_stats_for_kind(data: &GameData, kind: UnitKind) -> Option<UnitStatsConf
             stats.move_speed = (base.move_speed * 1.02).max(1.0);
             stats.morale = (base.morale * 1.12).max(1.0);
         }
-        UnitKind::ChristianGodsChosen | UnitKind::MuslimGodsChosen => {
+        "gods_chosen" => {
             stats.max_hp = (base.max_hp * 1.18).max(base.max_hp + 14.0);
             stats.armor = base.armor + 2.0;
             stats.damage = 0.0;
@@ -2533,7 +2596,7 @@ fn tier5_stats_for_kind(data: &GameData, kind: UnitKind) -> Option<UnitStatsConf
             stats.ranged_projectile_speed = 0.0;
             stats.ranged_projectile_max_distance = 0.0;
         }
-        UnitKind::ChristianEliteLongbowman | UnitKind::MuslimEliteLongbowman => {
+        "elite_longbowman" => {
             stats.max_hp = (base.max_hp * 1.16).max(base.max_hp + 12.0);
             stats.armor = base.armor + 1.2;
             stats.damage = (base.damage * 1.12).max(base.damage + 1.0);
@@ -2547,7 +2610,7 @@ fn tier5_stats_for_kind(data: &GameData, kind: UnitKind) -> Option<UnitStatsConf
             stats.ranged_projectile_speed = base.ranged_projectile_speed + 22.0;
             stats.ranged_projectile_max_distance = base.ranged_projectile_max_distance + 48.0;
         }
-        UnitKind::ChristianSiegeCrossbowman | UnitKind::MuslimSiegeCrossbowman => {
+        "siege_crossbowman" => {
             stats.max_hp = (base.max_hp * 1.18).max(base.max_hp + 12.0);
             stats.armor = base.armor + 1.9;
             stats.damage = (base.damage * 1.14).max(base.damage + 1.0);
@@ -2561,7 +2624,7 @@ fn tier5_stats_for_kind(data: &GameData, kind: UnitKind) -> Option<UnitStatsConf
             stats.ranged_projectile_speed = base.ranged_projectile_speed + 28.0;
             stats.ranged_projectile_max_distance = base.ranged_projectile_max_distance + 42.0;
         }
-        UnitKind::ChristianEliteHoundmaster | UnitKind::MuslimEliteHoundmaster => {
+        "elite_houndmaster" => {
             stats.max_hp = (base.max_hp * 1.16).max(base.max_hp + 12.0);
             stats.armor = base.armor + 1.2;
             stats.damage = (base.damage * 1.14).max(base.damage + 1.0);
@@ -2575,7 +2638,7 @@ fn tier5_stats_for_kind(data: &GameData, kind: UnitKind) -> Option<UnitStatsConf
             stats.ranged_projectile_speed = base.ranged_projectile_speed + 32.0;
             stats.ranged_projectile_max_distance = base.ranged_projectile_max_distance + 38.0;
         }
-        UnitKind::ChristianEliteShockCavalry | UnitKind::MuslimEliteShockCavalry => {
+        "elite_shock_cavalry" => {
             stats.max_hp = (base.max_hp * 1.18).max(base.max_hp + 14.0);
             stats.armor = base.armor + 2.0;
             stats.damage = (base.damage * 1.24).max(base.damage + 2.0);
@@ -2589,7 +2652,7 @@ fn tier5_stats_for_kind(data: &GameData, kind: UnitKind) -> Option<UnitStatsConf
             stats.ranged_projectile_speed = 0.0;
             stats.ranged_projectile_max_distance = 0.0;
         }
-        UnitKind::ChristianDivineSpeaker | UnitKind::MuslimDivineSpeaker => {
+        "divine_speaker" => {
             stats.max_hp = (base.max_hp * 1.20).max(base.max_hp + 14.0);
             stats.armor = base.armor + 2.0;
             stats.damage = 0.0;
@@ -2603,7 +2666,7 @@ fn tier5_stats_for_kind(data: &GameData, kind: UnitKind) -> Option<UnitStatsConf
             stats.ranged_projectile_speed = 0.0;
             stats.ranged_projectile_max_distance = 0.0;
         }
-        UnitKind::ChristianDivineJudge | UnitKind::MuslimDivineJudge => {
+        "divine_judge" => {
             stats.max_hp = (base.max_hp * 1.18).max(base.max_hp + 16.0);
             stats.armor = 0.0;
             stats.damage = (base.damage * 1.28).max(base.damage + 2.2);
@@ -2814,12 +2877,12 @@ mod tests {
     use crate::formation::{ActiveFormation, FormationModifiers};
     use crate::model::{
         Armor, AttackProfile, CommanderUnit, DamageEvent, EnemyUnit, FriendlyUnit, GameState,
-        Health, MoveSpeed, PlayerFaction, RecruitEvent, RecruitUnitKind, StartRunEvent, Team, Unit,
-        UnitKind, UnitTier,
+        Health, MoveSpeed, PlayerFaction, RecruitArchetype, RecruitEvent, RecruitUnitKind,
+        StartRunEvent, Team, Unit, UnitKind, UnitTier,
     };
     use crate::squad::{
-        ArmorLockedZero, ConvertTierZeroUnitsEvent, HeroRecruitSubtype, OutOfFormation,
-        PriestSupportCaster, PromoteUnitsEvent, RecruitHeroEvent, RosterEconomy,
+        ArmorLockedZero, ConvertTierZeroUnitsEvent, HeroRecruitSubtype, HeroSubtypeUnit,
+        OutOfFormation, PriestSupportCaster, PromoteUnitsEvent, RecruitHeroEvent, RosterEconomy,
         RosterEconomyFeedback, ScoutRaidBehavior, SquadPlugin, TrackerHoundSummoner,
         enemy_inside_active_formation, is_hero_tier_unlocked, is_upgrade_tier_unlocked,
         movement_multiplier_from_inside_enemy_count, priest_should_cast,
@@ -2880,6 +2943,47 @@ mod tests {
     }
 
     #[test]
+    fn recruit_spawn_visual_rules_use_faction_and_archetype() {
+        assert_eq!(
+            super::recruit_spawn_collider_radius(RecruitArchetype::Infantry),
+            12.0
+        );
+        assert_eq!(
+            super::recruit_spawn_collider_radius(RecruitArchetype::Archer),
+            11.0
+        );
+        assert_eq!(
+            super::recruit_spawn_collider_radius(RecruitArchetype::Priest),
+            11.0
+        );
+
+        assert_eq!(
+            super::recruit_spawn_tint(PlayerFaction::Christian, RecruitArchetype::Infantry),
+            Color::WHITE
+        );
+        assert_eq!(
+            super::recruit_spawn_tint(PlayerFaction::Christian, RecruitArchetype::Archer),
+            Color::srgb(0.94, 1.0, 0.94)
+        );
+        assert_eq!(
+            super::recruit_spawn_tint(PlayerFaction::Christian, RecruitArchetype::Priest),
+            Color::srgb(0.96, 0.93, 1.0)
+        );
+        assert_eq!(
+            super::recruit_spawn_tint(PlayerFaction::Muslim, RecruitArchetype::Infantry),
+            Color::srgb(0.94, 0.96, 1.0)
+        );
+        assert_eq!(
+            super::recruit_spawn_tint(PlayerFaction::Muslim, RecruitArchetype::Archer),
+            Color::srgb(0.88, 0.96, 0.88)
+        );
+        assert_eq!(
+            super::recruit_spawn_tint(PlayerFaction::Muslim, RecruitArchetype::Priest),
+            Color::srgb(0.94, 0.9, 1.0)
+        );
+    }
+
+    #[test]
     fn archer_recruit_gets_ranged_attack_profile() {
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, bevy::state::app::StatesPlugin));
@@ -2903,7 +3007,10 @@ mod tests {
 
         app.world_mut().send_event(RecruitEvent {
             world_position: Vec2::new(24.0, 8.0),
-            recruit_kind: RecruitUnitKind::ChristianPeasantArcher,
+            recruit_kind: RecruitUnitKind::from_faction_and_archetype(
+                PlayerFaction::Christian,
+                RecruitArchetype::Archer,
+            ),
         });
         app.update();
 
@@ -2942,7 +3049,10 @@ mod tests {
 
         app.world_mut().send_event(RecruitEvent {
             world_position: Vec2::new(24.0, 8.0),
-            recruit_kind: RecruitUnitKind::ChristianPeasantPriest,
+            recruit_kind: RecruitUnitKind::from_faction_and_archetype(
+                PlayerFaction::Christian,
+                RecruitArchetype::Priest,
+            ),
         });
         app.update();
 
@@ -3083,7 +3193,10 @@ mod tests {
 
         app.world_mut().send_event(RecruitEvent {
             world_position: Vec2::new(16.0, 0.0),
-            recruit_kind: RecruitUnitKind::ChristianPeasantArcher,
+            recruit_kind: RecruitUnitKind::from_faction_and_archetype(
+                PlayerFaction::Christian,
+                RecruitArchetype::Archer,
+            ),
         });
         app.update();
 
@@ -3141,7 +3254,10 @@ mod tests {
 
         app.world_mut().send_event(RecruitEvent {
             world_position: Vec2::new(10.0, 5.0),
-            recruit_kind: RecruitUnitKind::ChristianPeasantInfantry,
+            recruit_kind: RecruitUnitKind::from_faction_and_archetype(
+                PlayerFaction::Christian,
+                RecruitArchetype::Infantry,
+            ),
         });
         app.update();
 
@@ -3678,11 +3794,17 @@ mod tests {
 
         app.world_mut().send_event(RecruitEvent {
             world_position: Vec2::new(10.0, 5.0),
-            recruit_kind: RecruitUnitKind::ChristianPeasantArcher,
+            recruit_kind: RecruitUnitKind::from_faction_and_archetype(
+                PlayerFaction::Christian,
+                RecruitArchetype::Archer,
+            ),
         });
         app.world_mut().send_event(RecruitEvent {
             world_position: Vec2::new(16.0, 8.0),
-            recruit_kind: RecruitUnitKind::ChristianPeasantArcher,
+            recruit_kind: RecruitUnitKind::from_faction_and_archetype(
+                PlayerFaction::Christian,
+                RecruitArchetype::Archer,
+            ),
         });
         app.world_mut()
             .send_event(crate::enemies::WaveCompletedEvent { wave_number: 10 });
@@ -3773,11 +3895,17 @@ mod tests {
 
         app.world_mut().send_event(RecruitEvent {
             world_position: Vec2::new(10.0, 5.0),
-            recruit_kind: RecruitUnitKind::ChristianPeasantArcher,
+            recruit_kind: RecruitUnitKind::from_faction_and_archetype(
+                PlayerFaction::Christian,
+                RecruitArchetype::Archer,
+            ),
         });
         app.world_mut().send_event(RecruitEvent {
             world_position: Vec2::new(16.0, 8.0),
-            recruit_kind: RecruitUnitKind::ChristianPeasantArcher,
+            recruit_kind: RecruitUnitKind::from_faction_and_archetype(
+                PlayerFaction::Christian,
+                RecruitArchetype::Archer,
+            ),
         });
         app.world_mut()
             .send_event(crate::enemies::WaveCompletedEvent { wave_number: 10 });
@@ -3882,11 +4010,17 @@ mod tests {
 
         app.world_mut().send_event(RecruitEvent {
             world_position: Vec2::new(10.0, 5.0),
-            recruit_kind: RecruitUnitKind::ChristianPeasantArcher,
+            recruit_kind: RecruitUnitKind::from_faction_and_archetype(
+                PlayerFaction::Christian,
+                RecruitArchetype::Archer,
+            ),
         });
         app.world_mut().send_event(RecruitEvent {
             world_position: Vec2::new(16.0, 8.0),
-            recruit_kind: RecruitUnitKind::ChristianPeasantArcher,
+            recruit_kind: RecruitUnitKind::from_faction_and_archetype(
+                PlayerFaction::Christian,
+                RecruitArchetype::Archer,
+            ),
         });
         app.world_mut()
             .send_event(crate::enemies::WaveCompletedEvent { wave_number: 10 });
@@ -4005,7 +4139,10 @@ mod tests {
 
         app.world_mut().send_event(RecruitEvent {
             world_position: Vec2::new(10.0, 5.0),
-            recruit_kind: RecruitUnitKind::ChristianPeasantInfantry,
+            recruit_kind: RecruitUnitKind::from_faction_and_archetype(
+                PlayerFaction::Christian,
+                RecruitArchetype::Infantry,
+            ),
         });
         app.update();
 
@@ -4090,7 +4227,10 @@ mod tests {
 
         app.world_mut().send_event(RecruitEvent {
             world_position: Vec2::new(10.0, 5.0),
-            recruit_kind: RecruitUnitKind::ChristianPeasantPriest,
+            recruit_kind: RecruitUnitKind::from_faction_and_archetype(
+                PlayerFaction::Christian,
+                RecruitArchetype::Priest,
+            ),
         });
         app.update();
 
@@ -4152,7 +4292,10 @@ mod tests {
 
         app.world_mut().send_event(RecruitEvent {
             world_position: Vec2::new(10.0, 5.0),
-            recruit_kind: RecruitUnitKind::ChristianPeasantPriest,
+            recruit_kind: RecruitUnitKind::from_faction_and_archetype(
+                PlayerFaction::Christian,
+                RecruitArchetype::Priest,
+            ),
         });
         app.update();
 
@@ -4232,7 +4375,10 @@ mod tests {
 
         app.world_mut().send_event(RecruitEvent {
             world_position: Vec2::new(10.0, 5.0),
-            recruit_kind: RecruitUnitKind::ChristianPeasantPriest,
+            recruit_kind: RecruitUnitKind::from_faction_and_archetype(
+                PlayerFaction::Christian,
+                RecruitArchetype::Priest,
+            ),
         });
         app.update();
 
@@ -4325,7 +4471,10 @@ mod tests {
 
         app.world_mut().send_event(RecruitEvent {
             world_position: Vec2::new(10.0, 5.0),
-            recruit_kind: RecruitUnitKind::ChristianPeasantInfantry,
+            recruit_kind: RecruitUnitKind::from_faction_and_archetype(
+                PlayerFaction::Christian,
+                RecruitArchetype::Infantry,
+            ),
         });
         app.update();
 
@@ -4388,7 +4537,10 @@ mod tests {
 
         app.world_mut().send_event(RecruitEvent {
             world_position: Vec2::new(10.0, 5.0),
-            recruit_kind: RecruitUnitKind::ChristianPeasantInfantry,
+            recruit_kind: RecruitUnitKind::from_faction_and_archetype(
+                PlayerFaction::Christian,
+                RecruitArchetype::Infantry,
+            ),
         });
         app.update();
 
@@ -4510,7 +4662,10 @@ mod tests {
 
         app.world_mut().send_event(RecruitEvent {
             world_position: Vec2::new(10.0, 5.0),
-            recruit_kind: RecruitUnitKind::ChristianPeasantInfantry,
+            recruit_kind: RecruitUnitKind::from_faction_and_archetype(
+                PlayerFaction::Christian,
+                RecruitArchetype::Infantry,
+            ),
         });
         app.update();
 
@@ -4610,16 +4765,29 @@ mod tests {
 
     #[test]
     fn hero_subtype_resolution_is_faction_aware_and_unit_id_driven() {
+        let data = GameData::load_from_dir(std::path::Path::new("assets/data")).expect("data");
         for faction in PlayerFaction::all() {
-            let sword_shield =
-                super::hero_unit_kind_for_subtype(faction, HeroRecruitSubtype::InfantrySwordShield)
-                    .expect("hero subtype should resolve");
-            let beast_master =
-                super::hero_unit_kind_for_subtype(faction, HeroRecruitSubtype::RangedBeastMaster)
-                    .expect("hero subtype should resolve");
-            let super_fanatic =
-                super::hero_unit_kind_for_subtype(faction, HeroRecruitSubtype::SupportSuperFanatic)
-                    .expect("hero subtype should resolve");
+            let sword_shield = super::hero_unit_kind_for_subtype(
+                &data,
+                faction,
+                HeroRecruitSubtype::InfantrySwordShield,
+                0,
+            )
+            .expect("hero subtype should resolve");
+            let beast_master = super::hero_unit_kind_for_subtype(
+                &data,
+                faction,
+                HeroRecruitSubtype::RangedBeastMaster,
+                0,
+            )
+            .expect("hero subtype should resolve");
+            let super_fanatic = super::hero_unit_kind_for_subtype(
+                &data,
+                faction,
+                HeroRecruitSubtype::SupportSuperFanatic,
+                0,
+            )
+            .expect("hero subtype should resolve");
 
             assert_eq!(sword_shield.unit_id(), "citadel_guard");
             assert_eq!(beast_master.unit_id(), "elite_houndmaster");
@@ -4684,8 +4852,12 @@ mod tests {
 
         let progression_after_success = app.world().resource::<Progression>();
         assert_eq!(progression_after_success.hear_the_call_tokens, 0);
+        let data = app.world().resource::<GameData>();
         let expected_gold = 400.0
-            - super::hero_recruit_gold_cost_for_subtype(HeroRecruitSubtype::InfantrySwordShield);
+            - super::hero_recruit_gold_cost_for_subtype_with_data(
+                data,
+                HeroRecruitSubtype::InfantrySwordShield,
+            );
         assert!((progression_after_success.gold - expected_gold).abs() < 0.01);
 
         let world = app.world_mut();
@@ -4694,14 +4866,19 @@ mod tests {
             &UnitTier,
             &super::UnitLevelCost,
             Option<&FriendlyUnit>,
+            Option<&HeroSubtypeUnit>,
         )>();
         let hero = query
             .iter(world)
-            .find(|(unit, tier, _, friendly)| {
+            .find(|(unit, tier, _, friendly, _)| {
                 unit.kind == UnitKind::ChristianCitadelGuard && tier.0 == 5 && friendly.is_some()
             })
             .expect("expected recruited hero placeholder unit");
         assert_eq!(hero.2.0, 5);
+        assert_eq!(
+            hero.4.map(|marker| marker.subtype),
+            Some(HeroRecruitSubtype::InfantrySwordShield)
+        );
     }
 
     #[test]
@@ -4749,6 +4926,98 @@ mod tests {
                 .as_deref()
                 .unwrap_or_default()
                 .contains("requires")
+        );
+    }
+
+    #[test]
+    fn hero_subtype_profiles_have_clear_tradeoffs() {
+        let subtypes = [
+            HeroRecruitSubtype::InfantrySwordShield,
+            HeroRecruitSubtype::InfantrySpear,
+            HeroRecruitSubtype::InfantryTwoHandedSword,
+            HeroRecruitSubtype::RangedBow,
+            HeroRecruitSubtype::RangedJavelin,
+            HeroRecruitSubtype::RangedBeastMaster,
+            HeroRecruitSubtype::SupportSuperPriest,
+            HeroRecruitSubtype::SupportSuperFanatic,
+            HeroRecruitSubtype::CavalrySuperKnight,
+        ];
+
+        for subtype in subtypes {
+            let profile = super::hero_subtype_combat_profile(subtype);
+            let has_upside = profile.outgoing_damage_multiplier > 1.0
+                || profile.attack_speed_multiplier > 1.0
+                || profile.incoming_damage_multiplier < 1.0;
+            let has_downside = profile.outgoing_damage_multiplier < 1.0
+                || profile.attack_speed_multiplier < 1.0
+                || profile.incoming_damage_multiplier > 1.0;
+
+            assert!(
+                has_upside,
+                "subtype {subtype:?} should have at least one upside"
+            );
+            assert!(
+                has_downside,
+                "subtype {subtype:?} should have at least one downside"
+            );
+        }
+    }
+
+    #[test]
+    fn hero_subtype_matchups_follow_specialization_examples() {
+        let spear_vs_cavalry = super::hero_subtype_matchup_multiplier(
+            HeroRecruitSubtype::InfantrySpear,
+            UnitKind::MuslimShockCavalry,
+        );
+        let spear_vs_support = super::hero_subtype_matchup_multiplier(
+            HeroRecruitSubtype::InfantrySpear,
+            UnitKind::MuslimDivineSpeaker,
+        );
+        assert!(spear_vs_cavalry > spear_vs_support);
+
+        let javelin_vs_heavy = super::hero_subtype_matchup_multiplier(
+            HeroRecruitSubtype::RangedJavelin,
+            UnitKind::MuslimCitadelGuard,
+        );
+        let javelin_vs_unarmored = super::hero_subtype_matchup_multiplier(
+            HeroRecruitSubtype::RangedJavelin,
+            UnitKind::MuslimPeasantArcher,
+        );
+        assert!(javelin_vs_heavy > javelin_vs_unarmored);
+
+        let super_knight_vs_frontline = super::hero_subtype_matchup_multiplier(
+            HeroRecruitSubtype::CavalrySuperKnight,
+            UnitKind::MuslimMenAtArms,
+        );
+        let super_knight_vs_anti_cavalry = super::hero_subtype_matchup_multiplier(
+            HeroRecruitSubtype::CavalrySuperKnight,
+            UnitKind::MuslimArmoredHalberdier,
+        );
+        assert!(super_knight_vs_frontline > super_knight_vs_anti_cavalry);
+    }
+
+    #[test]
+    fn unit_kind_label_is_faction_agnostic_and_unit_id_driven() {
+        let fixtures = [
+            ("peasant_infantry", "Peasant Infantry"),
+            ("spearman", "Spearman"),
+            ("elite_longbowman", "Elite Longbowman"),
+            ("divine_speaker", "Divine Speaker"),
+        ];
+        for (unit_id, expected_label) in fixtures {
+            for faction in PlayerFaction::all() {
+                let kind = UnitKind::from_faction_and_unit_id(faction, unit_id, false)
+                    .expect("friendly unit should resolve");
+                assert_eq!(super::unit_kind_label(kind), expected_label);
+            }
+        }
+
+        let rescuable_infantry =
+            UnitKind::from_faction_and_unit_id(PlayerFaction::Christian, "peasant_infantry", true)
+                .expect("rescuable infantry should resolve");
+        assert_eq!(
+            super::unit_kind_label(rescuable_infantry),
+            "Rescuable Peasant Infantry"
         );
     }
 }

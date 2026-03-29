@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 
 use crate::data::GameData;
+use crate::model::{PlayerFaction, RecruitArchetype};
 use crate::upgrades::{
     UpgradeCardIcon, upgrade_card_icon, upgrade_display_description, upgrade_display_title,
 };
@@ -71,16 +72,36 @@ fn sync_archive_dataset(data: Option<Res<GameData>>, mut archive: ResMut<Archive
 }
 
 pub fn build_archive_entries(data: &GameData) -> Vec<ArchiveEntry> {
+    let commander_christian = data.units.commander_for_faction(PlayerFaction::Christian);
+    let commander_muslim = data.units.commander_for_faction(PlayerFaction::Muslim);
+    let infantry_christian = data
+        .units
+        .recruit_for_faction_and_archetype(PlayerFaction::Christian, RecruitArchetype::Infantry);
+    let infantry_muslim = data
+        .units
+        .recruit_for_faction_and_archetype(PlayerFaction::Muslim, RecruitArchetype::Infantry);
+    let enemy_infantry_christian = data
+        .enemies
+        .enemy_profile_for_faction_and_archetype(
+            PlayerFaction::Christian,
+            RecruitArchetype::Infantry,
+        )
+        .expect("enemy infantry profile should exist");
+    let enemy_infantry_muslim = data
+        .enemies
+        .enemy_profile_for_faction_and_archetype(PlayerFaction::Muslim, RecruitArchetype::Infantry)
+        .expect("enemy infantry profile should exist");
+
     let mut entries = vec![
         ArchiveEntry {
             category: ArchiveCategory::Units,
             title: "Baldiun (Commander)".to_string(),
             description: format!(
                 "Support commander. HP {}, Armor {}, Damage {}, Aura {}.",
-                data.units.commander_christian.max_hp,
-                data.units.commander_christian.armor,
-                data.units.commander_christian.damage,
-                data.units.commander_christian.aura_radius,
+                commander_christian.max_hp,
+                commander_christian.armor,
+                commander_christian.damage,
+                commander_christian.aura_radius,
             ),
             icon: None,
         },
@@ -89,10 +110,10 @@ pub fn build_archive_entries(data: &GameData) -> Vec<ArchiveEntry> {
             title: "Saladin (Commander)".to_string(),
             description: format!(
                 "Support commander. HP {}, Armor {}, Damage {}, Aura {}.",
-                data.units.commander_muslim.max_hp,
-                data.units.commander_muslim.armor,
-                data.units.commander_muslim.damage,
-                data.units.commander_muslim.aura_radius,
+                commander_muslim.max_hp,
+                commander_muslim.armor,
+                commander_muslim.damage,
+                commander_muslim.aura_radius,
             ),
             icon: None,
         },
@@ -101,9 +122,9 @@ pub fn build_archive_entries(data: &GameData) -> Vec<ArchiveEntry> {
             title: "Peasant Infantry".to_string(),
             description: format!(
                 "Melee retinue. Christian profile: HP {}, Armor {}, Damage {}.",
-                data.units.recruit_christian_peasant_infantry.max_hp,
-                data.units.recruit_christian_peasant_infantry.armor,
-                data.units.recruit_christian_peasant_infantry.damage,
+                infantry_christian.max_hp,
+                infantry_christian.armor,
+                infantry_christian.damage,
             ),
             icon: None,
         },
@@ -124,9 +145,9 @@ pub fn build_archive_entries(data: &GameData) -> Vec<ArchiveEntry> {
             title: "Peasant Infantry (Alt Profile)".to_string(),
             description: format!(
                 "Melee retinue. Muslim profile: HP {}, Armor {}, Damage {}.",
-                data.units.recruit_muslim_peasant_infantry.max_hp,
-                data.units.recruit_muslim_peasant_infantry.armor,
-                data.units.recruit_muslim_peasant_infantry.damage,
+                infantry_muslim.max_hp,
+                infantry_muslim.armor,
+                infantry_muslim.damage,
             ),
             icon: None,
         },
@@ -149,9 +170,9 @@ pub fn build_archive_entries(data: &GameData) -> Vec<ArchiveEntry> {
             title: "Enemy Infantry".to_string(),
             description: format!(
                 "Melee enemy profile A. HP {}, Damage {}, Move {}.",
-                data.enemies.enemy_christian_peasant_infantry.max_hp,
-                data.enemies.enemy_christian_peasant_infantry.damage,
-                data.enemies.enemy_christian_peasant_infantry.move_speed,
+                enemy_infantry_christian.max_hp,
+                enemy_infantry_christian.damage,
+                enemy_infantry_christian.move_speed,
             ),
             icon: None,
         },
@@ -160,9 +181,9 @@ pub fn build_archive_entries(data: &GameData) -> Vec<ArchiveEntry> {
             title: "Enemy Infantry (Alt Profile)".to_string(),
             description: format!(
                 "Melee enemy profile B. HP {}, Damage {}, Move {}.",
-                data.enemies.enemy_muslim_peasant_infantry.max_hp,
-                data.enemies.enemy_muslim_peasant_infantry.damage,
-                data.enemies.enemy_muslim_peasant_infantry.move_speed,
+                enemy_infantry_muslim.max_hp,
+                enemy_infantry_muslim.damage,
+                enemy_infantry_muslim.move_speed,
             ),
             icon: None,
         },

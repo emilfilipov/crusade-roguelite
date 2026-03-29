@@ -144,6 +144,16 @@ When contributing to this project, follow these rules:
 11. Keep code organized by domain modules/plugins (for example: squad, formation, combat, morale, enemies, upgrades, ui, packaging hooks).
 12. Prefer deterministic, testable pure logic for combat/math systems; isolate Bevy-specific glue from core logic.
 
+## Reporting Format
+- Whenever reporting remaining task status to the user, use this exact compact table format:
+
+| TODO | IN_PROGRESS | BLOCKED | UNFINISHED |
+|---:|---:|---:|---:|
+| <count> | <count> | <count> | <count> |
+
+- `UNFINISHED = TODO + IN_PROGRESS + BLOCKED`.
+- Keep this table format stable across updates.
+
 ## Build, Test, and Repository Discipline
 These steps are mandatory for every meaningful code change.
 

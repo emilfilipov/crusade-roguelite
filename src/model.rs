@@ -171,12 +171,6 @@ pub struct HeroRef {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
-pub struct ItemRef {
-    pub faction: Option<PlayerFaction>,
-    pub item_id: &'static str,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum UnitKind {
     Commander,
     ChristianPeasantInfantry,
@@ -279,100 +273,93 @@ pub enum UnitKind {
     RescuableMuslimPeasantPriest,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum RecruitUnitKind {
-    ChristianPeasantInfantry,
-    ChristianPeasantArcher,
-    ChristianPeasantPriest,
-    MuslimPeasantInfantry,
-    MuslimPeasantArcher,
-    MuslimPeasantPriest,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum RecruitArchetype {
     Infantry,
     Archer,
     Priest,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub enum UnitRoleTag {
+    Frontline,
+    AntiCavalry,
+    Cavalry,
+    AntiArmor,
+    Skirmisher,
+    Support,
+    HeroDoctrine,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub enum UnitArmorClass {
+    Unarmored,
+    Light,
+    Armored,
+    Heavy,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub struct RecruitUnitKind {
+    faction: PlayerFaction,
+    archetype: RecruitArchetype,
+}
+
 impl RecruitUnitKind {
     pub const fn all_for_faction(faction: PlayerFaction) -> [Self; 3] {
-        match faction {
-            PlayerFaction::Christian => [
-                Self::ChristianPeasantInfantry,
-                Self::ChristianPeasantArcher,
-                Self::ChristianPeasantPriest,
-            ],
-            PlayerFaction::Muslim => [
-                Self::MuslimPeasantInfantry,
-                Self::MuslimPeasantArcher,
-                Self::MuslimPeasantPriest,
-            ],
-        }
+        [
+            Self::from_faction_and_archetype(faction, RecruitArchetype::Infantry),
+            Self::from_faction_and_archetype(faction, RecruitArchetype::Archer),
+            Self::from_faction_and_archetype(faction, RecruitArchetype::Priest),
+        ]
     }
 
     pub const fn archetype(self) -> RecruitArchetype {
-        match self {
-            Self::ChristianPeasantInfantry | Self::MuslimPeasantInfantry => {
-                RecruitArchetype::Infantry
-            }
-            Self::ChristianPeasantArcher | Self::MuslimPeasantArcher => RecruitArchetype::Archer,
-            Self::ChristianPeasantPriest | Self::MuslimPeasantPriest => RecruitArchetype::Priest,
-        }
+        self.archetype
     }
 
     pub const fn faction(self) -> PlayerFaction {
-        match self {
-            Self::ChristianPeasantInfantry
-            | Self::ChristianPeasantArcher
-            | Self::ChristianPeasantPriest => PlayerFaction::Christian,
-            Self::MuslimPeasantInfantry | Self::MuslimPeasantArcher | Self::MuslimPeasantPriest => {
-                PlayerFaction::Muslim
-            }
-        }
+        self.faction
     }
 
     pub const fn from_faction_and_archetype(
         faction: PlayerFaction,
         archetype: RecruitArchetype,
     ) -> Self {
-        match (faction, archetype) {
-            (PlayerFaction::Christian, RecruitArchetype::Infantry) => {
-                Self::ChristianPeasantInfantry
-            }
-            (PlayerFaction::Christian, RecruitArchetype::Archer) => Self::ChristianPeasantArcher,
-            (PlayerFaction::Christian, RecruitArchetype::Priest) => Self::ChristianPeasantPriest,
-            (PlayerFaction::Muslim, RecruitArchetype::Infantry) => Self::MuslimPeasantInfantry,
-            (PlayerFaction::Muslim, RecruitArchetype::Archer) => Self::MuslimPeasantArcher,
-            (PlayerFaction::Muslim, RecruitArchetype::Priest) => Self::MuslimPeasantPriest,
-        }
+        Self { faction, archetype }
     }
 
-    pub const fn as_unit_kind(self) -> UnitKind {
-        match self {
-            Self::ChristianPeasantInfantry => UnitKind::ChristianPeasantInfantry,
-            Self::ChristianPeasantArcher => UnitKind::ChristianPeasantArcher,
-            Self::ChristianPeasantPriest => UnitKind::ChristianPeasantPriest,
-            Self::MuslimPeasantInfantry => UnitKind::MuslimPeasantInfantry,
-            Self::MuslimPeasantArcher => UnitKind::MuslimPeasantArcher,
-            Self::MuslimPeasantPriest => UnitKind::MuslimPeasantPriest,
+    pub const fn from_unit_kind(kind: UnitKind) -> Option<Self> {
+        let faction = match kind.faction() {
+            Some(value) => value,
+            None => return None,
+        };
+        let archetype = match kind.recruit_archetype() {
+            Some(value) => value,
+            None => return None,
+        };
+        if kind.is_rescuable_variant() {
+            return None;
         }
+        Some(Self::from_faction_and_archetype(faction, archetype))
+    }
+
+    pub fn as_unit_kind(self) -> UnitKind {
+        UnitKind::from_faction_and_unit_id(self.faction(), self.unit_id(), false)
+            .expect("recruit unit kind should always resolve")
     }
 
     pub const fn unit_id(self) -> &'static str {
-        self.as_unit_kind().unit_id()
+        match self.archetype() {
+            RecruitArchetype::Infantry => "peasant_infantry",
+            RecruitArchetype::Archer => "peasant_archer",
+            RecruitArchetype::Priest => "peasant_priest",
+        }
     }
 
-    pub const fn as_rescuable_unit_kind(self) -> UnitKind {
-        match self {
-            Self::ChristianPeasantInfantry => UnitKind::RescuableChristianPeasantInfantry,
-            Self::ChristianPeasantArcher => UnitKind::RescuableChristianPeasantArcher,
-            Self::ChristianPeasantPriest => UnitKind::RescuableChristianPeasantPriest,
-            Self::MuslimPeasantInfantry => UnitKind::RescuableMuslimPeasantInfantry,
-            Self::MuslimPeasantArcher => UnitKind::RescuableMuslimPeasantArcher,
-            Self::MuslimPeasantPriest => UnitKind::RescuableMuslimPeasantPriest,
-        }
+    pub fn as_rescuable_unit_kind(self) -> UnitKind {
+        UnitKind::from_faction_and_unit_id(self.faction(), self.unit_id(), true)
+            .expect("recruit unit kind rescuable variant should always resolve")
     }
 }
 
@@ -455,149 +442,128 @@ impl UnitKind {
         unit_id: &str,
         rescuable: bool,
     ) -> Option<Self> {
-        if rescuable {
-            return match (faction, unit_id) {
-                (PlayerFaction::Christian, "peasant_infantry") => {
-                    Some(Self::RescuableChristianPeasantInfantry)
-                }
-                (PlayerFaction::Christian, "peasant_archer") => {
-                    Some(Self::RescuableChristianPeasantArcher)
-                }
-                (PlayerFaction::Christian, "peasant_priest") => {
-                    Some(Self::RescuableChristianPeasantPriest)
-                }
-                (PlayerFaction::Muslim, "peasant_infantry") => {
-                    Some(Self::RescuableMuslimPeasantInfantry)
-                }
-                (PlayerFaction::Muslim, "peasant_archer") => {
-                    Some(Self::RescuableMuslimPeasantArcher)
-                }
-                (PlayerFaction::Muslim, "peasant_priest") => {
-                    Some(Self::RescuableMuslimPeasantPriest)
-                }
-                _ => None,
-            };
-        }
+        let (christian, muslim) = if rescuable {
+            Self::paired_rescuable_kind_for_unit_id(unit_id)?
+        } else {
+            Self::paired_kind_for_unit_id(unit_id)?
+        };
+        Some(Self::select_by_faction(faction, christian, muslim))
+    }
 
-        match (faction, unit_id) {
-            (PlayerFaction::Christian, "peasant_infantry") => Some(Self::ChristianPeasantInfantry),
-            (PlayerFaction::Christian, "peasant_archer") => Some(Self::ChristianPeasantArcher),
-            (PlayerFaction::Christian, "peasant_priest") => Some(Self::ChristianPeasantPriest),
-            (PlayerFaction::Christian, "men_at_arms") => Some(Self::ChristianMenAtArms),
-            (PlayerFaction::Christian, "bowman") => Some(Self::ChristianBowman),
-            (PlayerFaction::Christian, "devoted") => Some(Self::ChristianDevoted),
-            (PlayerFaction::Christian, "shield_infantry") => Some(Self::ChristianShieldInfantry),
-            (PlayerFaction::Christian, "spearman") => Some(Self::ChristianSpearman),
-            (PlayerFaction::Christian, "unmounted_knight") => Some(Self::ChristianUnmountedKnight),
-            (PlayerFaction::Christian, "squire") => Some(Self::ChristianSquire),
-            (PlayerFaction::Christian, "experienced_bowman") => {
-                Some(Self::ChristianExperiencedBowman)
+    const fn select_by_faction(faction: PlayerFaction, christian: Self, muslim: Self) -> Self {
+        match faction {
+            PlayerFaction::Christian => christian,
+            PlayerFaction::Muslim => muslim,
+        }
+    }
+
+    fn paired_rescuable_kind_for_unit_id(unit_id: &str) -> Option<(Self, Self)> {
+        match unit_id {
+            "peasant_infantry" => Some((
+                Self::RescuableChristianPeasantInfantry,
+                Self::RescuableMuslimPeasantInfantry,
+            )),
+            "peasant_archer" => Some((
+                Self::RescuableChristianPeasantArcher,
+                Self::RescuableMuslimPeasantArcher,
+            )),
+            "peasant_priest" => Some((
+                Self::RescuableChristianPeasantPriest,
+                Self::RescuableMuslimPeasantPriest,
+            )),
+            _ => None,
+        }
+    }
+
+    fn paired_kind_for_unit_id(unit_id: &str) -> Option<(Self, Self)> {
+        match unit_id {
+            "peasant_infantry" => {
+                Some((Self::ChristianPeasantInfantry, Self::MuslimPeasantInfantry))
             }
-            (PlayerFaction::Christian, "crossbowman") => Some(Self::ChristianCrossbowman),
-            (PlayerFaction::Christian, "tracker") => Some(Self::ChristianTracker),
-            (PlayerFaction::Christian, "scout") => Some(Self::ChristianScout),
-            (PlayerFaction::Christian, "devoted_one") => Some(Self::ChristianDevotedOne),
-            (PlayerFaction::Christian, "fanatic") => Some(Self::ChristianFanatic),
-            (PlayerFaction::Christian, "experienced_shield_infantry") => {
-                Some(Self::ChristianExperiencedShieldInfantry)
+            "peasant_archer" => Some((Self::ChristianPeasantArcher, Self::MuslimPeasantArcher)),
+            "peasant_priest" => Some((Self::ChristianPeasantPriest, Self::MuslimPeasantPriest)),
+            "men_at_arms" => Some((Self::ChristianMenAtArms, Self::MuslimMenAtArms)),
+            "bowman" => Some((Self::ChristianBowman, Self::MuslimBowman)),
+            "devoted" => Some((Self::ChristianDevoted, Self::MuslimDevoted)),
+            "shield_infantry" => Some((Self::ChristianShieldInfantry, Self::MuslimShieldInfantry)),
+            "spearman" => Some((Self::ChristianSpearman, Self::MuslimSpearman)),
+            "unmounted_knight" => {
+                Some((Self::ChristianUnmountedKnight, Self::MuslimUnmountedKnight))
             }
-            (PlayerFaction::Christian, "shielded_spearman") => {
-                Some(Self::ChristianShieldedSpearman)
+            "squire" => Some((Self::ChristianSquire, Self::MuslimSquire)),
+            "experienced_bowman" => Some((
+                Self::ChristianExperiencedBowman,
+                Self::MuslimExperiencedBowman,
+            )),
+            "crossbowman" => Some((Self::ChristianCrossbowman, Self::MuslimCrossbowman)),
+            "tracker" => Some((Self::ChristianTracker, Self::MuslimTracker)),
+            "scout" => Some((Self::ChristianScout, Self::MuslimScout)),
+            "devoted_one" => Some((Self::ChristianDevotedOne, Self::MuslimDevotedOne)),
+            "fanatic" => Some((Self::ChristianFanatic, Self::MuslimFanatic)),
+            "experienced_shield_infantry" => Some((
+                Self::ChristianExperiencedShieldInfantry,
+                Self::MuslimExperiencedShieldInfantry,
+            )),
+            "shielded_spearman" => Some((
+                Self::ChristianShieldedSpearman,
+                Self::MuslimShieldedSpearman,
+            )),
+            "knight" => Some((Self::ChristianKnight, Self::MuslimKnight)),
+            "bannerman" => Some((Self::ChristianBannerman, Self::MuslimBannerman)),
+            "elite_bowman" => Some((Self::ChristianEliteBowman, Self::MuslimEliteBowman)),
+            "armored_crossbowman" => Some((
+                Self::ChristianArmoredCrossbowman,
+                Self::MuslimArmoredCrossbowman,
+            )),
+            "pathfinder" => Some((Self::ChristianPathfinder, Self::MuslimPathfinder)),
+            "mounted_scout" => Some((Self::ChristianMountedScout, Self::MuslimMountedScout)),
+            "cardinal" => Some((Self::ChristianCardinal, Self::MuslimCardinal)),
+            "flagellant" => Some((Self::ChristianFlagellant, Self::MuslimFlagellant)),
+            "elite_shield_infantry" => Some((
+                Self::ChristianEliteShieldInfantry,
+                Self::MuslimEliteShieldInfantry,
+            )),
+            "halberdier" => Some((Self::ChristianHalberdier, Self::MuslimHalberdier)),
+            "heavy_knight" => Some((Self::ChristianHeavyKnight, Self::MuslimHeavyKnight)),
+            "elite_bannerman" => Some((Self::ChristianEliteBannerman, Self::MuslimEliteBannerman)),
+            "longbowman" => Some((Self::ChristianLongbowman, Self::MuslimLongbowman)),
+            "elite_crossbowman" => Some((
+                Self::ChristianEliteCrossbowman,
+                Self::MuslimEliteCrossbowman,
+            )),
+            "houndmaster" => Some((Self::ChristianHoundmaster, Self::MuslimHoundmaster)),
+            "shock_cavalry" => Some((Self::ChristianShockCavalry, Self::MuslimShockCavalry)),
+            "elite_cardinal" => Some((Self::ChristianEliteCardinal, Self::MuslimEliteCardinal)),
+            "elite_flagellant" => {
+                Some((Self::ChristianEliteFlagellant, Self::MuslimEliteFlagellant))
             }
-            (PlayerFaction::Christian, "knight") => Some(Self::ChristianKnight),
-            (PlayerFaction::Christian, "bannerman") => Some(Self::ChristianBannerman),
-            (PlayerFaction::Christian, "elite_bowman") => Some(Self::ChristianEliteBowman),
-            (PlayerFaction::Christian, "armored_crossbowman") => {
-                Some(Self::ChristianArmoredCrossbowman)
+            "citadel_guard" => Some((Self::ChristianCitadelGuard, Self::MuslimCitadelGuard)),
+            "armored_halberdier" => Some((
+                Self::ChristianArmoredHalberdier,
+                Self::MuslimArmoredHalberdier,
+            )),
+            "elite_heavy_knight" => Some((
+                Self::ChristianEliteHeavyKnight,
+                Self::MuslimEliteHeavyKnight,
+            )),
+            "gods_chosen" => Some((Self::ChristianGodsChosen, Self::MuslimGodsChosen)),
+            "elite_longbowman" => {
+                Some((Self::ChristianEliteLongbowman, Self::MuslimEliteLongbowman))
             }
-            (PlayerFaction::Christian, "pathfinder") => Some(Self::ChristianPathfinder),
-            (PlayerFaction::Christian, "mounted_scout") => Some(Self::ChristianMountedScout),
-            (PlayerFaction::Christian, "cardinal") => Some(Self::ChristianCardinal),
-            (PlayerFaction::Christian, "flagellant") => Some(Self::ChristianFlagellant),
-            (PlayerFaction::Christian, "elite_shield_infantry") => {
-                Some(Self::ChristianEliteShieldInfantry)
-            }
-            (PlayerFaction::Christian, "halberdier") => Some(Self::ChristianHalberdier),
-            (PlayerFaction::Christian, "heavy_knight") => Some(Self::ChristianHeavyKnight),
-            (PlayerFaction::Christian, "elite_bannerman") => Some(Self::ChristianEliteBannerman),
-            (PlayerFaction::Christian, "longbowman") => Some(Self::ChristianLongbowman),
-            (PlayerFaction::Christian, "elite_crossbowman") => {
-                Some(Self::ChristianEliteCrossbowman)
-            }
-            (PlayerFaction::Christian, "houndmaster") => Some(Self::ChristianHoundmaster),
-            (PlayerFaction::Christian, "shock_cavalry") => Some(Self::ChristianShockCavalry),
-            (PlayerFaction::Christian, "elite_cardinal") => Some(Self::ChristianEliteCardinal),
-            (PlayerFaction::Christian, "elite_flagellant") => Some(Self::ChristianEliteFlagellant),
-            (PlayerFaction::Christian, "citadel_guard") => Some(Self::ChristianCitadelGuard),
-            (PlayerFaction::Christian, "armored_halberdier") => {
-                Some(Self::ChristianArmoredHalberdier)
-            }
-            (PlayerFaction::Christian, "elite_heavy_knight") => {
-                Some(Self::ChristianEliteHeavyKnight)
-            }
-            (PlayerFaction::Christian, "gods_chosen") => Some(Self::ChristianGodsChosen),
-            (PlayerFaction::Christian, "elite_longbowman") => Some(Self::ChristianEliteLongbowman),
-            (PlayerFaction::Christian, "siege_crossbowman") => {
-                Some(Self::ChristianSiegeCrossbowman)
-            }
-            (PlayerFaction::Christian, "elite_houndmaster") => {
-                Some(Self::ChristianEliteHoundmaster)
-            }
-            (PlayerFaction::Christian, "elite_shock_cavalry") => {
-                Some(Self::ChristianEliteShockCavalry)
-            }
-            (PlayerFaction::Christian, "divine_speaker") => Some(Self::ChristianDivineSpeaker),
-            (PlayerFaction::Christian, "divine_judge") => Some(Self::ChristianDivineJudge),
-            (PlayerFaction::Muslim, "peasant_infantry") => Some(Self::MuslimPeasantInfantry),
-            (PlayerFaction::Muslim, "peasant_archer") => Some(Self::MuslimPeasantArcher),
-            (PlayerFaction::Muslim, "peasant_priest") => Some(Self::MuslimPeasantPriest),
-            (PlayerFaction::Muslim, "men_at_arms") => Some(Self::MuslimMenAtArms),
-            (PlayerFaction::Muslim, "bowman") => Some(Self::MuslimBowman),
-            (PlayerFaction::Muslim, "devoted") => Some(Self::MuslimDevoted),
-            (PlayerFaction::Muslim, "shield_infantry") => Some(Self::MuslimShieldInfantry),
-            (PlayerFaction::Muslim, "spearman") => Some(Self::MuslimSpearman),
-            (PlayerFaction::Muslim, "unmounted_knight") => Some(Self::MuslimUnmountedKnight),
-            (PlayerFaction::Muslim, "squire") => Some(Self::MuslimSquire),
-            (PlayerFaction::Muslim, "experienced_bowman") => Some(Self::MuslimExperiencedBowman),
-            (PlayerFaction::Muslim, "crossbowman") => Some(Self::MuslimCrossbowman),
-            (PlayerFaction::Muslim, "tracker") => Some(Self::MuslimTracker),
-            (PlayerFaction::Muslim, "scout") => Some(Self::MuslimScout),
-            (PlayerFaction::Muslim, "devoted_one") => Some(Self::MuslimDevotedOne),
-            (PlayerFaction::Muslim, "fanatic") => Some(Self::MuslimFanatic),
-            (PlayerFaction::Muslim, "experienced_shield_infantry") => {
-                Some(Self::MuslimExperiencedShieldInfantry)
-            }
-            (PlayerFaction::Muslim, "shielded_spearman") => Some(Self::MuslimShieldedSpearman),
-            (PlayerFaction::Muslim, "knight") => Some(Self::MuslimKnight),
-            (PlayerFaction::Muslim, "bannerman") => Some(Self::MuslimBannerman),
-            (PlayerFaction::Muslim, "elite_bowman") => Some(Self::MuslimEliteBowman),
-            (PlayerFaction::Muslim, "armored_crossbowman") => Some(Self::MuslimArmoredCrossbowman),
-            (PlayerFaction::Muslim, "pathfinder") => Some(Self::MuslimPathfinder),
-            (PlayerFaction::Muslim, "mounted_scout") => Some(Self::MuslimMountedScout),
-            (PlayerFaction::Muslim, "cardinal") => Some(Self::MuslimCardinal),
-            (PlayerFaction::Muslim, "flagellant") => Some(Self::MuslimFlagellant),
-            (PlayerFaction::Muslim, "elite_shield_infantry") => {
-                Some(Self::MuslimEliteShieldInfantry)
-            }
-            (PlayerFaction::Muslim, "halberdier") => Some(Self::MuslimHalberdier),
-            (PlayerFaction::Muslim, "heavy_knight") => Some(Self::MuslimHeavyKnight),
-            (PlayerFaction::Muslim, "elite_bannerman") => Some(Self::MuslimEliteBannerman),
-            (PlayerFaction::Muslim, "longbowman") => Some(Self::MuslimLongbowman),
-            (PlayerFaction::Muslim, "elite_crossbowman") => Some(Self::MuslimEliteCrossbowman),
-            (PlayerFaction::Muslim, "houndmaster") => Some(Self::MuslimHoundmaster),
-            (PlayerFaction::Muslim, "shock_cavalry") => Some(Self::MuslimShockCavalry),
-            (PlayerFaction::Muslim, "elite_cardinal") => Some(Self::MuslimEliteCardinal),
-            (PlayerFaction::Muslim, "elite_flagellant") => Some(Self::MuslimEliteFlagellant),
-            (PlayerFaction::Muslim, "citadel_guard") => Some(Self::MuslimCitadelGuard),
-            (PlayerFaction::Muslim, "armored_halberdier") => Some(Self::MuslimArmoredHalberdier),
-            (PlayerFaction::Muslim, "elite_heavy_knight") => Some(Self::MuslimEliteHeavyKnight),
-            (PlayerFaction::Muslim, "gods_chosen") => Some(Self::MuslimGodsChosen),
-            (PlayerFaction::Muslim, "elite_longbowman") => Some(Self::MuslimEliteLongbowman),
-            (PlayerFaction::Muslim, "siege_crossbowman") => Some(Self::MuslimSiegeCrossbowman),
-            (PlayerFaction::Muslim, "elite_houndmaster") => Some(Self::MuslimEliteHoundmaster),
-            (PlayerFaction::Muslim, "elite_shock_cavalry") => Some(Self::MuslimEliteShockCavalry),
-            (PlayerFaction::Muslim, "divine_speaker") => Some(Self::MuslimDivineSpeaker),
-            (PlayerFaction::Muslim, "divine_judge") => Some(Self::MuslimDivineJudge),
+            "siege_crossbowman" => Some((
+                Self::ChristianSiegeCrossbowman,
+                Self::MuslimSiegeCrossbowman,
+            )),
+            "elite_houndmaster" => Some((
+                Self::ChristianEliteHoundmaster,
+                Self::MuslimEliteHoundmaster,
+            )),
+            "elite_shock_cavalry" => Some((
+                Self::ChristianEliteShockCavalry,
+                Self::MuslimEliteShockCavalry,
+            )),
+            "divine_speaker" => Some((Self::ChristianDivineSpeaker, Self::MuslimDivineSpeaker)),
+            "divine_judge" => Some((Self::ChristianDivineJudge, Self::MuslimDivineJudge)),
             _ => None,
         }
     }
@@ -723,6 +689,96 @@ impl UnitKind {
                 | "armored_halberdier"
                 | "elite_heavy_knight"
         )
+    }
+
+    pub fn has_shielded_trait(self) -> bool {
+        matches!(
+            self.unit_id(),
+            "peasant_infantry"
+                | "shield_infantry"
+                | "experienced_shield_infantry"
+                | "elite_shield_infantry"
+                | "shielded_spearman"
+                | "citadel_guard"
+        )
+    }
+
+    pub fn has_role_tag(self, tag: UnitRoleTag) -> bool {
+        match tag {
+            UnitRoleTag::Frontline => matches!(
+                self.unit_id(),
+                "peasant_infantry"
+                    | "men_at_arms"
+                    | "shield_infantry"
+                    | "experienced_shield_infantry"
+                    | "elite_shield_infantry"
+                    | "unmounted_knight"
+                    | "knight"
+                    | "heavy_knight"
+                    | "elite_heavy_knight"
+                    | "citadel_guard"
+            ),
+            UnitRoleTag::AntiCavalry => matches!(
+                self.unit_id(),
+                "spearman" | "shielded_spearman" | "halberdier" | "armored_halberdier"
+            ),
+            UnitRoleTag::Cavalry => matches!(
+                self.unit_id(),
+                "scout" | "mounted_scout" | "shock_cavalry" | "elite_shock_cavalry"
+            ),
+            UnitRoleTag::AntiArmor => matches!(
+                self.unit_id(),
+                "crossbowman"
+                    | "armored_crossbowman"
+                    | "elite_crossbowman"
+                    | "siege_crossbowman"
+                    | "armored_halberdier"
+            ),
+            UnitRoleTag::Skirmisher => {
+                self.is_tracker_line() || self.is_scout_line() || self.is_fanatic_line()
+            }
+            UnitRoleTag::Support => self.is_support_priest_line(),
+            UnitRoleTag::HeroDoctrine => matches!(
+                self.unit_id(),
+                "citadel_guard"
+                    | "armored_halberdier"
+                    | "elite_heavy_knight"
+                    | "elite_longbowman"
+                    | "siege_crossbowman"
+                    | "elite_houndmaster"
+                    | "divine_speaker"
+                    | "divine_judge"
+                    | "elite_shock_cavalry"
+            ),
+        }
+    }
+
+    pub fn armor_class(self) -> UnitArmorClass {
+        match self.unit_id() {
+            "citadel_guard" | "armored_halberdier" | "elite_heavy_knight" => UnitArmorClass::Heavy,
+            "men_at_arms"
+            | "shield_infantry"
+            | "spearman"
+            | "unmounted_knight"
+            | "experienced_shield_infantry"
+            | "shielded_spearman"
+            | "knight"
+            | "armored_crossbowman"
+            | "halberdier"
+            | "heavy_knight"
+            | "elite_shield_infantry"
+            | "elite_crossbowman"
+            | "elite_bannerman"
+            | "gods_chosen"
+            | "siege_crossbowman"
+            | "elite_shock_cavalry" => UnitArmorClass::Armored,
+            "peasant_infantry" | "peasant_priest" | "devoted" | "squire" | "devoted_one"
+            | "fanatic" | "bannerman" | "cardinal" | "flagellant" | "elite_cardinal"
+            | "elite_flagellant" | "divine_speaker" | "divine_judge" | "shock_cavalry" => {
+                UnitArmorClass::Light
+            }
+            _ => UnitArmorClass::Unarmored,
+        }
     }
 
     pub fn tier_hint(self) -> Option<u8> {
@@ -997,16 +1053,8 @@ impl UnitKind {
         )
     }
 
-    pub const fn as_recruit_unit_kind(self) -> Option<RecruitUnitKind> {
-        match self {
-            Self::ChristianPeasantInfantry => Some(RecruitUnitKind::ChristianPeasantInfantry),
-            Self::ChristianPeasantArcher => Some(RecruitUnitKind::ChristianPeasantArcher),
-            Self::ChristianPeasantPriest => Some(RecruitUnitKind::ChristianPeasantPriest),
-            Self::MuslimPeasantInfantry => Some(RecruitUnitKind::MuslimPeasantInfantry),
-            Self::MuslimPeasantArcher => Some(RecruitUnitKind::MuslimPeasantArcher),
-            Self::MuslimPeasantPriest => Some(RecruitUnitKind::MuslimPeasantPriest),
-            _ => None,
-        }
+    pub fn as_recruit_unit_kind(self) -> Option<RecruitUnitKind> {
+        RecruitUnitKind::from_unit_kind(self)
     }
 }
 
@@ -1097,6 +1145,7 @@ pub struct GlobalBuffs {
     pub armor_bonus: f32,
     pub attack_speed_multiplier: f32,
     pub gold_gain_multiplier: f32,
+    pub luck_bonus: f32,
     pub crit_chance_bonus: f32,
     pub crit_damage_multiplier: f32,
     pub pickup_radius_bonus: f32,
@@ -1116,6 +1165,7 @@ impl Default for GlobalBuffs {
             armor_bonus: 0.0,
             attack_speed_multiplier: 1.0,
             gold_gain_multiplier: 1.0,
+            luck_bonus: 0.0,
             crit_chance_bonus: 0.0,
             crit_damage_multiplier: 1.2,
             pickup_radius_bonus: 0.0,
@@ -1160,9 +1210,13 @@ pub struct UnitDamagedEvent {
 pub struct DamageTextEvent {
     pub world_position: Vec2,
     pub target_team: Team,
-    pub amount: f32,
-    pub execute: bool,
-    pub critical: bool,
+    pub kind: DamageTextKind,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DamageTextKind {
+    Blocked,
+    CriticalHit,
 }
 
 #[derive(Event, Clone, Copy, Debug)]
@@ -1230,23 +1284,56 @@ pub fn level_cap_from_locked_budget(locked_levels: u32) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{PlayerFaction, RecruitUnitKind, UnitKind};
+    use std::fs;
+    use std::path::Path;
+
+    use super::{
+        PlayerFaction, RecruitArchetype, RecruitUnitKind, UnitArmorClass, UnitKind, UnitRoleTag,
+    };
 
     #[test]
     fn recruit_unit_kind_maps_from_friendly_unit_kind() {
         assert_eq!(
             UnitKind::ChristianPeasantInfantry.as_recruit_unit_kind(),
-            Some(RecruitUnitKind::ChristianPeasantInfantry)
+            Some(RecruitUnitKind::from_faction_and_archetype(
+                PlayerFaction::Christian,
+                RecruitArchetype::Infantry
+            ))
         );
         assert_eq!(
             UnitKind::MuslimPeasantArcher.as_recruit_unit_kind(),
-            Some(RecruitUnitKind::MuslimPeasantArcher)
+            Some(RecruitUnitKind::from_faction_and_archetype(
+                PlayerFaction::Muslim,
+                RecruitArchetype::Archer
+            ))
         );
         assert_eq!(UnitKind::Commander.as_recruit_unit_kind(), None);
         assert_eq!(
             UnitKind::RescuableChristianPeasantPriest.as_recruit_unit_kind(),
             None
         );
+    }
+
+    #[test]
+    fn recruit_kind_resolvers_are_faction_and_unit_id_driven() {
+        for faction in PlayerFaction::all() {
+            for archetype in [
+                RecruitArchetype::Infantry,
+                RecruitArchetype::Archer,
+                RecruitArchetype::Priest,
+            ] {
+                let recruit = RecruitUnitKind::from_faction_and_archetype(faction, archetype);
+                let unit = recruit.as_unit_kind();
+                let rescuable = recruit.as_rescuable_unit_kind();
+
+                assert_eq!(unit.faction(), Some(faction));
+                assert_eq!(unit.unit_id(), recruit.unit_id());
+                assert!(!unit.is_rescuable_variant());
+                assert_eq!(rescuable.faction(), Some(faction));
+                assert_eq!(rescuable.unit_id(), recruit.unit_id());
+                assert!(rescuable.is_rescuable_variant());
+            }
+        }
     }
 
     #[test]
@@ -1276,6 +1363,8 @@ mod tests {
         assert!(UnitKind::ChristianDevoted.is_support_priest_line());
         assert!(UnitKind::ChristianDivineJudge.is_priest_family_line());
         assert!(UnitKind::MuslimPeasantInfantry.is_block_infantry_line());
+        assert!(UnitKind::MuslimPeasantInfantry.has_shielded_trait());
+        assert!(!UnitKind::MuslimSpearman.has_shielded_trait());
         assert!(UnitKind::ChristianEliteLongbowman.is_archer_line());
         assert_eq!(UnitKind::ChristianBowman.tier_hint(), Some(1));
         assert_eq!(UnitKind::MuslimEliteShockCavalry.tier_hint(), Some(5));
@@ -1283,6 +1372,44 @@ mod tests {
             UnitKind::RescuableChristianPeasantInfantry.tier_hint(),
             None
         );
+    }
+
+    #[test]
+    fn unit_role_tags_and_armor_classes_are_faction_agnostic() {
+        let anti_cavalry = UnitKind::from_faction_and_unit_id(
+            PlayerFaction::Christian,
+            "armored_halberdier",
+            false,
+        )
+        .expect("christian anti-cavalry should resolve");
+        let cavalry =
+            UnitKind::from_faction_and_unit_id(PlayerFaction::Muslim, "elite_shock_cavalry", false)
+                .expect("muslim cavalry should resolve");
+        let anti_armor = UnitKind::from_faction_and_unit_id(
+            PlayerFaction::Christian,
+            "siege_crossbowman",
+            false,
+        )
+        .expect("anti-armor should resolve");
+        let support =
+            UnitKind::from_faction_and_unit_id(PlayerFaction::Muslim, "divine_speaker", false)
+                .expect("support should resolve");
+
+        assert!(anti_cavalry.has_role_tag(UnitRoleTag::AntiCavalry));
+        assert!(anti_cavalry.has_role_tag(UnitRoleTag::AntiArmor));
+        assert!(anti_cavalry.has_role_tag(UnitRoleTag::HeroDoctrine));
+        assert_eq!(anti_cavalry.armor_class(), UnitArmorClass::Heavy);
+
+        assert!(cavalry.has_role_tag(UnitRoleTag::Cavalry));
+        assert!(cavalry.has_role_tag(UnitRoleTag::HeroDoctrine));
+        assert_eq!(cavalry.armor_class(), UnitArmorClass::Armored);
+
+        assert!(anti_armor.has_role_tag(UnitRoleTag::AntiArmor));
+        assert_eq!(anti_armor.armor_class(), UnitArmorClass::Armored);
+
+        assert!(support.has_role_tag(UnitRoleTag::Support));
+        assert!(support.has_role_tag(UnitRoleTag::HeroDoctrine));
+        assert_eq!(support.armor_class(), UnitArmorClass::Light);
     }
 
     #[test]
@@ -1304,5 +1431,47 @@ mod tests {
         assert!(
             UnitKind::from_faction_and_unit_id(PlayerFaction::Christian, "tracker", true).is_none()
         );
+    }
+
+    #[test]
+    fn runtime_modules_avoid_faction_specific_unit_variants_outside_identity_bridge() {
+        let src_dir = Path::new("src");
+        let disallowed_patterns = [
+            "UnitKind::Christian",
+            "UnitKind::Muslim",
+            "RecruitUnitKind::Christian",
+            "RecruitUnitKind::Muslim",
+        ];
+
+        for entry in fs::read_dir(src_dir).expect("read src dir") {
+            let entry = entry.expect("entry");
+            let path = entry.path();
+            if path.extension().and_then(|ext| ext.to_str()) != Some("rs") {
+                continue;
+            }
+            let file_name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or_default();
+            if file_name == "model.rs" {
+                continue;
+            }
+
+            let content = fs::read_to_string(&path).expect("read source file");
+            for (index, line) in content.lines().enumerate() {
+                if line.contains("#[cfg(test)]") {
+                    break;
+                }
+                for pattern in disallowed_patterns {
+                    assert!(
+                        !line.contains(pattern),
+                        "{}:{} contains forbidden runtime identity pattern '{}'",
+                        path.display(),
+                        index + 1,
+                        pattern
+                    );
+                }
+            }
+        }
     }
 }

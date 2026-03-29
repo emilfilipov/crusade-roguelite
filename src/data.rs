@@ -2,13 +2,57 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use bevy::prelude::*;
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 
 use crate::model::{
     GameDifficulty, GameState, PlayerFaction, RecruitArchetype, RecruitUnitKind, UnitKind,
 };
+
+const TIER0_INFANTRY_UNIT_ID: &str = "peasant_infantry";
+const TIER0_ARCHER_UNIT_ID: &str = "peasant_archer";
+const TIER0_PRIEST_UNIT_ID: &str = "peasant_priest";
+const HERO_SUBTYPE_SWORD_SHIELD: &str = "sword_shield";
+const HERO_SUBTYPE_SPEAR: &str = "spear";
+const HERO_SUBTYPE_TWO_HANDED_SWORD: &str = "two_handed_sword";
+const HERO_SUBTYPE_BOW: &str = "bow";
+const HERO_SUBTYPE_JAVELIN: &str = "javelin";
+const HERO_SUBTYPE_BEAST_MASTER: &str = "beast_master";
+const HERO_SUBTYPE_SUPER_PRIEST: &str = "super_priest";
+const HERO_SUBTYPE_SUPER_FANATIC: &str = "super_fanatic";
+const HERO_SUBTYPE_SUPER_KNIGHT: &str = "super_knight";
+const REQUIRED_HERO_SUBTYPE_IDS: [&str; 9] = [
+    HERO_SUBTYPE_SWORD_SHIELD,
+    HERO_SUBTYPE_SPEAR,
+    HERO_SUBTYPE_TWO_HANDED_SWORD,
+    HERO_SUBTYPE_BOW,
+    HERO_SUBTYPE_JAVELIN,
+    HERO_SUBTYPE_BEAST_MASTER,
+    HERO_SUBTYPE_SUPER_PRIEST,
+    HERO_SUBTYPE_SUPER_FANATIC,
+    HERO_SUBTYPE_SUPER_KNIGHT,
+];
+const HERO_ENTRIES_PER_SUBTYPE_PER_FACTION: usize = 10;
+const DEPRECATED_UPGRADE_ID_REPLACEMENTS: [(&str, &str); 5] = [
+    ("fast_learner_up_10", "fast_learner_up"),
+    ("fast_learner_up_15", "fast_learner_up"),
+    ("mob_fury_shielded_host", "mob_fury"),
+    ("mob_justice_frontline_bias", "mob_justice"),
+    ("mob_mercy_support_ceiling", "mob_mercy"),
+];
+const REQUIRED_TIER2_UNIT_IDS: [&str; 10] = [
+    "shield_infantry",
+    "spearman",
+    "unmounted_knight",
+    "squire",
+    "experienced_bowman",
+    "crossbowman",
+    "tracker",
+    "scout",
+    "devoted_one",
+    "fanatic",
+];
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct UnitStatsConfig {
@@ -52,7 +96,7 @@ pub struct CommanderOptionConfig {
     pub run_bonuses: CommanderRunBonuses,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug)]
 pub struct UnitsConfigFile {
     pub commander_christian: UnitStatsConfig,
     pub commander_muslim: UnitStatsConfig,
@@ -62,6 +106,116 @@ pub struct UnitsConfigFile {
     pub recruit_muslim_peasant_infantry: UnitStatsConfig,
     pub recruit_muslim_peasant_archer: UnitStatsConfig,
     pub recruit_muslim_peasant_priest: UnitStatsConfig,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UnitsConfigFileRaw {
+    base: UnitsBaseCatalogRaw,
+    #[serde(default)]
+    overrides: HashMap<String, UnitsFactionOverrideRaw>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UnitsBaseCatalogRaw {
+    commander: UnitStatsConfig,
+    recruits: HashMap<String, UnitStatsConfig>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UnitsFactionOverrideRaw {
+    #[serde(default)]
+    commander: Option<UnitStatsConfig>,
+    #[serde(default)]
+    recruits: HashMap<String, UnitStatsConfig>,
+}
+
+impl<'de> Deserialize<'de> for UnitsConfigFile {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = UnitsConfigFileRaw::deserialize(deserializer)?;
+        let base_infantry = raw
+            .base
+            .recruits
+            .get(TIER0_INFANTRY_UNIT_ID)
+            .cloned()
+            .ok_or_else(|| {
+                serde::de::Error::custom(
+                    "units.base.recruits is missing required key 'peasant_infantry'",
+                )
+            })?;
+        let base_archer = raw
+            .base
+            .recruits
+            .get(TIER0_ARCHER_UNIT_ID)
+            .cloned()
+            .ok_or_else(|| {
+                serde::de::Error::custom(
+                    "units.base.recruits is missing required key 'peasant_archer'",
+                )
+            })?;
+        let base_priest = raw
+            .base
+            .recruits
+            .get(TIER0_PRIEST_UNIT_ID)
+            .cloned()
+            .ok_or_else(|| {
+                serde::de::Error::custom(
+                    "units.base.recruits is missing required key 'peasant_priest'",
+                )
+            })?;
+
+        let mut config = UnitsConfigFile {
+            commander_christian: raw.base.commander.clone(),
+            commander_muslim: raw.base.commander,
+            recruit_christian_peasant_infantry: base_infantry.clone(),
+            recruit_christian_peasant_archer: base_archer.clone(),
+            recruit_christian_peasant_priest: base_priest.clone(),
+            recruit_muslim_peasant_infantry: base_infantry,
+            recruit_muslim_peasant_archer: base_archer,
+            recruit_muslim_peasant_priest: base_priest,
+        };
+
+        for (faction_key, override_config) in raw.overrides {
+            let faction = parse_faction_override_key(&faction_key, "units.overrides")?;
+            if let Some(commander) = override_config.commander {
+                match faction {
+                    PlayerFaction::Christian => config.commander_christian = commander,
+                    PlayerFaction::Muslim => config.commander_muslim = commander,
+                }
+            }
+            for (unit_id, stats) in override_config.recruits {
+                let archetype =
+                    parse_recruit_archetype_unit_id(&unit_id, "units.overrides.*.recruits")?;
+                match (faction, archetype) {
+                    (PlayerFaction::Christian, RecruitArchetype::Infantry) => {
+                        config.recruit_christian_peasant_infantry = stats;
+                    }
+                    (PlayerFaction::Christian, RecruitArchetype::Archer) => {
+                        config.recruit_christian_peasant_archer = stats;
+                    }
+                    (PlayerFaction::Christian, RecruitArchetype::Priest) => {
+                        config.recruit_christian_peasant_priest = stats;
+                    }
+                    (PlayerFaction::Muslim, RecruitArchetype::Infantry) => {
+                        config.recruit_muslim_peasant_infantry = stats;
+                    }
+                    (PlayerFaction::Muslim, RecruitArchetype::Archer) => {
+                        config.recruit_muslim_peasant_archer = stats;
+                    }
+                    (PlayerFaction::Muslim, RecruitArchetype::Priest) => {
+                        config.recruit_muslim_peasant_priest = stats;
+                    }
+                }
+            }
+        }
+
+        Ok(config)
+    }
 }
 
 impl UnitsConfigFile {
@@ -292,7 +446,7 @@ pub struct EnemyStatsConfig {
     pub collision_radius: f32,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug)]
 pub struct EnemiesConfigFile {
     pub enemy_christian_peasant_infantry: EnemyStatsConfig,
     pub enemy_christian_peasant_archer: EnemyStatsConfig,
@@ -300,6 +454,104 @@ pub struct EnemiesConfigFile {
     pub enemy_muslim_peasant_infantry: EnemyStatsConfig,
     pub enemy_muslim_peasant_archer: EnemyStatsConfig,
     pub enemy_muslim_peasant_priest: EnemyStatsConfig,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EnemiesConfigFileRaw {
+    base: EnemiesBaseCatalogRaw,
+    #[serde(default)]
+    overrides: HashMap<String, EnemiesFactionOverrideRaw>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EnemiesBaseCatalogRaw {
+    profiles: HashMap<String, EnemyStatsConfig>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EnemiesFactionOverrideRaw {
+    #[serde(default)]
+    profiles: HashMap<String, EnemyStatsConfig>,
+}
+
+impl<'de> Deserialize<'de> for EnemiesConfigFile {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = EnemiesConfigFileRaw::deserialize(deserializer)?;
+        let base_infantry = raw
+            .base
+            .profiles
+            .get(TIER0_INFANTRY_UNIT_ID)
+            .cloned()
+            .ok_or_else(|| {
+                serde::de::Error::custom(
+                    "enemies.base.profiles is missing required key 'peasant_infantry'",
+                )
+            })?;
+        let base_archer = raw
+            .base
+            .profiles
+            .get(TIER0_ARCHER_UNIT_ID)
+            .cloned()
+            .ok_or_else(|| {
+                serde::de::Error::custom(
+                    "enemies.base.profiles is missing required key 'peasant_archer'",
+                )
+            })?;
+        let base_priest = raw
+            .base
+            .profiles
+            .get(TIER0_PRIEST_UNIT_ID)
+            .cloned()
+            .ok_or_else(|| {
+                serde::de::Error::custom(
+                    "enemies.base.profiles is missing required key 'peasant_priest'",
+                )
+            })?;
+        let mut config = EnemiesConfigFile {
+            enemy_christian_peasant_infantry: base_infantry.clone(),
+            enemy_christian_peasant_archer: base_archer.clone(),
+            enemy_christian_peasant_priest: base_priest.clone(),
+            enemy_muslim_peasant_infantry: base_infantry,
+            enemy_muslim_peasant_archer: base_archer,
+            enemy_muslim_peasant_priest: base_priest,
+        };
+
+        for (faction_key, override_config) in raw.overrides {
+            let faction = parse_faction_override_key(&faction_key, "enemies.overrides")?;
+            for (unit_id, stats) in override_config.profiles {
+                let archetype =
+                    parse_recruit_archetype_unit_id(&unit_id, "enemies.overrides.*.profiles")?;
+                match (faction, archetype) {
+                    (PlayerFaction::Christian, RecruitArchetype::Infantry) => {
+                        config.enemy_christian_peasant_infantry = stats;
+                    }
+                    (PlayerFaction::Christian, RecruitArchetype::Archer) => {
+                        config.enemy_christian_peasant_archer = stats;
+                    }
+                    (PlayerFaction::Christian, RecruitArchetype::Priest) => {
+                        config.enemy_christian_peasant_priest = stats;
+                    }
+                    (PlayerFaction::Muslim, RecruitArchetype::Infantry) => {
+                        config.enemy_muslim_peasant_infantry = stats;
+                    }
+                    (PlayerFaction::Muslim, RecruitArchetype::Archer) => {
+                        config.enemy_muslim_peasant_archer = stats;
+                    }
+                    (PlayerFaction::Muslim, RecruitArchetype::Priest) => {
+                        config.enemy_muslim_peasant_priest = stats;
+                    }
+                }
+            }
+        }
+
+        Ok(config)
+    }
 }
 
 impl EnemiesConfigFile {
@@ -402,12 +654,24 @@ pub struct FormationConfig {
     pub anti_cavalry_multiplier: f32,
     #[serde(default = "default_multiplier")]
     pub move_speed_multiplier: f32,
+    #[serde(default)]
+    pub anti_entry: bool,
+    #[serde(default)]
+    pub allow_unlimited_enemy_inside: bool,
+    #[serde(default)]
+    pub shielded_block_bonus: f32,
+    #[serde(default)]
+    pub melee_reflect_ratio: f32,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct FormationsConfigFile {
     pub square: FormationConfig,
+    pub circle: FormationConfig,
+    pub skean: FormationConfig,
     pub diamond: FormationConfig,
+    pub shield_wall: FormationConfig,
+    pub loose: FormationConfig,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -449,6 +713,14 @@ pub struct UpgradeConfig {
     pub requirement_active_formation: Option<String>,
     #[serde(default)]
     pub requirement_map_tag: Option<String>,
+    #[serde(default)]
+    pub requirement_trait: Option<String>,
+    #[serde(default)]
+    pub requirement_band_stat: Option<String>,
+    #[serde(default)]
+    pub requirement_band_at_least: Option<String>,
+    #[serde(default)]
+    pub requirement_band_at_most: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -495,46 +767,201 @@ pub struct RescueConfig {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum RescueRecruitKindConfig {
-    ChristianPeasantInfantry,
-    ChristianPeasantArcher,
-    ChristianPeasantPriest,
-    MuslimPeasantInfantry,
-    MuslimPeasantArcher,
-    MuslimPeasantPriest,
+    PeasantInfantry,
+    PeasantArcher,
+    PeasantPriest,
 }
 
 impl RescueRecruitKindConfig {
-    pub const fn from_recruit_unit_kind(kind: RecruitUnitKind) -> Self {
-        match kind {
-            RecruitUnitKind::ChristianPeasantInfantry => Self::ChristianPeasantInfantry,
-            RecruitUnitKind::ChristianPeasantArcher => Self::ChristianPeasantArcher,
-            RecruitUnitKind::ChristianPeasantPriest => Self::ChristianPeasantPriest,
-            RecruitUnitKind::MuslimPeasantInfantry => Self::MuslimPeasantInfantry,
-            RecruitUnitKind::MuslimPeasantArcher => Self::MuslimPeasantArcher,
-            RecruitUnitKind::MuslimPeasantPriest => Self::MuslimPeasantPriest,
+    pub const fn from_recruit_archetype(archetype: RecruitArchetype) -> Self {
+        match archetype {
+            RecruitArchetype::Infantry => Self::PeasantInfantry,
+            RecruitArchetype::Archer => Self::PeasantArcher,
+            RecruitArchetype::Priest => Self::PeasantPriest,
         }
     }
 
-    pub const fn as_recruit_unit_kind(self) -> RecruitUnitKind {
+    pub const fn archetype(self) -> RecruitArchetype {
         match self {
-            Self::ChristianPeasantInfantry => RecruitUnitKind::ChristianPeasantInfantry,
-            Self::ChristianPeasantArcher => RecruitUnitKind::ChristianPeasantArcher,
-            Self::ChristianPeasantPriest => RecruitUnitKind::ChristianPeasantPriest,
-            Self::MuslimPeasantInfantry => RecruitUnitKind::MuslimPeasantInfantry,
-            Self::MuslimPeasantArcher => RecruitUnitKind::MuslimPeasantArcher,
-            Self::MuslimPeasantPriest => RecruitUnitKind::MuslimPeasantPriest,
+            Self::PeasantInfantry => RecruitArchetype::Infantry,
+            Self::PeasantArcher => RecruitArchetype::Archer,
+            Self::PeasantPriest => RecruitArchetype::Priest,
         }
     }
 
     pub const fn tier(self) -> u8 {
         match self {
-            Self::ChristianPeasantInfantry => 0,
-            Self::ChristianPeasantArcher => 0,
-            Self::ChristianPeasantPriest => 0,
-            Self::MuslimPeasantInfantry => 0,
-            Self::MuslimPeasantArcher => 0,
-            Self::MuslimPeasantPriest => 0,
+            Self::PeasantInfantry => 0,
+            Self::PeasantArcher => 0,
+            Self::PeasantPriest => 0,
         }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct HeroSubtypeConfig {
+    pub id: String,
+    pub unit_id: String,
+    pub description: String,
+    pub entries_by_faction: HashMap<PlayerFaction, Vec<HeroEntryConfig>>,
+}
+
+#[derive(Clone, Debug)]
+pub struct HeroEntryConfig {
+    pub hero_id: String,
+    pub name: String,
+    pub description: String,
+    pub unit_id: String,
+    pub abilities: Vec<String>,
+    pub stat_notes: Vec<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct HeroesConfigFile {
+    pub subtypes: HashMap<String, HeroSubtypeConfig>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HeroesConfigFileRaw {
+    base: HeroesBaseCatalogRaw,
+    #[serde(default)]
+    overrides: HashMap<String, HeroesFactionOverrideRaw>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HeroesBaseCatalogRaw {
+    subtypes: HashMap<String, HeroSubtypeBaseRaw>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HeroSubtypeBaseRaw {
+    unit_id: String,
+    description: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HeroesFactionOverrideRaw {
+    #[serde(default)]
+    subtypes: HashMap<String, HeroSubtypeEntriesRaw>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HeroSubtypeEntriesRaw {
+    #[serde(default)]
+    entries: Vec<HeroEntryRaw>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HeroEntryRaw {
+    hero_id: String,
+    name: String,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    unit_id: Option<String>,
+    #[serde(default)]
+    abilities: Vec<String>,
+    #[serde(default)]
+    stat_notes: Vec<String>,
+}
+
+impl<'de> Deserialize<'de> for HeroesConfigFile {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = HeroesConfigFileRaw::deserialize(deserializer)?;
+        if raw.base.subtypes.is_empty() {
+            return Err(serde::de::Error::custom(
+                "heroes.base.subtypes must contain at least one subtype",
+            ));
+        }
+
+        let mut subtypes = HashMap::new();
+        for (subtype_id, base_subtype) in raw.base.subtypes {
+            subtypes.insert(
+                subtype_id.clone(),
+                HeroSubtypeConfig {
+                    id: subtype_id,
+                    unit_id: base_subtype.unit_id,
+                    description: base_subtype.description,
+                    entries_by_faction: HashMap::new(),
+                },
+            );
+        }
+
+        for (faction_key, faction_override) in raw.overrides {
+            let faction = parse_faction_override_key(&faction_key, "heroes.overrides")?;
+            for (subtype_id, subtype_entries) in faction_override.subtypes {
+                let Some(base_subtype) = subtypes.get_mut(&subtype_id) else {
+                    return Err(serde::de::Error::custom(format!(
+                        "heroes.overrides.{faction_key}.subtypes has unknown subtype '{subtype_id}'"
+                    )));
+                };
+                let resolved_entries: Vec<HeroEntryConfig> = subtype_entries
+                    .entries
+                    .into_iter()
+                    .map(|entry| HeroEntryConfig {
+                        hero_id: entry.hero_id,
+                        name: entry.name,
+                        description: entry
+                            .description
+                            .unwrap_or_else(|| base_subtype.description.clone()),
+                        unit_id: entry
+                            .unit_id
+                            .unwrap_or_else(|| base_subtype.unit_id.clone()),
+                        abilities: entry.abilities,
+                        stat_notes: entry.stat_notes,
+                    })
+                    .collect();
+                base_subtype
+                    .entries_by_faction
+                    .insert(faction, resolved_entries);
+            }
+        }
+
+        Ok(HeroesConfigFile { subtypes })
+    }
+}
+
+impl HeroesConfigFile {
+    pub fn subtype_for_id(&self, subtype_id: &str) -> Option<&HeroSubtypeConfig> {
+        self.subtypes.get(subtype_id)
+    }
+
+    pub fn unit_id_for_subtype(&self, subtype_id: &str) -> Option<&str> {
+        self.subtype_for_id(subtype_id)
+            .map(|subtype| subtype.unit_id.as_str())
+    }
+
+    pub fn entries_for_faction_and_subtype(
+        &self,
+        faction: PlayerFaction,
+        subtype_id: &str,
+    ) -> Option<&[HeroEntryConfig]> {
+        self.subtype_for_id(subtype_id)
+            .and_then(|subtype| subtype.entries_by_faction.get(&faction))
+            .map(Vec::as_slice)
+    }
+
+    pub fn roll_entry_for_faction_and_subtype(
+        &self,
+        faction: PlayerFaction,
+        subtype_id: &str,
+        seed: u32,
+    ) -> Option<&HeroEntryConfig> {
+        let entries = self.entries_for_faction_and_subtype(faction, subtype_id)?;
+        if entries.is_empty() {
+            return None;
+        }
+        let index = (seed as usize) % entries.len();
+        entries.get(index)
     }
 }
 
@@ -659,7 +1086,7 @@ pub struct RosterTuningConfigFile {
 impl RosterTuningConfigFile {
     pub fn tier2_stats_for_kind(&self, kind: UnitKind) -> Option<&UnitStatsConfig> {
         let key = tier2_config_key_for_kind(kind)?;
-        self.tier2_units.get(key)
+        self.tier2_units.get(key.as_str())
     }
 }
 
@@ -667,6 +1094,7 @@ impl RosterTuningConfigFile {
 pub struct GameData {
     pub units: UnitsConfigFile,
     pub enemies: EnemiesConfigFile,
+    pub heroes: HeroesConfigFile,
     pub enemy_tier_pools: EnemyTierPoolsConfigFile,
     pub formations: FormationsConfigFile,
     pub waves: WavesConfigFile,
@@ -683,6 +1111,7 @@ impl GameData {
     pub fn load_from_dir(base_dir: &Path) -> Result<Self> {
         let units: UnitsConfigFile = read_json(base_dir.join("units.json"))?;
         let enemies: EnemiesConfigFile = read_json(base_dir.join("enemies.json"))?;
+        let heroes: HeroesConfigFile = read_json(base_dir.join("heroes.json"))?;
         let enemy_tier_pools: EnemyTierPoolsConfigFile =
             read_json(base_dir.join("enemy_tier_pools.json"))?;
         let formations: FormationsConfigFile = read_json(base_dir.join("formations.json"))?;
@@ -697,6 +1126,7 @@ impl GameData {
 
         validate_units(&units)?;
         validate_enemies(&enemies)?;
+        validate_heroes(&heroes)?;
         validate_enemy_tier_pools(&enemy_tier_pools)?;
         validate_formations(&formations)?;
         validate_waves(&waves)?;
@@ -711,6 +1141,7 @@ impl GameData {
         Ok(Self {
             units,
             enemies,
+            heroes,
             enemy_tier_pools,
             formations,
             waves,
@@ -725,37 +1156,20 @@ impl GameData {
     }
 }
 
-fn tier2_config_key_for_kind(kind: UnitKind) -> Option<&'static str> {
-    match kind {
-        UnitKind::ChristianShieldInfantry => Some("christian_shield_infantry"),
-        UnitKind::ChristianSpearman => Some("christian_spearman"),
-        UnitKind::ChristianUnmountedKnight => Some("christian_unmounted_knight"),
-        UnitKind::ChristianSquire => Some("christian_squire"),
-        UnitKind::ChristianExperiencedBowman => Some("christian_experienced_bowman"),
-        UnitKind::ChristianCrossbowman => Some("christian_crossbowman"),
-        UnitKind::ChristianTracker => Some("christian_tracker"),
-        UnitKind::ChristianScout => Some("christian_scout"),
-        UnitKind::ChristianDevotedOne => Some("christian_devoted_one"),
-        UnitKind::ChristianFanatic => Some("christian_fanatic"),
-        UnitKind::MuslimShieldInfantry => Some("muslim_shield_infantry"),
-        UnitKind::MuslimSpearman => Some("muslim_spearman"),
-        UnitKind::MuslimUnmountedKnight => Some("muslim_unmounted_knight"),
-        UnitKind::MuslimSquire => Some("muslim_squire"),
-        UnitKind::MuslimExperiencedBowman => Some("muslim_experienced_bowman"),
-        UnitKind::MuslimCrossbowman => Some("muslim_crossbowman"),
-        UnitKind::MuslimTracker => Some("muslim_tracker"),
-        UnitKind::MuslimScout => Some("muslim_scout"),
-        UnitKind::MuslimDevotedOne => Some("muslim_devoted_one"),
-        UnitKind::MuslimFanatic => Some("muslim_fanatic"),
-        _ => None,
+fn tier2_config_key_for_kind(kind: UnitKind) -> Option<String> {
+    let faction = kind.faction()?;
+    let unit_id = kind.unit_id();
+    if !REQUIRED_TIER2_UNIT_IDS.contains(&unit_id) {
+        return None;
     }
+    Some(format!("{}_{}", faction.config_key(), unit_id))
 }
 
 fn read_json<T: for<'de> Deserialize<'de>>(path: PathBuf) -> Result<T> {
     let raw = fs::read_to_string(&path)
         .with_context(|| format!("failed to read config file {}", path.display()))?;
     serde_json::from_str(&raw)
-        .with_context(|| format!("failed to parse config file {}", path.display()))
+        .map_err(|err| anyhow!("failed to parse config file {}: {err}", path.display()))
 }
 
 fn default_multiplier() -> f32 {
@@ -763,19 +1177,78 @@ fn default_multiplier() -> f32 {
 }
 
 fn default_rescue_recruit_pool() -> Vec<RescueRecruitKindConfig> {
-    let mut pool = Vec::with_capacity(PlayerFaction::all().len() * 3);
-    for faction in PlayerFaction::all() {
-        for recruit_kind in RecruitUnitKind::all_for_faction(faction) {
-            pool.push(RescueRecruitKindConfig::from_recruit_unit_kind(
-                recruit_kind,
-            ));
-        }
-    }
-    pool
+    vec![
+        RescueRecruitKindConfig::from_recruit_archetype(RecruitArchetype::Infantry),
+        RescueRecruitKindConfig::from_recruit_archetype(RecruitArchetype::Archer),
+        RescueRecruitKindConfig::from_recruit_archetype(RecruitArchetype::Priest),
+    ]
 }
 
 fn default_enemy_collision_radius() -> f32 {
     15.0
+}
+
+fn parse_faction_override_key<E>(
+    value: &str,
+    context: &str,
+) -> std::result::Result<PlayerFaction, E>
+where
+    E: serde::de::Error,
+{
+    let normalized = value.trim().to_ascii_lowercase();
+    for faction in PlayerFaction::all() {
+        if normalized == faction.config_key() {
+            return Ok(faction);
+        }
+    }
+    Err(E::custom(format!(
+        "{context} has unknown faction key '{normalized}'"
+    )))
+}
+
+fn is_supported_faction_key(value: &str) -> bool {
+    let normalized = value.trim().to_ascii_lowercase();
+    PlayerFaction::all()
+        .into_iter()
+        .any(|faction| normalized == faction.config_key())
+}
+
+fn default_start_faction_key() -> &'static str {
+    PlayerFaction::default().config_key()
+}
+
+fn has_required_map_start_faction(map: &MapDefinitionConfig, required_faction_key: &str) -> bool {
+    map.allowed_factions.iter().any(|faction_key| {
+        faction_key
+            .trim()
+            .eq_ignore_ascii_case(required_faction_key)
+    })
+}
+
+fn validate_map_allowed_factions(map: &MapDefinitionConfig, index: usize) -> Result<()> {
+    for faction in &map.allowed_factions {
+        if !is_supported_faction_key(faction) {
+            bail!("map[{index}] has unknown faction '{faction}'");
+        }
+    }
+    Ok(())
+}
+
+fn parse_recruit_archetype_unit_id<E>(
+    unit_id: &str,
+    context: &str,
+) -> std::result::Result<RecruitArchetype, E>
+where
+    E: serde::de::Error,
+{
+    match unit_id {
+        "peasant_infantry" => Ok(RecruitArchetype::Infantry),
+        "peasant_archer" => Ok(RecruitArchetype::Archer),
+        "peasant_priest" => Ok(RecruitArchetype::Priest),
+        _ => Err(E::custom(format!(
+            "{context} has unknown unit_id '{unit_id}' (expected peasant_infantry|peasant_archer|peasant_priest)"
+        ))),
+    }
 }
 
 fn validate_unit_stats(unit: &UnitStatsConfig, label: &str, allow_zero_damage: bool) -> Result<()> {
@@ -874,6 +1347,125 @@ fn validate_enemies(config: &EnemiesConfigFile) -> Result<()> {
         &config.enemy_muslim_peasant_priest,
         "enemy_muslim_peasant_priest",
     )?;
+    Ok(())
+}
+
+fn validate_heroes(config: &HeroesConfigFile) -> Result<()> {
+    if config.subtypes.is_empty() {
+        bail!("heroes.subtypes must contain at least one subtype");
+    }
+
+    for required_subtype in REQUIRED_HERO_SUBTYPE_IDS {
+        if !config.subtypes.contains_key(required_subtype) {
+            bail!("heroes.subtypes is missing required subtype '{required_subtype}'");
+        }
+    }
+
+    for (subtype_id, subtype) in &config.subtypes {
+        if subtype_id.trim().is_empty() {
+            bail!("heroes.subtypes has empty subtype id key");
+        }
+        if subtype.id.trim().is_empty() {
+            bail!("heroes.subtypes.{subtype_id}.id must be non-empty");
+        }
+        if subtype.id != *subtype_id {
+            bail!(
+                "heroes.subtypes.{subtype_id}.id ('{}') must match map key",
+                subtype.id
+            );
+        }
+        if subtype.description.trim().is_empty() {
+            bail!("heroes.subtypes.{subtype_id}.description must be non-empty");
+        }
+        if subtype.unit_id.trim().is_empty() {
+            bail!("heroes.subtypes.{subtype_id}.unit_id must be non-empty");
+        }
+
+        for faction in PlayerFaction::all() {
+            let Some(base_kind) =
+                UnitKind::from_faction_and_unit_id(faction, &subtype.unit_id, false)
+            else {
+                bail!(
+                    "heroes.subtypes.{subtype_id}.unit_id '{}' does not resolve for faction {:?}",
+                    subtype.unit_id,
+                    faction
+                );
+            };
+            if base_kind.tier_hint().unwrap_or(0) < 5 {
+                bail!(
+                    "heroes.subtypes.{subtype_id}.unit_id '{}' must resolve to tier-5+ unit for faction {:?}",
+                    subtype.unit_id,
+                    faction
+                );
+            }
+
+            let Some(entries) = subtype.entries_by_faction.get(&faction) else {
+                bail!(
+                    "heroes.subtypes.{subtype_id} is missing entries for faction {:?}",
+                    faction
+                );
+            };
+            if entries.is_empty() {
+                bail!(
+                    "heroes.subtypes.{subtype_id} entries for faction {:?} cannot be empty",
+                    faction
+                );
+            }
+
+            let mut seen_ids: HashSet<&str> = HashSet::new();
+            for (index, entry) in entries.iter().enumerate() {
+                if entry.hero_id.trim().is_empty() {
+                    bail!(
+                        "heroes.subtypes.{subtype_id}.entries[{index}] hero_id must be non-empty"
+                    );
+                }
+                if !seen_ids.insert(entry.hero_id.as_str()) {
+                    bail!(
+                        "heroes.subtypes.{subtype_id} has duplicate hero_id '{}' for faction {:?}",
+                        entry.hero_id,
+                        faction
+                    );
+                }
+                if entry.name.trim().is_empty() {
+                    bail!("heroes.subtypes.{subtype_id}.entries[{index}] name must be non-empty");
+                }
+                if entry.description.trim().is_empty() {
+                    bail!(
+                        "heroes.subtypes.{subtype_id}.entries[{index}] description must be non-empty"
+                    );
+                }
+                if entry.unit_id.trim().is_empty() {
+                    bail!(
+                        "heroes.subtypes.{subtype_id}.entries[{index}] unit_id must be non-empty"
+                    );
+                }
+                let Some(kind) = UnitKind::from_faction_and_unit_id(faction, &entry.unit_id, false)
+                else {
+                    bail!(
+                        "heroes.subtypes.{subtype_id}.entries[{index}] unit_id '{}' does not resolve for faction {:?}",
+                        entry.unit_id,
+                        faction
+                    );
+                };
+                if kind.tier_hint().unwrap_or(0) < 5 {
+                    bail!(
+                        "heroes.subtypes.{subtype_id}.entries[{index}] unit_id '{}' must resolve to tier-5+ unit for faction {:?}",
+                        entry.unit_id,
+                        faction
+                    );
+                }
+            }
+            if entries.len() != HERO_ENTRIES_PER_SUBTYPE_PER_FACTION {
+                bail!(
+                    "heroes.subtypes.{subtype_id} entries for faction {:?} must contain exactly {} heroes (found {})",
+                    faction,
+                    HERO_ENTRIES_PER_SUBTYPE_PER_FACTION,
+                    entries.len()
+                );
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -992,7 +1584,11 @@ fn validate_enemy_tier_pool_ids(
 
 fn validate_formations(config: &FormationsConfigFile) -> Result<()> {
     validate_formation("square", &config.square)?;
+    validate_formation("circle", &config.circle)?;
+    validate_formation("skean", &config.skean)?;
     validate_formation("diamond", &config.diamond)?;
+    validate_formation("shield_wall", &config.shield_wall)?;
+    validate_formation("loose", &config.loose)?;
     Ok(())
 }
 
@@ -1008,6 +1604,18 @@ fn validate_formation(label: &str, formation: &FormationConfig) -> Result<()> {
     }
     if formation.move_speed_multiplier <= 0.0 {
         bail!("{label} move_speed_multiplier must be > 0");
+    }
+    if formation.anti_cavalry_multiplier <= 0.0 {
+        bail!("{label} anti_cavalry_multiplier must be > 0");
+    }
+    if !(0.0..=0.95).contains(&formation.shielded_block_bonus) {
+        bail!("{label} shielded_block_bonus must be in [0, 0.95]");
+    }
+    if !(0.0..=1.0).contains(&formation.melee_reflect_ratio) {
+        bail!("{label} melee_reflect_ratio must be in [0, 1]");
+    }
+    if formation.anti_entry && formation.allow_unlimited_enemy_inside {
+        bail!("{label} cannot enable both anti_entry and allow_unlimited_enemy_inside");
     }
     Ok(())
 }
@@ -1036,9 +1644,17 @@ fn validate_upgrades(config: &UpgradesConfigFile) -> Result<()> {
     if config.upgrades.is_empty() {
         bail!("upgrades list cannot be empty");
     }
+    let mut ids = HashSet::new();
     for (idx, upgrade) in config.upgrades.iter().enumerate() {
-        if upgrade.id.trim().is_empty() || upgrade.kind.trim().is_empty() {
+        let upgrade_id = upgrade.id.trim();
+        if upgrade_id.is_empty() || upgrade.kind.trim().is_empty() {
             bail!("upgrade[{idx}] id and kind must be non-empty");
+        }
+        if let Some(replacement) = deprecated_upgrade_replacement(upgrade_id) {
+            bail!("upgrade[{idx}] id '{upgrade_id}' is deprecated; use '{replacement}' instead");
+        }
+        if !ids.insert(upgrade_id.to_string()) {
+            bail!("upgrade[{idx}] duplicate id '{upgrade_id}' is not allowed");
         }
         if !crate::upgrades::is_supported_upgrade_kind(upgrade.kind.as_str()) {
             bail!(
@@ -1053,6 +1669,11 @@ fn validate_upgrades(config: &UpgradesConfigFile) -> Result<()> {
             };
             if formation_id.trim().is_empty() {
                 bail!("upgrade[{idx}] formation_id must be non-empty");
+            }
+            if !is_supported_formation_id(formation_id) {
+                bail!(
+                    "upgrade[{idx}] unknown formation_id '{formation_id}', expected one of: square, circle, skean, diamond, shield_wall, loose"
+                );
             }
             if !upgrade.adds_to_skillbar {
                 bail!("upgrade[{idx}] unlock_formation must set adds_to_skillbar=true");
@@ -1110,9 +1731,9 @@ fn validate_upgrade_requirement(idx: usize, upgrade: &UpgradeConfig) -> Result<(
                     "upgrade[{idx}] formation_active requirement requires requirement_active_formation"
                 );
             };
-            if !matches!(formation_id, "square" | "diamond") {
+            if !is_supported_formation_id(formation_id) {
                 bail!(
-                    "upgrade[{idx}] unknown requirement_active_formation '{formation_id}', expected 'square' or 'diamond'"
+                    "upgrade[{idx}] unknown requirement_active_formation '{formation_id}', expected one of: square, circle, skean, diamond, shield_wall, loose"
                 );
             }
         }
@@ -1124,18 +1745,115 @@ fn validate_upgrade_requirement(idx: usize, upgrade: &UpgradeConfig) -> Result<(
                 bail!("upgrade[{idx}] requirement_map_tag must be non-empty");
             }
         }
+        "has_trait" => {
+            let Some(trait_id) = upgrade.requirement_trait.as_deref().map(str::trim) else {
+                bail!("upgrade[{idx}] has_trait requirement requires requirement_trait");
+            };
+            if !is_supported_upgrade_requirement_trait(trait_id) {
+                bail!(
+                    "upgrade[{idx}] unknown requirement_trait '{trait_id}', expected one of: shielded, frontline, anti_cavalry, cavalry, anti_armor, skirmisher, support"
+                );
+            }
+        }
+        "band_at_least" | "band_at_most" => {
+            let Some(stat_id) = upgrade.requirement_band_stat.as_deref().map(str::trim) else {
+                bail!(
+                    "upgrade[{idx}] {requirement_kind} requirement requires requirement_band_stat"
+                );
+            };
+            if !is_supported_upgrade_requirement_band_stat(stat_id) {
+                bail!(
+                    "upgrade[{idx}] unknown requirement_band_stat '{stat_id}', expected one of: tier0_share, shielded_share, frontline_share, support_share, cavalry_share, archer_share, anti_armor_share"
+                );
+            }
+            let bound = if requirement_kind == "band_at_least" {
+                upgrade
+                    .requirement_band_at_least
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+            } else {
+                upgrade
+                    .requirement_band_at_most
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+            };
+            let Some(band_id) = bound else {
+                bail!(
+                    "upgrade[{idx}] {requirement_kind} requirement requires {}",
+                    if requirement_kind == "band_at_least" {
+                        "requirement_band_at_least"
+                    } else {
+                        "requirement_band_at_most"
+                    }
+                );
+            };
+            if !is_supported_upgrade_requirement_band_id(band_id) {
+                bail!(
+                    "upgrade[{idx}] unknown requirement band '{band_id}', expected one of: very_low, low, moderate, high, very_high"
+                );
+            }
+        }
         other => bail!(
-            "upgrade[{idx}] unknown requirement_type={other}; supported: tier0_share, formation_active, map_tag"
+            "upgrade[{idx}] unknown requirement_type={other}; supported: tier0_share, formation_active, map_tag, has_trait, band_at_least, band_at_most"
         ),
     }
     Ok(())
+}
+
+fn is_supported_upgrade_requirement_trait(trait_id: &str) -> bool {
+    matches!(
+        trait_id,
+        "shielded"
+            | "frontline"
+            | "anti_cavalry"
+            | "cavalry"
+            | "anti_armor"
+            | "skirmisher"
+            | "support"
+    )
+}
+
+fn deprecated_upgrade_replacement(id: &str) -> Option<&'static str> {
+    DEPRECATED_UPGRADE_ID_REPLACEMENTS
+        .iter()
+        .find_map(|(deprecated, replacement)| (*deprecated == id).then_some(*replacement))
+}
+
+fn is_supported_formation_id(formation_id: &str) -> bool {
+    matches!(
+        formation_id,
+        "square" | "circle" | "skean" | "diamond" | "shield_wall" | "loose"
+    )
+}
+
+fn is_supported_upgrade_requirement_band_stat(stat_id: &str) -> bool {
+    matches!(
+        stat_id,
+        "tier0_share"
+            | "shielded_share"
+            | "frontline_share"
+            | "support_share"
+            | "cavalry_share"
+            | "archer_share"
+            | "anti_armor_share"
+    )
+}
+
+fn is_supported_upgrade_requirement_band_id(band_id: &str) -> bool {
+    matches!(
+        band_id,
+        "very_low" | "low" | "moderate" | "high" | "very_high"
+    )
 }
 
 fn validate_map(config: &MapConfig) -> Result<()> {
     if config.maps.is_empty() {
         bail!("map list cannot be empty");
     }
-    let mut has_christian_map = false;
+    let required_start_faction_key = default_start_faction_key();
+    let mut has_required_start_map = false;
     let mut seen_ids = std::collections::HashSet::new();
     for (index, map) in config.maps.iter().enumerate() {
         if map.id.trim().is_empty() {
@@ -1156,17 +1874,13 @@ fn validate_map(config: &MapConfig) -> Result<()> {
         if map.allowed_factions.is_empty() {
             bail!("map[{index}] allowed_factions cannot be empty");
         }
-        for faction in &map.allowed_factions {
-            if faction != "christian" && faction != "muslim" {
-                bail!("map[{index}] has unknown faction '{faction}'");
-            }
-            if faction == "christian" {
-                has_christian_map = true;
-            }
+        validate_map_allowed_factions(map, index)?;
+        if has_required_map_start_faction(map, required_start_faction_key) {
+            has_required_start_map = true;
         }
     }
-    if !has_christian_map {
-        bail!("at least one map must allow christian faction");
+    if !has_required_start_map {
+        bail!("at least one map must allow '{required_start_faction_key}' faction");
     }
     Ok(())
 }
@@ -1322,45 +2036,25 @@ fn validate_difficulty_profile(label: &str, profile: &DifficultyGameplayConfig) 
 }
 
 fn validate_roster_tuning(config: &RosterTuningConfigFile) -> Result<()> {
-    let required_tier2_kinds = [
-        UnitKind::ChristianShieldInfantry,
-        UnitKind::ChristianSpearman,
-        UnitKind::ChristianUnmountedKnight,
-        UnitKind::ChristianSquire,
-        UnitKind::ChristianExperiencedBowman,
-        UnitKind::ChristianCrossbowman,
-        UnitKind::ChristianTracker,
-        UnitKind::ChristianScout,
-        UnitKind::ChristianDevotedOne,
-        UnitKind::ChristianFanatic,
-        UnitKind::MuslimShieldInfantry,
-        UnitKind::MuslimSpearman,
-        UnitKind::MuslimUnmountedKnight,
-        UnitKind::MuslimSquire,
-        UnitKind::MuslimExperiencedBowman,
-        UnitKind::MuslimCrossbowman,
-        UnitKind::MuslimTracker,
-        UnitKind::MuslimScout,
-        UnitKind::MuslimDevotedOne,
-        UnitKind::MuslimFanatic,
-    ];
-    for kind in required_tier2_kinds {
-        let key = tier2_config_key_for_kind(kind).expect("tier2 key should exist");
-        let Some(stats) = config.tier2_units.get(key) else {
-            bail!("roster_tuning.tier2_units is missing required entry '{key}'");
-        };
-        let allow_zero_damage = matches!(
-            kind,
-            UnitKind::ChristianSquire
-                | UnitKind::ChristianDevotedOne
-                | UnitKind::MuslimSquire
-                | UnitKind::MuslimDevotedOne
-        );
-        validate_unit_stats(
-            stats,
-            &format!("roster_tuning.tier2_units.{key}"),
-            allow_zero_damage,
-        )?;
+    for faction in PlayerFaction::all() {
+        for unit_id in REQUIRED_TIER2_UNIT_IDS {
+            let Some(kind) = UnitKind::from_faction_and_unit_id(faction, unit_id, false) else {
+                bail!(
+                    "failed to resolve tier-2 unit '{unit_id}' for faction '{}'",
+                    faction.config_key()
+                );
+            };
+            let key = tier2_config_key_for_kind(kind).expect("tier2 key should exist");
+            let Some(stats) = config.tier2_units.get(key.as_str()) else {
+                bail!("roster_tuning.tier2_units is missing required entry '{key}'");
+            };
+            let allow_zero_damage = matches!(unit_id, "squire" | "devoted_one");
+            validate_unit_stats(
+                stats,
+                &format!("roster_tuning.tier2_units.{key}"),
+                allow_zero_damage,
+            )?;
+        }
     }
 
     let behavior = &config.behavior;
@@ -1410,6 +2104,7 @@ mod tests {
     use std::fs;
     use std::path::Path;
 
+    use serde_json::Value;
     use tempfile::TempDir;
 
     use crate::model::{PlayerFaction, RecruitArchetype, UnitKind};
@@ -1425,26 +2120,93 @@ mod tests {
             dir,
             "units.json",
             r#"{
-              "commander_christian":{"id":"baldiun","max_hp":10.0,"armor":1.0,"damage":2.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":100.0,"morale":100.0,"aura_radius":10.0},
-              "commander_muslim":{"id":"saladin","max_hp":10.0,"armor":1.0,"damage":2.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":100.0,"morale":100.0,"aura_radius":10.0},
-              "recruit_christian_peasant_infantry":{"id":"r1","max_hp":9.0,"armor":1.0,"damage":2.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":90.0,"morale":90.0},
-              "recruit_christian_peasant_archer":{"id":"r2","max_hp":7.0,"armor":0.5,"damage":1.5,"attack_cooldown_secs":1.1,"attack_range":80.0,"move_speed":95.0,"morale":85.0},
-              "recruit_christian_peasant_priest":{"id":"r3","max_hp":8.0,"armor":0.5,"damage":0.0,"attack_cooldown_secs":1.1,"attack_range":20.0,"move_speed":92.0,"morale":88.0},
-              "recruit_muslim_peasant_infantry":{"id":"m1","max_hp":9.0,"armor":1.0,"damage":2.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":90.0,"morale":90.0},
-              "recruit_muslim_peasant_archer":{"id":"m2","max_hp":7.0,"armor":0.5,"damage":1.5,"attack_cooldown_secs":1.1,"attack_range":80.0,"move_speed":95.0,"morale":85.0},
-              "recruit_muslim_peasant_priest":{"id":"m3","max_hp":8.0,"armor":0.5,"damage":0.0,"attack_cooldown_secs":1.1,"attack_range":20.0,"move_speed":92.0,"morale":88.0}
+              "base":{
+                "commander":{"id":"baldiun","max_hp":10.0,"armor":1.0,"damage":2.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":100.0,"morale":100.0,"aura_radius":10.0},
+                "recruits":{
+                  "peasant_infantry":{"id":"r1","max_hp":9.0,"armor":1.0,"damage":2.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":90.0,"morale":90.0},
+                  "peasant_archer":{"id":"r2","max_hp":7.0,"armor":0.5,"damage":1.5,"attack_cooldown_secs":1.1,"attack_range":80.0,"move_speed":95.0,"morale":85.0},
+                  "peasant_priest":{"id":"r3","max_hp":8.0,"armor":0.5,"damage":0.0,"attack_cooldown_secs":1.1,"attack_range":20.0,"move_speed":92.0,"morale":88.0}
+                }
+              },
+              "overrides":{
+                "muslim":{
+                  "commander":{"id":"saladin","max_hp":10.0,"armor":1.0,"damage":2.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":100.0,"morale":100.0,"aura_radius":10.0},
+                  "recruits":{
+                    "peasant_infantry":{"id":"m1","max_hp":9.0,"armor":1.0,"damage":2.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":90.0,"morale":90.0},
+                    "peasant_archer":{"id":"m2","max_hp":7.0,"armor":0.5,"damage":1.5,"attack_cooldown_secs":1.1,"attack_range":80.0,"move_speed":95.0,"morale":85.0},
+                    "peasant_priest":{"id":"m3","max_hp":8.0,"armor":0.5,"damage":0.0,"attack_cooldown_secs":1.1,"attack_range":20.0,"move_speed":92.0,"morale":88.0}
+                  }
+                }
+              }
             }"#,
         );
         write_config(
             dir,
             "enemies.json",
             r#"{
-              "enemy_christian_peasant_infantry":{"id":"ec_i","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0},
-              "enemy_christian_peasant_archer":{"id":"ec_a","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0},
-              "enemy_christian_peasant_priest":{"id":"ec_p","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0},
-              "enemy_muslim_peasant_infantry":{"id":"em_i","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0},
-              "enemy_muslim_peasant_archer":{"id":"em_a","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0},
-              "enemy_muslim_peasant_priest":{"id":"em_p","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0}
+              "base":{
+                "profiles":{
+                  "peasant_infantry":{"id":"ec_i","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0},
+                  "peasant_archer":{"id":"ec_a","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0},
+                  "peasant_priest":{"id":"ec_p","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0}
+                }
+              },
+              "overrides":{
+                "muslim":{
+                  "profiles":{
+                    "peasant_infantry":{"id":"em_i","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0},
+                    "peasant_archer":{"id":"em_a","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0},
+                    "peasant_priest":{"id":"em_p","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0}
+                  }
+                }
+              }
+            }"#,
+        );
+        write_config(
+            dir,
+            "heroes.json",
+            r#"{
+              "base":{
+                "subtypes":{
+                  "sword_shield":{"unit_id":"citadel_guard","description":"Shield-led frontline hero."},
+                  "spear":{"unit_id":"armored_halberdier","description":"Anti-cavalry spear hero."},
+                  "two_handed_sword":{"unit_id":"elite_heavy_knight","description":"Heavy striker hero."},
+                  "bow":{"unit_id":"elite_longbowman","description":"Long-range precision hero."},
+                  "javelin":{"unit_id":"siege_crossbowman","description":"Armor-piercing ranged hero."},
+                  "beast_master":{"unit_id":"elite_houndmaster","description":"Hound-command ranged hero."},
+                  "super_priest":{"unit_id":"divine_speaker","description":"Elite support priest hero."},
+                  "super_fanatic":{"unit_id":"divine_judge","description":"Zealot melee support hero."},
+                  "super_knight":{"unit_id":"elite_shock_cavalry","description":"Charge cavalry hero."}
+                }
+              },
+              "overrides":{
+                "christian":{
+                  "subtypes":{
+                    "sword_shield":{"entries":[{"hero_id":"c_sword_01","name":"Aldric","abilities":["Shield Rally"],"stat_notes":["High armor"]}]},
+                    "spear":{"entries":[{"hero_id":"c_spear_01","name":"Berengar","abilities":["Brace"],"stat_notes":["Anti-cavalry"]}]},
+                    "two_handed_sword":{"entries":[{"hero_id":"c_2h_01","name":"Godfrey","abilities":["Overhead Cleave"],"stat_notes":["High melee damage"]}]},
+                    "bow":{"entries":[{"hero_id":"c_bow_01","name":"Odo","abilities":["Longshot Volley"],"stat_notes":["High range"]}]},
+                    "javelin":{"entries":[{"hero_id":"c_javelin_01","name":"Renaud","abilities":["Armor Splitter"],"stat_notes":["Anti-armor"]}]},
+                    "beast_master":{"entries":[{"hero_id":"c_beast_01","name":"Hugh","abilities":["Hound Pack"],"stat_notes":["Summons hounds"]}]},
+                    "super_priest":{"entries":[{"hero_id":"c_priest_01","name":"Anselm","abilities":["Sanctified Ward"],"stat_notes":["Support aura"]}]},
+                    "super_fanatic":{"entries":[{"hero_id":"c_fanatic_01","name":"Etienne","abilities":["Judgement"],"stat_notes":["Life leech"]}]},
+                    "super_knight":{"entries":[{"hero_id":"c_knight_01","name":"Raynald","abilities":["Shock Charge"],"stat_notes":["Charge burst"]}]}
+                  }
+                },
+                "muslim":{
+                  "subtypes":{
+                    "sword_shield":{"entries":[{"hero_id":"m_sword_01","name":"Husam","abilities":["Shield Rally"],"stat_notes":["High armor"]}]},
+                    "spear":{"entries":[{"hero_id":"m_spear_01","name":"Qutayba","abilities":["Brace"],"stat_notes":["Anti-cavalry"]}]},
+                    "two_handed_sword":{"entries":[{"hero_id":"m_2h_01","name":"Nadir","abilities":["Overhead Cleave"],"stat_notes":["High melee damage"]}]},
+                    "bow":{"entries":[{"hero_id":"m_bow_01","name":"Samir","abilities":["Longshot Volley"],"stat_notes":["High range"]}]},
+                    "javelin":{"entries":[{"hero_id":"m_javelin_01","name":"Faris","abilities":["Armor Splitter"],"stat_notes":["Anti-armor"]}]},
+                    "beast_master":{"entries":[{"hero_id":"m_beast_01","name":"Zayd","abilities":["Hound Pack"],"stat_notes":["Summons hounds"]}]},
+                    "super_priest":{"entries":[{"hero_id":"m_priest_01","name":"Yunus","abilities":["Sanctified Ward"],"stat_notes":["Support aura"]}]},
+                    "super_fanatic":{"entries":[{"hero_id":"m_fanatic_01","name":"Jalal","abilities":["Judgement"],"stat_notes":["Life leech"]}]},
+                    "super_knight":{"entries":[{"hero_id":"m_knight_01","name":"Amir","abilities":["Shock Charge"],"stat_notes":["Charge burst"]}]}
+                  }
+                }
+              }
             }"#,
         );
         write_config(
@@ -1464,7 +2226,14 @@ mod tests {
         write_config(
             dir,
             "formations.json",
-            r#"{"square":{"id":"square","slot_spacing":20.0,"offense_multiplier":1.0,"offense_while_moving_multiplier":1.0,"defense_multiplier":1.0,"anti_cavalry_multiplier":1.0,"move_speed_multiplier":1.0},"diamond":{"id":"diamond","slot_spacing":20.0,"offense_multiplier":1.0,"offense_while_moving_multiplier":1.1,"defense_multiplier":0.9,"anti_cavalry_multiplier":1.0,"move_speed_multiplier":1.05}}"#,
+            r#"{
+              "square":{"id":"square","slot_spacing":20.0,"offense_multiplier":1.0,"offense_while_moving_multiplier":1.0,"defense_multiplier":1.0,"anti_cavalry_multiplier":1.0,"move_speed_multiplier":1.0},
+              "circle":{"id":"circle","slot_spacing":20.0,"offense_multiplier":0.96,"offense_while_moving_multiplier":0.96,"defense_multiplier":1.10,"anti_cavalry_multiplier":1.0,"move_speed_multiplier":0.96},
+              "skean":{"id":"skean","slot_spacing":20.0,"offense_multiplier":1.0,"offense_while_moving_multiplier":1.25,"defense_multiplier":0.82,"anti_cavalry_multiplier":0.92,"move_speed_multiplier":1.15},
+              "diamond":{"id":"diamond","slot_spacing":20.0,"offense_multiplier":1.0,"offense_while_moving_multiplier":1.2,"defense_multiplier":0.95,"anti_cavalry_multiplier":0.95,"move_speed_multiplier":1.12,"anti_entry":true},
+              "shield_wall":{"id":"shield_wall","slot_spacing":20.0,"offense_multiplier":0.92,"offense_while_moving_multiplier":0.85,"defense_multiplier":1.2,"anti_cavalry_multiplier":1.1,"move_speed_multiplier":0.72,"anti_entry":true,"shielded_block_bonus":0.1,"melee_reflect_ratio":0.3},
+              "loose":{"id":"loose","slot_spacing":28.0,"offense_multiplier":1.04,"offense_while_moving_multiplier":1.04,"defense_multiplier":0.94,"anti_cavalry_multiplier":0.94,"move_speed_multiplier":1.08,"allow_unlimited_enemy_inside":true}
+            }"#,
         );
         write_config(
             dir,
@@ -1500,7 +2269,7 @@ mod tests {
               "spawn_count":1,
               "rescue_radius":10.0,
               "rescue_duration_secs":1.0,
-              "recruit_pool":["christian_peasant_infantry"]
+              "recruit_pool":["peasant_infantry"]
             }"#,
         );
         write_config(
@@ -1626,6 +2395,7 @@ mod tests {
               }
             }"#,
         );
+        fs::copy("assets/data/heroes.json", dir.join("heroes.json")).expect("copy heroes fixture");
     }
 
     #[test]
@@ -1698,6 +2468,29 @@ mod tests {
     }
 
     #[test]
+    fn tier2_tuning_key_uses_faction_prefix_plus_generic_unit_id() {
+        let christian =
+            UnitKind::from_faction_and_unit_id(PlayerFaction::Christian, "shield_infantry", false)
+                .expect("christian tier2 kind");
+        let muslim =
+            UnitKind::from_faction_and_unit_id(PlayerFaction::Muslim, "shield_infantry", false)
+                .expect("muslim tier2 kind");
+        let tier1 =
+            UnitKind::from_faction_and_unit_id(PlayerFaction::Christian, "men_at_arms", false)
+                .expect("tier1 kind");
+
+        assert_eq!(
+            super::tier2_config_key_for_kind(christian).as_deref(),
+            Some("christian_shield_infantry")
+        );
+        assert_eq!(
+            super::tier2_config_key_for_kind(muslim).as_deref(),
+            Some("muslim_shield_infantry")
+        );
+        assert!(super::tier2_config_key_for_kind(tier1).is_none());
+    }
+
+    #[test]
     fn enemy_profile_for_kind_rejects_rescuable_variants() {
         let tmp = TempDir::new().expect("tmp");
         write_valid_set(tmp.path());
@@ -1717,14 +2510,24 @@ mod tests {
             tmp.path(),
             "units.json",
             r#"{
-              "commander_christian":{"id":"baldiun","max_hp":10.0,"armor":1.0,"damage":2.0,"attack_cooldown_secs":-1.0,"attack_range":20.0,"move_speed":100.0,"morale":100.0,"aura_radius":10.0},
-              "commander_muslim":{"id":"saladin","max_hp":10.0,"armor":1.0,"damage":2.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":100.0,"morale":100.0,"aura_radius":10.0},
-              "recruit_christian_peasant_infantry":{"id":"r1","max_hp":9.0,"armor":1.0,"damage":2.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":90.0,"morale":90.0},
-              "recruit_christian_peasant_archer":{"id":"r2","max_hp":7.0,"armor":0.5,"damage":1.5,"attack_cooldown_secs":1.1,"attack_range":80.0,"move_speed":95.0,"morale":85.0},
-              "recruit_christian_peasant_priest":{"id":"r3","max_hp":8.0,"armor":0.5,"damage":0.0,"attack_cooldown_secs":1.1,"attack_range":20.0,"move_speed":92.0,"morale":88.0},
-              "recruit_muslim_peasant_infantry":{"id":"m1","max_hp":9.0,"armor":1.0,"damage":2.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":90.0,"morale":90.0},
-              "recruit_muslim_peasant_archer":{"id":"m2","max_hp":7.0,"armor":0.5,"damage":1.5,"attack_cooldown_secs":1.1,"attack_range":80.0,"move_speed":95.0,"morale":85.0},
-              "recruit_muslim_peasant_priest":{"id":"m3","max_hp":8.0,"armor":0.5,"damage":0.0,"attack_cooldown_secs":1.1,"attack_range":20.0,"move_speed":92.0,"morale":88.0}
+              "base":{
+                "commander":{"id":"baldiun","max_hp":10.0,"armor":1.0,"damage":2.0,"attack_cooldown_secs":-1.0,"attack_range":20.0,"move_speed":100.0,"morale":100.0,"aura_radius":10.0},
+                "recruits":{
+                  "peasant_infantry":{"id":"r1","max_hp":9.0,"armor":1.0,"damage":2.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":90.0,"morale":90.0},
+                  "peasant_archer":{"id":"r2","max_hp":7.0,"armor":0.5,"damage":1.5,"attack_cooldown_secs":1.1,"attack_range":80.0,"move_speed":95.0,"morale":85.0},
+                  "peasant_priest":{"id":"r3","max_hp":8.0,"armor":0.5,"damage":0.0,"attack_cooldown_secs":1.1,"attack_range":20.0,"move_speed":92.0,"morale":88.0}
+                }
+              },
+              "overrides":{
+                "muslim":{
+                  "commander":{"id":"saladin","max_hp":10.0,"armor":1.0,"damage":2.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":100.0,"morale":100.0,"aura_radius":10.0},
+                  "recruits":{
+                    "peasant_infantry":{"id":"m1","max_hp":9.0,"armor":1.0,"damage":2.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":90.0,"morale":90.0},
+                    "peasant_archer":{"id":"m2","max_hp":7.0,"armor":0.5,"damage":1.5,"attack_cooldown_secs":1.1,"attack_range":80.0,"move_speed":95.0,"morale":85.0},
+                    "peasant_priest":{"id":"m3","max_hp":8.0,"armor":0.5,"damage":0.0,"attack_cooldown_secs":1.1,"attack_range":20.0,"move_speed":92.0,"morale":88.0}
+                  }
+                }
+              }
             }"#,
         );
 
@@ -1740,18 +2543,191 @@ mod tests {
             tmp.path(),
             "enemies.json",
             r#"{
-              "enemy_christian_peasant_infantry":{"id":"ec_i","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0},
-              "enemy_christian_peasant_archer":{"id":"ec_a","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"ranged_attack_damage":2.0,"move_speed":80.0,"morale":85.0},
-              "enemy_christian_peasant_priest":{"id":"ec_p","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0},
-              "enemy_muslim_peasant_infantry":{"id":"em_i","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0},
-              "enemy_muslim_peasant_archer":{"id":"em_a","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0},
-              "enemy_muslim_peasant_priest":{"id":"em_p","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0}
+              "base":{
+                "profiles":{
+                  "peasant_infantry":{"id":"ec_i","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0},
+                  "peasant_archer":{"id":"ec_a","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"ranged_attack_damage":2.0,"move_speed":80.0,"morale":85.0},
+                  "peasant_priest":{"id":"ec_p","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0}
+                }
+              },
+              "overrides":{
+                "muslim":{
+                  "profiles":{
+                    "peasant_infantry":{"id":"em_i","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0},
+                    "peasant_archer":{"id":"em_a","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0},
+                    "peasant_priest":{"id":"em_p","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0}
+                  }
+                }
+              }
             }"#,
         );
 
         let err =
             GameData::load_from_dir(tmp.path()).expect_err("expected invalid enemy ranged config");
         assert!(err.to_string().contains("ranged fields"));
+    }
+
+    #[test]
+    fn rejects_units_override_with_unknown_recruit_id() {
+        let tmp = TempDir::new().expect("tmp");
+        write_valid_set(tmp.path());
+        write_config(
+            tmp.path(),
+            "units.json",
+            r#"{
+              "base":{
+                "commander":{"id":"baldiun","max_hp":10.0,"armor":1.0,"damage":2.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":100.0,"morale":100.0,"aura_radius":10.0},
+                "recruits":{
+                  "peasant_infantry":{"id":"r1","max_hp":9.0,"armor":1.0,"damage":2.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":90.0,"morale":90.0},
+                  "peasant_archer":{"id":"r2","max_hp":7.0,"armor":0.5,"damage":1.5,"attack_cooldown_secs":1.1,"attack_range":80.0,"move_speed":95.0,"morale":85.0},
+                  "peasant_priest":{"id":"r3","max_hp":8.0,"armor":0.5,"damage":0.0,"attack_cooldown_secs":1.1,"attack_range":20.0,"move_speed":92.0,"morale":88.0}
+                }
+              },
+              "overrides":{
+                "muslim":{
+                  "recruits":{
+                    "invalid_recruit":{"id":"bad","max_hp":9.0,"armor":1.0,"damage":2.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":90.0,"morale":90.0}
+                  }
+                }
+              }
+            }"#,
+        );
+        let err =
+            GameData::load_from_dir(tmp.path()).expect_err("expected invalid recruit override id");
+        let err_text = err.to_string();
+        assert!(
+            err_text.contains("unknown unit_id"),
+            "unexpected error: {err_text}"
+        );
+    }
+
+    #[test]
+    fn rejects_enemy_override_with_unknown_faction_key() {
+        let tmp = TempDir::new().expect("tmp");
+        write_valid_set(tmp.path());
+        write_config(
+            tmp.path(),
+            "enemies.json",
+            r#"{
+              "base":{
+                "profiles":{
+                  "peasant_infantry":{"id":"ec_i","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0},
+                  "peasant_archer":{"id":"ec_a","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0},
+                  "peasant_priest":{"id":"ec_p","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0}
+                }
+              },
+              "overrides":{
+                "unknown_faction":{
+                  "profiles":{
+                    "peasant_infantry":{"id":"bad","max_hp":6.0,"armor":0.0,"damage":1.0,"attack_cooldown_secs":1.0,"attack_range":20.0,"move_speed":80.0,"morale":85.0}
+                  }
+                }
+              }
+            }"#,
+        );
+        let err =
+            GameData::load_from_dir(tmp.path()).expect_err("expected invalid faction override");
+        let err_text = err.to_string();
+        assert!(
+            err_text.contains("unknown faction key"),
+            "unexpected error: {err_text}"
+        );
+    }
+
+    #[test]
+    fn rejects_heroes_missing_required_subtype() {
+        let tmp = TempDir::new().expect("tmp");
+        write_valid_set(tmp.path());
+        write_config(
+            tmp.path(),
+            "heroes.json",
+            r#"{
+              "base":{
+                "subtypes":{
+                  "sword_shield":{"unit_id":"citadel_guard","description":"Shield hero."}
+                }
+              },
+              "overrides":{
+                "christian":{
+                  "subtypes":{
+                    "sword_shield":{"entries":[{"hero_id":"c01","name":"Aldric"}]}
+                  }
+                },
+                "muslim":{
+                  "subtypes":{
+                    "sword_shield":{"entries":[{"hero_id":"m01","name":"Husam"}]}
+                  }
+                }
+              }
+            }"#,
+        );
+        let err = GameData::load_from_dir(tmp.path()).expect_err("expected missing hero subtype");
+        assert!(err.to_string().contains("missing required subtype"));
+    }
+
+    #[test]
+    fn rejects_heroes_entry_with_unknown_unit_id() {
+        let tmp = TempDir::new().expect("tmp");
+        write_valid_set(tmp.path());
+
+        let heroes_path = tmp.path().join("heroes.json");
+        let raw = fs::read_to_string(&heroes_path).expect("read heroes");
+        let mut parsed: Value = serde_json::from_str(&raw).expect("parse heroes json");
+        parsed["overrides"]["christian"]["subtypes"]["sword_shield"]["entries"][0]["unit_id"] =
+            Value::String("unknown_unit".to_string());
+        fs::write(
+            &heroes_path,
+            serde_json::to_string_pretty(&parsed).expect("serialize heroes json"),
+        )
+        .expect("write heroes");
+
+        let err = GameData::load_from_dir(tmp.path()).expect_err("expected bad hero unit id");
+        assert!(err.to_string().contains("does not resolve for faction"));
+    }
+
+    #[test]
+    fn rejects_heroes_subtype_with_non_ten_entries_per_faction() {
+        let tmp = TempDir::new().expect("tmp");
+        write_valid_set(tmp.path());
+
+        let heroes_path = tmp.path().join("heroes.json");
+        let raw = fs::read_to_string(&heroes_path).expect("read heroes");
+        let mut parsed: Value = serde_json::from_str(&raw).expect("parse heroes json");
+        let entries = parsed["overrides"]["christian"]["subtypes"]["sword_shield"]["entries"]
+            .as_array_mut()
+            .expect("sword_shield entries should be array");
+        entries.pop();
+        fs::write(
+            &heroes_path,
+            serde_json::to_string_pretty(&parsed).expect("serialize heroes json"),
+        )
+        .expect("write heroes");
+
+        let err = GameData::load_from_dir(tmp.path()).expect_err("expected hero count validation");
+        let err_text = err.to_string();
+        assert!(
+            err_text.contains("must contain exactly 10 heroes"),
+            "unexpected error: {err_text}"
+        );
+    }
+
+    #[test]
+    fn asset_heroes_have_exactly_ten_entries_per_subtype_per_faction() {
+        let data = GameData::load_from_dir(Path::new("assets/data")).expect("load asset data");
+        for (subtype_id, subtype) in &data.heroes.subtypes {
+            for faction in PlayerFaction::all() {
+                let entries = subtype
+                    .entries_by_faction
+                    .get(&faction)
+                    .expect("entries should exist for faction");
+                assert_eq!(
+                    entries.len(),
+                    super::HERO_ENTRIES_PER_SUBTYPE_PER_FACTION,
+                    "subtype={subtype_id}, faction={:?}",
+                    faction
+                );
+            }
+        }
     }
 
     #[test]
@@ -1828,6 +2804,46 @@ mod tests {
     }
 
     #[test]
+    fn faction_key_helpers_follow_player_faction_registry() {
+        for faction in PlayerFaction::all() {
+            assert!(super::is_supported_faction_key(faction.config_key()));
+            assert!(super::is_supported_faction_key(
+                &faction.config_key().to_ascii_uppercase()
+            ));
+        }
+        assert!(!super::is_supported_faction_key("unknown_faction"));
+        assert_eq!(
+            super::default_start_faction_key(),
+            PlayerFaction::default().config_key()
+        );
+    }
+
+    #[test]
+    fn map_validation_accepts_case_insensitive_supported_faction_keys() {
+        let tmp = TempDir::new().expect("tmp");
+        write_valid_set(tmp.path());
+        write_config(
+            tmp.path(),
+            "map.json",
+            r#"{
+              "maps":[
+                {
+                  "id":"case_map",
+                  "name":"Case Map",
+                  "description":"Uppercase faction key should resolve.",
+                  "width":1000.0,
+                  "height":1000.0,
+                  "allowed_factions":["CHRISTIAN"]
+                }
+              ]
+            }"#,
+        );
+        let loaded =
+            GameData::load_from_dir(tmp.path()).expect("expected case-insensitive map load");
+        assert_eq!(loaded.map.maps.len(), 1);
+    }
+
+    #[test]
     fn accepts_rescue_pool_with_all_tier0_entries() {
         let tmp = TempDir::new().expect("tmp");
         write_valid_set(tmp.path());
@@ -1839,9 +2855,9 @@ mod tests {
               "rescue_radius":30.0,
               "rescue_duration_secs":1.5,
               "recruit_pool":[
-                "christian_peasant_infantry",
-                "christian_peasant_archer",
-                "christian_peasant_priest"
+                "peasant_infantry",
+                "peasant_archer",
+                "peasant_priest"
               ]
             }"#,
         );
@@ -1870,8 +2886,63 @@ mod tests {
         let err = GameData::load_from_dir(tmp.path()).expect_err("expected bad requirement type");
         assert!(
             err.to_string()
-                .contains("supported: tier0_share, formation_active, map_tag")
+                .contains("supported: tier0_share, formation_active, map_tag, has_trait, band_at_least, band_at_most")
         );
+    }
+
+    #[test]
+    fn accepts_upgrade_trait_and_band_requirements() {
+        let tmp = TempDir::new().expect("tmp");
+        write_valid_set(tmp.path());
+        write_config(
+            tmp.path(),
+            "upgrades.json",
+            r#"{
+              "upgrades":[
+                {
+                  "id":"trait_gate",
+                  "kind":"mob_fury",
+                  "value":1.0,
+                  "requirement_type":"has_trait",
+                  "requirement_trait":"shielded"
+                },
+                {
+                  "id":"band_gate",
+                  "kind":"mob_justice",
+                  "value":1.0,
+                  "requirement_type":"band_at_least",
+                  "requirement_band_stat":"frontline_share",
+                  "requirement_band_at_least":"moderate"
+                }
+              ]
+            }"#,
+        );
+        let loaded = GameData::load_from_dir(tmp.path()).expect("expected valid requirement types");
+        assert_eq!(loaded.upgrades.upgrades.len(), 2);
+    }
+
+    #[test]
+    fn rejects_upgrade_band_requirement_with_unknown_band() {
+        let tmp = TempDir::new().expect("tmp");
+        write_valid_set(tmp.path());
+        write_config(
+            tmp.path(),
+            "upgrades.json",
+            r#"{
+              "upgrades":[
+                {
+                  "id":"bad_band",
+                  "kind":"mob_fury",
+                  "value":1.0,
+                  "requirement_type":"band_at_most",
+                  "requirement_band_stat":"support_share",
+                  "requirement_band_at_most":"legendary"
+                }
+              ]
+            }"#,
+        );
+        let err = GameData::load_from_dir(tmp.path()).expect_err("expected bad band id");
+        assert!(err.to_string().contains("unknown requirement band"));
     }
 
     #[test]
@@ -1920,6 +2991,63 @@ mod tests {
         );
         let err = GameData::load_from_dir(tmp.path()).expect_err("expected unknown kind failure");
         assert!(err.to_string().contains("is not wired in runtime systems"));
+    }
+
+    #[test]
+    fn rejects_deprecated_upgrade_ids_with_replacement_hint() {
+        let legacy_ids = [
+            ("fast_learner_up_10", "fast_learner_up"),
+            ("fast_learner_up_15", "fast_learner_up"),
+            ("mob_fury_shielded_host", "mob_fury"),
+            ("mob_justice_frontline_bias", "mob_justice"),
+            ("mob_mercy_support_ceiling", "mob_mercy"),
+        ];
+
+        for (legacy_id, replacement_id) in legacy_ids {
+            let tmp = TempDir::new().expect("tmp");
+            write_valid_set(tmp.path());
+            write_config(
+                tmp.path(),
+                "upgrades.json",
+                &format!(
+                    r#"{{
+                      "upgrades":[
+                        {{
+                          "id":"{legacy_id}",
+                          "kind":"mob_fury",
+                          "value":1.0
+                        }}
+                      ]
+                    }}"#
+                ),
+            );
+            let err = GameData::load_from_dir(tmp.path())
+                .expect_err("expected deprecated upgrade id failure");
+            let message = err.to_string();
+            assert!(message.contains("is deprecated"), "message: {message}");
+            assert!(
+                message.contains(replacement_id),
+                "expected replacement {replacement_id} in message: {message}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_duplicate_upgrade_ids() {
+        let tmp = TempDir::new().expect("tmp");
+        write_valid_set(tmp.path());
+        write_config(
+            tmp.path(),
+            "upgrades.json",
+            r#"{
+              "upgrades":[
+                {"id":"dup","kind":"damage","value":1.0},
+                {"id":"dup","kind":"armor","value":1.0}
+              ]
+            }"#,
+        );
+        let err = GameData::load_from_dir(tmp.path()).expect_err("expected duplicate id failure");
+        assert!(err.to_string().contains("duplicate id"));
     }
 
     #[test]

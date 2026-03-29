@@ -1,12 +1,44 @@
 {
   "upgrades": [
     {
+      "id": "unlock_formation_circle",
+      "kind": "unlock_formation",
+      "value": 1.0,
+      "one_time": true,
+      "adds_to_skillbar": true,
+      "formation_id": "circle"
+    },
+    {
+      "id": "unlock_formation_skean",
+      "kind": "unlock_formation",
+      "value": 1.0,
+      "one_time": true,
+      "adds_to_skillbar": true,
+      "formation_id": "skean"
+    },
+    {
       "id": "unlock_formation_diamond",
       "kind": "unlock_formation",
       "value": 1.0,
       "one_time": true,
       "adds_to_skillbar": true,
       "formation_id": "diamond"
+    },
+    {
+      "id": "unlock_formation_shield_wall",
+      "kind": "unlock_formation",
+      "value": 1.0,
+      "one_time": true,
+      "adds_to_skillbar": true,
+      "formation_id": "shield_wall"
+    },
+    {
+      "id": "unlock_formation_loose",
+      "kind": "unlock_formation",
+      "value": 1.0,
+      "one_time": true,
+      "adds_to_skillbar": true,
+      "formation_id": "loose"
     },
     {
       "id": "damage_up",
@@ -27,36 +59,18 @@
     {
       "id": "fast_learner_up",
       "kind": "fast_learner",
-      "value": 0.05,
-      "one_time": true
-    },
-    {
-      "id": "fast_learner_up_10",
-      "kind": "fast_learner",
-      "value": 0.10,
-      "one_time": true
-    },
-    {
-      "id": "fast_learner_up_15",
-      "kind": "fast_learner",
-      "value": 0.15,
-      "one_time": true
-    },
-    {
-      "id": "item_rarity_up",
-      "kind": "item_rarity",
       "min_value": 0.05,
-      "max_value": 0.10,
-      "value_step": 0.01,
-      "weight_exponent": 2.2
+      "max_value": 0.15,
+      "value_step": 0.05,
+      "weight_exponent": 2.0
     },
     {
-      "id": "upgrade_rarity_up",
-      "kind": "upgrade_rarity",
-      "min_value": 0.05,
+      "id": "luck_up",
+      "kind": "luck",
+      "min_value": 0.02,
       "max_value": 0.10,
-      "value_step": 0.01,
-      "weight_exponent": 2.2
+      "value_step": 0.02,
+      "weight_exponent": 2.15
     },
     {
       "id": "skill_duration_up",
@@ -79,22 +93,6 @@
       "kind": "unique_slot_tradeoff",
       "value": 2.0,
       "one_time": true
-    },
-    {
-      "id": "crit_chance_up",
-      "kind": "crit_chance",
-      "min_value": 0.01,
-      "max_value": 0.05,
-      "value_step": 0.01,
-      "weight_exponent": 2.1
-    },
-    {
-      "id": "crit_damage_up",
-      "kind": "crit_damage",
-      "min_value": 0.08,
-      "max_value": 0.40,
-      "value_step": 0.04,
-      "weight_exponent": 2.2
     },
     {
       "id": "armor_up",

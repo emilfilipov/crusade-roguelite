@@ -4,20 +4,22 @@ use crate::banner::BannerState;
 use crate::data::GameData;
 use crate::formation::{
     ActiveFormation, FormationModifiers, active_formation_config, formation_contains_position,
+    formation_melee_reflect_ratio, formation_shielded_block_bonus,
 };
 use crate::inventory::{
     EquipmentArmyEffects, InventoryState, gear_bonuses_for_unit_with_banner_state,
 };
 use crate::model::{
-    AttackCooldown, AttackProfile, BaseMaxHealth, DamageEvent, DamageTextEvent, EnemySpawnSource,
-    EnemyUnit, GameDifficulty, GameState, GlobalBuffs, Health, MatchSetupSelection, Morale,
-    SpawnGoldPackEvent, Team, Unit, UnitDamagedEvent, UnitDiedEvent, UnitKind, UnitTier,
+    AttackCooldown, AttackProfile, BaseMaxHealth, DamageEvent, DamageTextEvent, DamageTextKind,
+    EnemySpawnSource, EnemyUnit, GameDifficulty, GameState, GlobalBuffs, Health,
+    MatchSetupSelection, Morale, SpawnGoldPackEvent, Team, Unit, UnitArmorClass, UnitDamagedEvent,
+    UnitDiedEvent, UnitKind, UnitRoleTag, UnitTier,
 };
 use crate::morale::{morale_armor_multiplier, morale_damage_multiplier};
 use crate::projectiles::Projectile;
 use crate::squad::{
-    ArmorLockedZero, CommanderMotionState, PriestAttackSpeedBlessing,
-    priest_attack_speed_multiplier,
+    ArmorLockedZero, CommanderMotionState, HeroSubtypeUnit, PriestAttackSpeedBlessing,
+    hero_subtype_combat_profile, hero_subtype_matchup_multiplier, priest_attack_speed_multiplier,
 };
 use crate::upgrades::{ConditionalUpgradeEffects, Progression};
 use crate::visuals::ArtAssets;
@@ -36,6 +38,15 @@ const MAX_ARMOR_REDUCTION_RATIO: f32 = 0.90;
 const DEATH_HEALTH_EPSILON: f32 = 0.01;
 const PEASANT_INFANTRY_BLOCK_CHANCE: f32 = 0.15;
 const INFIDELS_BLOCK_CHANCE_BONUS: f32 = 0.08;
+const BLOCK_DAMAGE_MITIGATION_RATIO: f32 = 0.65;
+const COUNTER_MULTIPLIER_MIN: f32 = 0.65;
+const COUNTER_MULTIPLIER_MAX: f32 = 1.45;
+const ANTI_CAVALRY_BONUS: f32 = 0.35;
+const CAVALRY_VS_FRONTLINE_BONUS: f32 = 0.18;
+const CAVALRY_VS_ANTI_CAVALRY_PENALTY: f32 = 0.24;
+const SKIRMISHER_VS_SUPPORT_BONUS: f32 = 0.15;
+const ARCHER_VS_CAVALRY_PENALTY: f32 = 0.10;
+const SUPPORT_VS_FRONTLINE_PENALTY: f32 = 0.12;
 
 #[derive(Clone, Copy, Debug)]
 struct CombatRngState {
@@ -105,6 +116,7 @@ fn tick_attack_timers(
         &Unit,
         Option<&UnitTier>,
         Option<&PriestAttackSpeedBlessing>,
+        Option<&HeroSubtypeUnit>,
         &mut AttackCooldown,
     )>,
 ) {
@@ -116,7 +128,7 @@ fn tick_attack_timers(
         .as_ref()
         .map(|value| commander_level_combat_multiplier(value.level))
         .unwrap_or(1.0);
-    for (unit, tier, priest_blessing, mut cooldown) in &mut attackers {
+    for (unit, tier, priest_blessing, hero_subtype, mut cooldown) in &mut attackers {
         let priest_scale = priest_attack_speed_multiplier(priest_blessing);
         let (upgrade_attack_speed_bonus, gear_attack_speed_bonus) = if unit.team == Team::Friendly {
             let gear = gear_bonuses_for_unit_with_banner_state(
@@ -141,6 +153,9 @@ fn tick_attack_timers(
                 upgrade_attack_speed_bonus + gear_attack_speed_bonus,
                 0.1,
             );
+            if let Some(hero) = hero_subtype {
+                value *= hero_subtype_combat_profile(hero.subtype).attack_speed_multiplier;
+            }
             if let Some(conditional) = &conditional_effects {
                 value *= conditional.friendly_attack_speed_multiplier;
             }
@@ -176,6 +191,7 @@ fn emit_ranged_projectile_attacks(
         &Unit,
         Option<&UnitTier>,
         Option<&PriestAttackSpeedBlessing>,
+        Option<&HeroSubtypeUnit>,
         Option<&Morale>,
         &Transform,
         &AttackProfile,
@@ -225,6 +241,7 @@ fn emit_ranged_projectile_attacks(
         commander_unit,
         attacker_tier,
         priest_blessing,
+        hero_subtype,
         attacker_morale,
         commander_transform,
         melee_profile,
@@ -259,6 +276,9 @@ fn emit_ranged_projectile_attacks(
                 upgrade_attack_speed_bonus + gear.attack_speed_multiplier,
                 0.1,
             );
+            if let Some(hero) = hero_subtype {
+                attack_speed *= hero_subtype_combat_profile(hero.subtype).attack_speed_multiplier;
+            }
             attack_speed = attack_speed.max(MIN_FRIENDLY_COMBAT_MULTIPLIER);
         }
 
@@ -373,6 +393,10 @@ fn emit_ranged_projectile_attacks(
             upgrade_damage_bonus + ranged_bonus_mult,
         ) * outgoing_multiplier)
             .max(1.0);
+        if let Some(hero) = hero_subtype {
+            projectile_damage *=
+                hero_subtype_combat_profile(hero.subtype).outgoing_damage_multiplier;
+        }
         let mut projectile_is_critical = false;
         if attacker_team == Team::Friendly {
             let (crit_chance, crit_multiplier) =
@@ -391,6 +415,8 @@ fn emit_ranged_projectile_attacks(
                 remaining_distance: ranged_profile.projectile_max_distance,
                 radius: RANGED_PROJECTILE_HIT_RADIUS,
                 source_team: commander_unit.team,
+                source_kind: commander_unit.kind,
+                source_hero_subtype: hero_subtype.map(|value| value.subtype),
                 is_critical: projectile_is_critical,
             },
             SpriteBundle {
@@ -444,6 +470,7 @@ fn emit_damage_events(
         Entity,
         &Unit,
         Option<&UnitTier>,
+        Option<&HeroSubtypeUnit>,
         Option<&Morale>,
         &Transform,
         &AttackProfile,
@@ -535,6 +562,7 @@ fn emit_damage_events(
         attacker_entity,
         attacker_unit,
         attacker_tier,
+        attacker_hero_subtype,
         attacker_morale,
         attacker_transform,
         attack_profile,
@@ -656,11 +684,22 @@ fn emit_damage_events(
             } else {
                 0.0
             };
+            let counter_multiplier =
+                role_counter_damage_multiplier(attacker_unit.kind, target_kind);
+            let hero_profile = attacker_hero_subtype
+                .map(|value| hero_subtype_combat_profile(value.subtype))
+                .unwrap_or_default();
+            let hero_matchup_multiplier = attacker_hero_subtype
+                .map(|value| hero_subtype_matchup_multiplier(value.subtype, target_kind))
+                .unwrap_or(1.0);
             let mut outgoing_damage = apply_percent_increase_to_base_plus_additive(
                 attack_profile.damage,
                 0.0,
                 upgrade_damage_bonus + melee_bonus_mult,
-            ) * outgoing_multiplier;
+            ) * outgoing_multiplier
+                * counter_multiplier
+                * hero_profile.outgoing_damage_multiplier
+                * hero_matchup_multiplier;
             let mut is_critical = false;
             if attacker_unit.team == Team::Friendly {
                 let (crit_chance, crit_multiplier) =
@@ -752,6 +791,58 @@ pub fn compute_damage(base_damage: f32, armor: f32, outgoing_multiplier: f32) ->
     let scaled_damage = (base_damage * outgoing_multiplier).max(0.0);
     let reduction_ratio = armor_reduction_ratio(armor);
     (scaled_damage * (1.0 - reduction_ratio)).max(1.0)
+}
+
+pub fn role_counter_damage_multiplier(attacker_kind: UnitKind, defender_kind: UnitKind) -> f32 {
+    let mut multiplier = 1.0;
+
+    if attacker_kind.has_role_tag(UnitRoleTag::AntiCavalry)
+        && defender_kind.has_role_tag(UnitRoleTag::Cavalry)
+    {
+        multiplier += ANTI_CAVALRY_BONUS;
+    }
+
+    if attacker_kind.has_role_tag(UnitRoleTag::Cavalry)
+        && defender_kind.has_role_tag(UnitRoleTag::Frontline)
+    {
+        multiplier += CAVALRY_VS_FRONTLINE_BONUS;
+    }
+
+    if attacker_kind.has_role_tag(UnitRoleTag::Cavalry)
+        && defender_kind.has_role_tag(UnitRoleTag::AntiCavalry)
+    {
+        multiplier -= CAVALRY_VS_ANTI_CAVALRY_PENALTY;
+    }
+
+    if attacker_kind.has_role_tag(UnitRoleTag::AntiArmor) {
+        multiplier += match defender_kind.armor_class() {
+            UnitArmorClass::Heavy => 0.30,
+            UnitArmorClass::Armored => 0.20,
+            UnitArmorClass::Light => 0.05,
+            UnitArmorClass::Unarmored => -0.10,
+        };
+    }
+
+    if attacker_kind.has_role_tag(UnitRoleTag::Skirmisher)
+        && defender_kind.has_role_tag(UnitRoleTag::Support)
+    {
+        multiplier += SKIRMISHER_VS_SUPPORT_BONUS;
+    }
+
+    if attacker_kind.is_archer_line()
+        && !attacker_kind.has_role_tag(UnitRoleTag::AntiCavalry)
+        && defender_kind.has_role_tag(UnitRoleTag::Cavalry)
+    {
+        multiplier -= ARCHER_VS_CAVALRY_PENALTY;
+    }
+
+    if attacker_kind.has_role_tag(UnitRoleTag::Support)
+        && defender_kind.has_role_tag(UnitRoleTag::Frontline)
+    {
+        multiplier -= SUPPORT_VS_FRONTLINE_PENALTY;
+    }
+
+    multiplier.clamp(COUNTER_MULTIPLIER_MIN, COUNTER_MULTIPLIER_MAX)
 }
 
 fn morale_damage_multiplier_from_ratio(morale_ratio: f32) -> f32 {
@@ -899,8 +990,8 @@ pub fn inside_active_formation_bounds(
     )
 }
 
-fn is_peasant_infantry_kind(kind: UnitKind) -> bool {
-    kind.is_block_infantry_line()
+fn is_shielded_block_target_kind(kind: UnitKind) -> bool {
+    kind.has_shielded_trait()
 }
 
 fn enemy_block_chance_for_difficulty(difficulty: GameDifficulty, block_enabled: bool) -> f32 {
@@ -924,17 +1015,53 @@ fn should_enemy_block_hit(
 ) -> bool {
     target_team == Team::Enemy
         && block_chance > 0.0
-        && is_peasant_infantry_kind(target_kind)
+        && is_shielded_block_target_kind(target_kind)
         && rng.next_f32() < block_chance
 }
 
+fn should_friendly_block_hit(
+    target_team: Team,
+    target_kind: UnitKind,
+    block_chance: f32,
+    rng: &mut CombatRngState,
+) -> bool {
+    target_team == Team::Friendly
+        && block_chance > 0.0
+        && is_shielded_block_target_kind(target_kind)
+        && rng.next_f32() < block_chance
+}
+
+fn should_block_hit(
+    target_team: Team,
+    target_kind: UnitKind,
+    enemy_block_chance: f32,
+    friendly_block_chance: f32,
+    rng: &mut CombatRngState,
+) -> bool {
+    should_enemy_block_hit(target_team, target_kind, enemy_block_chance, rng)
+        || should_friendly_block_hit(target_team, target_kind, friendly_block_chance, rng)
+}
+
+fn is_melee_reflect_eligible_source_kind(kind: UnitKind) -> bool {
+    !kind.is_archer_line()
+}
+
+#[allow(clippy::too_many_arguments)]
+#[allow(clippy::type_complexity)]
 fn apply_damage_events(
     data: Res<GameData>,
+    active_formation: Res<ActiveFormation>,
     setup_selection: Option<Res<MatchSetupSelection>>,
     mut damage_events: EventReader<DamageEvent>,
     mut damage_text_events: EventWriter<DamageTextEvent>,
     mut damaged_events: EventWriter<UnitDamagedEvent>,
-    mut health_query: Query<(&mut Health, &Unit, &Transform, Option<&BaseMaxHealth>)>,
+    mut health_query: Query<(
+        &mut Health,
+        &Unit,
+        &Transform,
+        Option<&BaseMaxHealth>,
+        Option<&HeroSubtypeUnit>,
+    )>,
     mut block_rng: Local<CombatRngState>,
 ) {
     let difficulty = setup_selection
@@ -947,20 +1074,41 @@ fn apply_damage_events(
             .for_difficulty(difficulty)
             .enemy_block_enabled,
     );
+    let friendly_block_bonus = formation_shielded_block_bonus(&data, *active_formation);
+    let melee_reflect_ratio = formation_melee_reflect_ratio(&data, *active_formation);
     for event in damage_events.read() {
         if event.amount <= 0.0 {
             continue;
         }
         let mut pending_life_leech: Option<(Entity, f32)> = None;
+        let mut pending_melee_reflect: Option<(Entity, f32)> = None;
         {
-            let Ok((mut health, unit, transform, _)) = health_query.get_mut(event.target) else {
+            let Ok((mut health, unit, transform, _, hero_subtype)) =
+                health_query.get_mut(event.target)
+            else {
                 continue;
             };
-            if should_enemy_block_hit(unit.team, unit.kind, block_chance, &mut block_rng) {
-                continue;
+            let blocked = should_block_hit(
+                unit.team,
+                unit.kind,
+                block_chance,
+                friendly_block_bonus,
+                &mut block_rng,
+            );
+            if blocked {
+                damage_text_events.send(DamageTextEvent {
+                    world_position: transform.translation.truncate(),
+                    target_team: unit.team,
+                    kind: DamageTextKind::Blocked,
+                });
             }
 
-            let applied_damage = event.amount.min(health.current.max(0.0));
+            let incoming_multiplier = hero_subtype
+                .map(|value| hero_subtype_combat_profile(value.subtype).incoming_damage_multiplier)
+                .unwrap_or(1.0);
+            let block_adjusted_amount = blocked_damage_amount(event.amount, blocked);
+            let applied_damage =
+                (block_adjusted_amount * incoming_multiplier).min(health.current.max(0.0));
             if applied_damage <= 0.0 {
                 continue;
             }
@@ -973,42 +1121,82 @@ fn apply_damage_events(
                 team: unit.team,
                 amount: applied_damage,
             });
-            damage_text_events.send(DamageTextEvent {
-                world_position: transform.translation.truncate(),
-                target_team: unit.team,
-                amount: applied_damage,
-                execute: event.execute,
-                critical: event.critical,
-            });
+            if event.critical {
+                damage_text_events.send(DamageTextEvent {
+                    world_position: transform.translation.truncate(),
+                    target_team: unit.team,
+                    kind: DamageTextKind::CriticalHit,
+                });
+            }
             if let Some(source_entity) = event.source_entity {
                 pending_life_leech = Some((source_entity, applied_damage));
+                if melee_reflect_ratio > 0.0
+                    && event.source_team == Team::Enemy
+                    && unit.team == Team::Friendly
+                    && source_entity != event.target
+                {
+                    let reflected = (applied_damage * melee_reflect_ratio).max(0.0);
+                    if reflected > 0.0 {
+                        pending_melee_reflect = Some((source_entity, reflected));
+                    }
+                }
             }
         }
 
-        if let Some((source_entity, applied_damage)) = pending_life_leech {
+        if let Some((source_entity, applied_damage)) = pending_life_leech
+            && source_entity != event.target
+            && let Ok((mut source_health, source_unit, _, source_base_max, _)) =
+                health_query.get_mut(source_entity)
+            && source_health.current > 0.0
+        {
+            let life_leech_ratio = fanatic_life_leech_ratio(source_unit.kind, &data);
+            if life_leech_ratio > 0.0 {
+                let max_health = source_base_max
+                    .map(|value| value.0)
+                    .unwrap_or(source_health.max)
+                    .max(1.0);
+                let heal = (applied_damage * life_leech_ratio).max(0.0);
+                source_health.current = (source_health.current + heal).clamp(0.0, max_health);
+            }
+        }
+
+        if let Some((source_entity, reflected_damage)) = pending_melee_reflect {
             if source_entity == event.target {
                 continue;
             }
-            let Ok((mut source_health, source_unit, _, source_base_max)) =
-                health_query.get_mut(source_entity)
+            let Ok((mut source_health, source_unit, _, _, _)) = health_query.get_mut(source_entity)
             else {
                 continue;
             };
-            if source_health.current <= 0.0 {
+            if source_health.current <= 0.0
+                || source_unit.team != Team::Enemy
+                || !is_melee_reflect_eligible_source_kind(source_unit.kind)
+            {
                 continue;
             }
-            let life_leech_ratio = fanatic_life_leech_ratio(source_unit.kind, &data);
-            if life_leech_ratio <= 0.0 {
+            let applied_reflect = reflected_damage.min(source_health.current.max(0.0));
+            if applied_reflect <= 0.0 {
                 continue;
             }
-            let max_health = source_base_max
-                .map(|value| value.0)
-                .unwrap_or(source_health.max)
-                .max(1.0);
-            let heal = (applied_damage * life_leech_ratio).max(0.0);
-            source_health.current = (source_health.current + heal).clamp(0.0, max_health);
+            source_health.current = (source_health.current - applied_reflect).max(0.0);
+            if is_dead_health(source_health.current) {
+                source_health.current = 0.0;
+            }
+            damaged_events.send(UnitDamagedEvent {
+                target: source_entity,
+                team: source_unit.team,
+                amount: applied_reflect,
+            });
         }
     }
+}
+
+fn blocked_damage_amount(base_damage: f32, blocked: bool) -> f32 {
+    if !blocked {
+        return base_damage.max(0.0);
+    }
+    let mitigation = BLOCK_DAMAGE_MITIGATION_RATIO.clamp(0.0, 0.95);
+    (base_damage * (1.0 - mitigation)).max(0.0)
 }
 
 fn fanatic_life_leech_ratio(kind: UnitKind, data: &GameData) -> f32 {
@@ -1067,7 +1255,8 @@ fn _satisfy_marker(_enemy: Option<EnemyUnit>) {}
 
 #[cfg(test)]
 mod tests {
-    use bevy::prelude::{Entity, Vec2};
+    use bevy::ecs::event::ManualEventReader;
+    use bevy::prelude::{App, Entity, Events, MinimalPlugins, Transform, Update, Vec2};
 
     use crate::combat::{
         FriendlyFormationContext, apply_critical_multiplier, armor_reduction_ratio,
@@ -1076,12 +1265,17 @@ mod tests {
         enemy_target_allowed, fanatic_life_leech_ratio, friendly_critical_parameters,
         friendly_formation_context, friendly_outgoing_multiplier, inside_active_formation_bounds,
         inside_formation_damage_multiplier, is_dead_health, ranged_target_in_window,
+        role_counter_damage_multiplier, should_block_hit, should_enemy_block_hit,
         should_execute_target, unit_is_non_damaging_support,
     };
     use crate::data::GameData;
-    use crate::formation::{ActiveFormation, FormationModifiers};
+    use crate::formation::{
+        ActiveFormation, FormationModifiers, formation_melee_reflect_ratio,
+        formation_shielded_block_bonus,
+    };
     use crate::model::{
-        EnemySpawnLane, EnemySpawnSource, GameDifficulty, GlobalBuffs, Team, Unit, UnitKind,
+        DamageEvent, DamageTextEvent, DamageTextKind, EnemySpawnLane, EnemySpawnSource,
+        GameDifficulty, GlobalBuffs, Health, Team, Unit, UnitDamagedEvent, UnitKind,
     };
     use crate::squad::CommanderMotionState;
 
@@ -1400,6 +1594,63 @@ mod tests {
     }
 
     #[test]
+    fn enemy_block_roll_requires_shielded_trait() {
+        let mut rng = super::CombatRngState {
+            state: 0xAABB_CCDD_0011_2233,
+        };
+        assert!(should_enemy_block_hit(
+            Team::Enemy,
+            UnitKind::MuslimPeasantInfantry,
+            1.0,
+            &mut rng
+        ));
+        assert!(!should_enemy_block_hit(
+            Team::Enemy,
+            UnitKind::MuslimSpearman,
+            1.0,
+            &mut rng
+        ));
+        assert!(!should_enemy_block_hit(
+            Team::Friendly,
+            UnitKind::ChristianPeasantInfantry,
+            1.0,
+            &mut rng
+        ));
+    }
+
+    #[test]
+    fn shield_wall_bonus_applies_to_shielded_friendlies_only() {
+        let data = GameData::load_from_dir(std::path::Path::new("assets/data")).expect("data");
+        let bonus = formation_shielded_block_bonus(&data, ActiveFormation::ShieldWall);
+        assert!(bonus > 0.0);
+
+        let mut rng = super::CombatRngState { state: 0 };
+        assert!(should_block_hit(
+            Team::Friendly,
+            UnitKind::ChristianPeasantInfantry,
+            0.0,
+            1.0,
+            &mut rng,
+        ));
+        assert!(!should_block_hit(
+            Team::Friendly,
+            UnitKind::ChristianSpearman,
+            0.0,
+            1.0,
+            &mut rng,
+        ));
+    }
+
+    #[test]
+    fn blocked_damage_mitigates_but_does_not_zero_out_damage() {
+        let blocked = super::blocked_damage_amount(10.0, true);
+        let unblocked = super::blocked_damage_amount(10.0, false);
+        assert!(blocked > 0.0);
+        assert!(blocked < unblocked);
+        assert!((blocked - 3.5).abs() < 0.001);
+    }
+
+    #[test]
     fn fanatic_life_leech_ratio_is_defined_for_fanatic_branch_only() {
         let data = GameData::load_from_dir(std::path::Path::new("assets/data")).expect("data");
         let fanatic_ratio = fanatic_life_leech_ratio(UnitKind::ChristianFanatic, &data);
@@ -1414,6 +1665,247 @@ mod tests {
         assert_eq!(
             fanatic_life_leech_ratio(UnitKind::ChristianPeasantInfantry, &data),
             0.0
+        );
+    }
+
+    #[test]
+    fn counter_multiplier_boosts_anti_cavalry_vs_cavalry() {
+        let anti_cavalry = UnitKind::ChristianArmoredHalberdier;
+        let cavalry = UnitKind::MuslimEliteShockCavalry;
+        let baseline = role_counter_damage_multiplier(
+            UnitKind::ChristianPeasantInfantry,
+            UnitKind::MuslimPeasantInfantry,
+        );
+        let boosted = role_counter_damage_multiplier(anti_cavalry, cavalry);
+        assert!(boosted > baseline);
+    }
+
+    #[test]
+    fn counter_multiplier_boosts_anti_armor_vs_heavy_and_penalizes_vs_unarmored() {
+        let anti_armor = UnitKind::ChristianSiegeCrossbowman;
+        let heavy = UnitKind::MuslimCitadelGuard;
+        let unarmored = UnitKind::MuslimPeasantArcher;
+        let versus_heavy = role_counter_damage_multiplier(anti_armor, heavy);
+        let versus_unarmored = role_counter_damage_multiplier(anti_armor, unarmored);
+        assert!(versus_heavy > 1.0);
+        assert!(versus_unarmored < 1.0);
+    }
+
+    #[test]
+    fn counter_multiplier_penalizes_cavalry_into_anti_cavalry() {
+        let cavalry = UnitKind::ChristianEliteShockCavalry;
+        let anti_cavalry = UnitKind::MuslimShieldedSpearman;
+        let into_frontline = role_counter_damage_multiplier(cavalry, UnitKind::MuslimMenAtArms);
+        let into_counter = role_counter_damage_multiplier(cavalry, anti_cavalry);
+        assert!(into_counter < into_frontline);
+    }
+
+    #[test]
+    fn shield_wall_reflect_uses_post_mitigation_applied_damage() {
+        let data = GameData::load_from_dir(std::path::Path::new("assets/data")).expect("data");
+        let reflect_ratio = formation_melee_reflect_ratio(&data, ActiveFormation::ShieldWall);
+        assert!(reflect_ratio > 0.0);
+
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.insert_resource(data);
+        app.insert_resource(ActiveFormation::ShieldWall);
+        app.add_event::<DamageEvent>();
+        app.add_event::<DamageTextEvent>();
+        app.add_event::<UnitDamagedEvent>();
+        app.add_systems(Update, super::apply_damage_events);
+
+        let target = app
+            .world_mut()
+            .spawn((
+                Health {
+                    current: 500.0,
+                    max: 500.0,
+                },
+                Unit {
+                    team: Team::Friendly,
+                    kind: UnitKind::ChristianPeasantArcher,
+                    level: 1,
+                },
+                Transform::default(),
+            ))
+            .id();
+        let source = app
+            .world_mut()
+            .spawn((
+                Health {
+                    current: 500.0,
+                    max: 500.0,
+                },
+                Unit {
+                    team: Team::Enemy,
+                    kind: UnitKind::MuslimPeasantInfantry,
+                    level: 1,
+                },
+                Transform::default(),
+            ))
+            .id();
+
+        let incoming_damage = 60.0;
+        {
+            let mut events = app.world_mut().resource_mut::<Events<DamageEvent>>();
+            events.send(DamageEvent {
+                target,
+                source_team: Team::Enemy,
+                source_entity: Some(source),
+                amount: incoming_damage,
+                execute: false,
+                critical: false,
+            });
+        }
+
+        app.update();
+
+        let target_health = app
+            .world()
+            .entity(target)
+            .get::<Health>()
+            .expect("target health")
+            .current;
+        let source_health = app
+            .world()
+            .entity(source)
+            .get::<Health>()
+            .expect("source health")
+            .current;
+        let expected_reflect = incoming_damage * reflect_ratio;
+        assert!((target_health - (500.0 - incoming_damage)).abs() < 0.001);
+        assert!(
+            (source_health - (500.0 - expected_reflect)).abs() < 0.001,
+            "source_health={source_health} expected={} reflect_ratio={reflect_ratio}",
+            500.0 - expected_reflect
+        );
+
+        let damage_events = app.world().resource::<Events<UnitDamagedEvent>>();
+        let mut reader = ManualEventReader::<UnitDamagedEvent>::default();
+        let emitted = reader.read(damage_events).copied().collect::<Vec<_>>();
+        assert_eq!(emitted.len(), 2);
+        assert!(
+            emitted
+                .iter()
+                .any(|event| event.target == target
+                    && (event.amount - incoming_damage).abs() < 0.001)
+        );
+        assert!(
+            emitted
+                .iter()
+                .any(|event| event.target == source
+                    && (event.amount - expected_reflect).abs() < 0.001)
+        );
+    }
+
+    #[test]
+    fn shield_wall_reflect_preserves_critical_hit_amount_without_reflect_crit_text() {
+        let data = GameData::load_from_dir(std::path::Path::new("assets/data")).expect("data");
+        let reflect_ratio = formation_melee_reflect_ratio(&data, ActiveFormation::ShieldWall);
+        assert!(reflect_ratio > 0.0);
+
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.insert_resource(data);
+        app.insert_resource(ActiveFormation::ShieldWall);
+        app.add_event::<DamageEvent>();
+        app.add_event::<DamageTextEvent>();
+        app.add_event::<UnitDamagedEvent>();
+        app.add_systems(Update, super::apply_damage_events);
+
+        let target = app
+            .world_mut()
+            .spawn((
+                Health {
+                    current: 1_000.0,
+                    max: 1_000.0,
+                },
+                Unit {
+                    team: Team::Friendly,
+                    kind: UnitKind::ChristianPeasantArcher,
+                    level: 1,
+                },
+                Transform::default(),
+            ))
+            .id();
+        let source = app
+            .world_mut()
+            .spawn((
+                Health {
+                    current: 1_000.0,
+                    max: 1_000.0,
+                },
+                Unit {
+                    team: Team::Enemy,
+                    kind: UnitKind::MuslimPeasantInfantry,
+                    level: 1,
+                },
+                Transform::default(),
+            ))
+            .id();
+
+        let normal = 40.0;
+        let critical = 90.0;
+        {
+            let mut events = app.world_mut().resource_mut::<Events<DamageEvent>>();
+            events.send(DamageEvent {
+                target,
+                source_team: Team::Enemy,
+                source_entity: Some(source),
+                amount: normal,
+                execute: false,
+                critical: false,
+            });
+            events.send(DamageEvent {
+                target,
+                source_team: Team::Enemy,
+                source_entity: Some(source),
+                amount: critical,
+                execute: false,
+                critical: true,
+            });
+        }
+
+        app.update();
+
+        let expected_reflect_total = (normal + critical) * reflect_ratio;
+        let source_health = app
+            .world()
+            .entity(source)
+            .get::<Health>()
+            .expect("source health")
+            .current;
+        assert!(
+            (source_health - (1_000.0 - expected_reflect_total)).abs() < 0.001,
+            "source_health={source_health} expected={} reflect_ratio={reflect_ratio}",
+            1_000.0 - expected_reflect_total
+        );
+
+        let mut damage_reader = ManualEventReader::<UnitDamagedEvent>::default();
+        let emitted_damage = damage_reader
+            .read(app.world().resource::<Events<UnitDamagedEvent>>())
+            .copied()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            emitted_damage
+                .iter()
+                .filter(|event| event.target == source)
+                .count(),
+            2
+        );
+
+        let mut text_reader = ManualEventReader::<DamageTextEvent>::default();
+        let emitted_text = text_reader
+            .read(app.world().resource::<Events<DamageTextEvent>>())
+            .copied()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            emitted_text
+                .iter()
+                .filter(|event| event.kind == DamageTextKind::CriticalHit)
+                .count(),
+            1
         );
     }
 }

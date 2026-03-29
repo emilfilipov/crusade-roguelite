@@ -87,7 +87,7 @@
   - `docs/ASSET_SOURCES.md` (if new data assets are added)
 
 ### CRU-202 - Progression Reward Stream: Minor Per Level, Major Every 5 Levels
-- Status: `IN PROGRESS`
+- Status: `DONE`
 - Type: `Gameplay`
 - Priority: `P0`
 - Depends on: `CRU-201, CRU-218`
@@ -641,7 +641,7 @@
   - `docs/ASSET_SOURCES.md`
 
 ### CRU-222 - Difficulty-Aware Enemy Army Composition and Strategy Generator
-- Status: `TODO`
+- Status: `DONE`
 - Type: `Core`
 - Priority: `P0`
 - Depends on: `CRU-220, CRU-221`
@@ -930,7 +930,7 @@
   - `docs/ASSET_SOURCES.md`
 
 ### CRU-235 - Faction-Agnostic Identity Contract (UnitRef/HeroRef/ItemRef Data Ownership)
-- Status: `IN PROGRESS`
+- Status: `DONE`
 - Type: `Docs`
 - Priority: `P0`
 - Depends on: `CRU-232`
@@ -956,7 +956,7 @@
   - `docs/requirements.md`
 
 ### CRU-236 - Data Schema Migration: Generic Unit/Hero/Item IDs + Faction Overrides
-- Status: `IN PROGRESS`
+- Status: `DONE`
 - Type: `Core`
 - Priority: `P0`
 - Depends on: `CRU-235`
@@ -982,7 +982,7 @@
   - `docs/ASSET_SOURCES.md`
 
 ### CRU-237 - Runtime Identity Refactor Across ECS (UnitKind -> UnitRef)
-- Status: `IN PROGRESS`
+- Status: `DONE`
 - Type: `Core`
 - Priority: `P0`
 - Depends on: `CRU-236`
@@ -1008,7 +1008,7 @@
   - `docs/ASSET_SOURCES.md`
 
 ### CRU-238 - Generic Promotion/Rescue/Wave Pipeline Refactor
-- Status: `IN PROGRESS`
+- Status: `DONE`
 - Type: `Gameplay`
 - Priority: `P0`
 - Depends on: `CRU-237`
@@ -1067,7 +1067,7 @@
   - `docs/ASSET_SOURCES.md`
 
 ### CRU-240 - Hero System Genericization (Subtype Pools + Faction Overrides)
-- Status: `TODO`
+- Status: `DONE`
 - Type: `Gameplay`
 - Priority: `P0`
 - Depends on: `CRU-236, CRU-237, CRU-238`
@@ -1145,7 +1145,7 @@
   - `docs/ASSET_SOURCES.md`
 
 ### CRU-245 - Hear the Call Chest Drop Refactor (All Waves, Lane-Scaled RNG)
-- Status: `IN PROGRESS`
+- Status: `DONE`
 - Type: `Gameplay`
 - Priority: `P0`
 - Depends on: `CRU-238, CRU-244`
@@ -1172,7 +1172,7 @@
   - `docs/ASSET_SOURCES.md`
 
 ### CRU-246 - Hear the Call Single-Item Chest Pickup Flow
-- Status: `IN PROGRESS`
+- Status: `DONE`
 - Type: `UI`
 - Priority: `P1`
 - Depends on: `CRU-245`
@@ -1197,8 +1197,609 @@
   - `docs/SYSTEM_SCOPE_MAP.md`
   - `docs/ASSET_SOURCES.md`
 
-### CRU-241 - New-Faction Onboarding Harness (Config-Only Expansion Gate)
+### CRU-247 - Unit Role Counter Matrix Contract (Core + Heroes)
+- Status: `DONE`
+- Type: `Docs`
+- Priority: `P0`
+- Depends on: `CRU-200, CRU-238`
+- Goal: Define an explicit strengths/weaknesses contract for every unit line (including heroes) so balancing and UI can align on one counter matrix.
+- Context:
+  - Current roster has role identity hints, but no single formal matrix defining counter relationships and tradeoffs per line.
+  - Player direction requires clear specialization (for example: shield infantry as meat shields, spearmen anti-cavalry, cavalry anti-infantry, crossbows anti-armor, hero subtype parallels like javelin hero as anti-armor).
+  - Files expected to change: `docs/SYSTEMS_REFERENCE.md`, `docs/SYSTEM_SCOPE_MAP.md`, `docs/requirements.md`.
+- Implementation:
+  1. Define canonical role tags and armor classes (for example: `frontline`, `anti_cavalry`, `anti_armor`, `skirmisher`, `support`, `hybrid`, `hero_doctrine`).
+  2. Author a full counter matrix for tier lines and hero subtypes (offense strengths, defensive weaknesses, and notable utility traits).
+  3. Define tradeoff rules per specialization so strengths always come with a weakness or opportunity cost.
+  4. Define data contract for storing these traits and counter hooks in faction-agnostic catalogs.
+- Unit Tests Required:
+  - `none (docs/design contract task)`
+  - `none (docs/design contract task)`
+- Acceptance Criteria:
+  - One approved matrix exists covering all unit lines and all hero subtypes.
+  - Counter relationships and tradeoffs are unambiguous and implementation-ready.
+- Documentation Updates Required:
+  - `docs/SYSTEMS_REFERENCE.md`
+  - `docs/SYSTEM_SCOPE_MAP.md`
+  - `docs/requirements.md`
+
+### CRU-248 - Counter Mechanics Runtime Integration (Tag-Driven Combat Hooks)
+- Status: `DONE`
+- Type: `Gameplay`
+- Priority: `P0`
+- Depends on: `CRU-247, CRU-237`
+- Goal: Implement runtime combat hooks that apply the defined strengths/weaknesses through tag-driven multipliers and behavior rules.
+- Context:
+  - Counter behavior should be data-driven and faction-agnostic, not hardcoded branch lists.
+  - Must integrate with major/minor upgrade and item revamp so upgrades can shift or amplify counters.
+  - Files expected to change: `src/combat.rs`, `src/data.rs`, `src/model.rs`, `src/enemies.rs`, unit/hero data assets.
+- Implementation:
+  1. Add runtime-resolved trait/tag payloads for attacker and defender profiles (including armor class and role counters).
+  2. Apply counter hooks in damage and mitigation paths (for example anti-armor vs armored targets, anti-cavalry vs cavalry targets).
+  3. Add hooks for counter-aware utility interactions (block/dodge/formation pressure where applicable).
+  4. Keep all effects bounded and deterministic with explicit caps and clamp rules.
+- Unit Tests Required:
+  - Counter resolution tests verifying expected matchup outcomes (for example spear vs cavalry, crossbow/javelin vs armor, cavalry vs infantry).
+  - Determinism tests verifying counter hooks remain stable under fixed seeds and replay conditions.
+- Acceptance Criteria:
+  - Core combat consistently applies role counters from data tags.
+  - No matchup effect requires faction-specific hardcoded logic branches.
+- Documentation Updates Required:
+  - `docs/SYSTEMS_REFERENCE.md`
+  - `docs/SYSTEM_SCOPE_MAP.md`
+  - `docs/ASSET_SOURCES.md`
+
+### CRU-249 - Hero Subtype Specialization Pass (Strength/Weakness Parity)
+- Status: `DONE`
+- Type: `Balance`
+- Priority: `P0`
+- Depends on: `CRU-247, CRU-248, CRU-240`
+- Goal: Specialize hero subtypes to mirror roster doctrine patterns with stronger upside and explicit weakness profiles.
+- Context:
+  - Heroes are currently scaffolded around subtype recruit actions, but detailed combat identities are not finalized.
+  - Player direction requires subtype-specific doctrine clarity (for example javelin hero as premium anti-armor).
+  - Files expected to change: hero data assets, `src/squad.rs`, `src/combat.rs`, `src/ui.rs`.
+- Implementation:
+  1. Define hero subtype stat/ability packages aligned with the counter matrix.
+  2. Add explicit subtype weaknesses/tradeoffs to prevent all-purpose hero dominance.
+  3. Integrate subtype behavior with upgrade/item interactions and ensure no contradictory stacking.
+  4. Tune subtype power ceilings so heroes remain strategic picks, not automatic best choices.
+- Unit Tests Required:
+  - Hero subtype profile tests verifying each subtype exposes expected doctrine tags and weaknesses.
+  - Matchup tests confirming hero subtype counters/penalties apply correctly in runtime combat.
+- Acceptance Criteria:
+  - Every hero subtype has a distinct role and counter profile.
+  - Hero subtype performance follows design intent without collapsing into one dominant pick.
+- Documentation Updates Required:
+  - `docs/SYSTEMS_REFERENCE.md`
+  - `docs/SYSTEM_SCOPE_MAP.md`
+  - `docs/ASSET_SOURCES.md`
+
+### CRU-250 - Counter Clarity UI Pass (Strengths/Weaknesses and Trait-First Tooltips)
+- Status: `DONE`
+- Type: `UI`
+- Priority: `P1`
+- Depends on: `CRU-247, CRU-248, CRU-249, CRU-216`
+- Goal: Expose strengths/weaknesses clearly in unit/hero UI surfaces using trait-first language and stat-band presentation.
+- Context:
+  - Player-facing clarity is required so strategic counter choices are readable without relying on raw hidden numbers.
+  - Must align with qualitative band UX direction and avoid contradictory tooltip language.
+  - Files expected to change: `src/ui.rs`, archive UI paths, tooltip render helpers, documentation.
+- Implementation:
+  1. Add standardized tooltip sections for `Strengths`, `Weaknesses`, and `Key Matchups`.
+  2. Map runtime trait tags to clear player-facing descriptors and icons/labels.
+  3. Ensure hero subtype selection UI and unit-upgrade graph surfaces show doctrine differences.
+  4. Add fallback behavior for incomplete trait metadata with validation warnings.
+- Unit Tests Required:
+  - Tooltip/render tests verifying strengths/weakness sections appear with valid trait mappings.
+  - UI regression tests ensuring trait-first labels remain consistent across roster, hero, and archive surfaces.
+- Acceptance Criteria:
+  - Players can identify unit/hero strengths and weaknesses directly from UI without inspecting internal numbers.
+  - Trait presentation is consistent across all relevant screens.
+- Documentation Updates Required:
+  - `docs/SYSTEMS_REFERENCE.md`
+  - `docs/SYSTEM_SCOPE_MAP.md`
+  - `docs/ASSET_SOURCES.md`
+
+### CRU-251 - Formation Role Lane Policy Contract (Tiered Units + Heroes)
+- Status: `DONE`
+- Type: `Docs`
+- Priority: `P0`
+- Depends on: `CRU-247`
+- Goal: Define a canonical formation lane policy (`outer`, `middle`, `inner`) for all unit lines and hero subtypes, including fallback rules.
+- Context:
+  - Current slot placement is a static `UnitKind` match table and may drift from evolved tier/hero roles.
+  - Player direction requires explicit per-line lane intent (for example zealot/flagellant frontline, tracker middle, support inner).
+  - Files expected to change: `docs/SYSTEMS_REFERENCE.md`, `docs/requirements.md`, `docs/SYSTEM_SCOPE_MAP.md`.
+- Implementation:
+  1. Author lane intent per unit line and hero subtype (primary lane + secondary fallback lane).
+  2. Define lane quotas and fallback behavior for mixed rosters (for example insufficient frontline population).
+  3. Define formation-mode nuances (`Square` vs `Diamond`) where lane behavior should differ.
+  4. Define validation invariants (no support-only line can default to outer lane without explicit exception).
+- Unit Tests Required:
+  - `none (docs/policy task)`
+  - `none (docs/policy task)`
+- Acceptance Criteria:
+  - One approved lane policy covers all tiers and hero subtypes.
+  - Runtime tasks can implement lane logic without ambiguity.
+- Documentation Updates Required:
+  - `docs/SYSTEMS_REFERENCE.md`
+  - `docs/SYSTEM_SCOPE_MAP.md`
+  - `docs/requirements.md`
+
+### CRU-252 - Formation Slot Resolver Refactor (Tag-Driven Lanes + Quotas)
+- Status: `DONE`
+- Type: `Core`
+- Priority: `P0`
+- Depends on: `CRU-251, CRU-237`
+- Goal: Replace hardcoded `UnitKind` lane matching with data/tag-driven lane resolver plus quota-based ring assignment.
+- Context:
+  - Current logic in `formation_slot_role_priority` is manually enumerated and brittle under roster growth.
+  - Refactor should align with generic identity migration and role-tag based combat architecture.
+  - Files expected to change: `src/formation.rs`, `src/model.rs`, `src/data.rs`, roster metadata assets.
+- Implementation:
+  1. Add lane metadata/tags to resolved unit/hero profiles (`preferred_lane`, `fallback_lane`, `lane_weight`).
+  2. Replace static match table with resolver-driven assignment.
+  3. Add quota-aware assignment (reserve outer lanes for frontline first, cap support crowding in outer ring).
+  4. Keep deterministic ordering under equal priority using stable tie-breakers.
+- Unit Tests Required:
+  - Resolver tests for representative units/heroes verify lane mapping and fallback behavior.
+  - Deterministic slot assignment tests for mixed compositions verify quota and stable ordering rules.
+- Acceptance Criteria:
+  - Formation lane assignment no longer depends on hardcoded faction-specific unit lists.
+  - Mixed-tier/hero rosters place units according to policy and quotas consistently.
+- Documentation Updates Required:
+  - `docs/SYSTEMS_REFERENCE.md`
+  - `docs/SYSTEM_SCOPE_MAP.md`
+  - `docs/ASSET_SOURCES.md`
+
+### CRU-253 - Formation Placement Balance Pass (All Tiers + Hero Subtypes)
 - Status: `TODO`
+- Type: `Balance`
+- Priority: `P1`
+- Depends on: `CRU-252, CRU-249`
+- Goal: Validate and retune lane placement outcomes for all promoted lines and hero subtypes under realistic roster compositions.
+- Context:
+  - Even correct policy can create poor practical outcomes without composition-level tuning.
+  - Need to test edge mixes (support-heavy, ranged-heavy, cavalry-heavy, zealot-heavy, hero-heavy).
+  - Files expected to change: formation tuning data and/or resolver constants, test fixtures.
+- Implementation:
+  1. Build representative roster fixtures for each doctrine and hero mix.
+  2. Evaluate lane occupancy, survivability, and damage uptime across fixtures.
+  3. Tune lane weights/fallbacks where outcomes violate intended strengths/weaknesses.
+  4. Lock resulting defaults into data/config with clear commentary.
+- Unit Tests Required:
+  - Fixture tests asserting expected lane occupancy envelopes by doctrine composition.
+  - Regression tests ensuring key identities hold (for example trackers middle, priests inner, zealot line outer).
+- Acceptance Criteria:
+  - Formation placement is tactically coherent across tier progression and hero recruitment.
+  - No major line is consistently stranded in counterproductive lanes.
+- Documentation Updates Required:
+  - `docs/SYSTEMS_REFERENCE.md`
+  - `docs/SYSTEM_SCOPE_MAP.md`
+  - `docs/ASSET_SOURCES.md`
+
+### CRU-254 - Formation Debug Surface (Lane Assignment Inspector)
+- Status: `TODO`
+- Type: `UI`
+- Priority: `P2`
+- Depends on: `CRU-252`
+- Goal: Add a lightweight debug/QA overlay to inspect per-unit lane assignment in live runs.
+- Context:
+  - Lane resolver regressions are hard to diagnose without runtime visibility.
+  - A temporary/debug-gated overlay accelerates balancing and prevents hidden placement drift.
+  - Files expected to change: `src/ui.rs`, optional debug flag/config.
+- Implementation:
+  1. Add debug-gated overlay labels/colors for current lane assignment on friendly units.
+  2. Surface lane totals per ring in HUD/debug panel.
+  3. Add toggle hotkey and ensure disabled in production defaults.
+  4. Document QA usage steps.
+- Unit Tests Required:
+  - UI state test verifies debug lane overlay toggles on/off correctly.
+  - Assignment-summary test verifies displayed lane counts match resolver output.
+- Acceptance Criteria:
+  - QA can inspect lane assignments live without code instrumentation.
+  - Overlay does not affect gameplay state when disabled.
+- Documentation Updates Required:
+  - `docs/SYSTEMS_REFERENCE.md`
+  - `docs/SYSTEM_SCOPE_MAP.md`
+  - `docs/ASSET_SOURCES.md`
+
+### CRU-255 - Formation Roster Expansion Contract (Circle / Skean / Diamond Rework / Shield Wall / Loose)
+- Status: `DONE`
+- Type: `Docs`
+- Priority: `P0`
+- Depends on: `CRU-251`
+- Goal: Freeze the expanded formation roster rules, effects, and constraints before implementation.
+- Context:
+  - Requested formation set: `Circle`, `Skean/Crescent`, reworked `Diamond`, `Shield Wall`, and `Loose`.
+  - Current runtime ships `Square` and `Diamond` only, with no per-formation anti-entry/reflect/block policy matrix.
+  - Files expected to change: `docs/SYSTEMS_REFERENCE.md`, `docs/SYSTEM_SCOPE_MAP.md`, `docs/requirements.md`.
+- Implementation:
+  1. Define exact per-formation modifiers (offense/defense/move speed/inside-entry rules/reflect/block hooks).
+  2. Define hard caps and exclusions to prevent stacking abuse (for example reflect + high block + anti-entry).
+  3. Define per-formation intended counters and failure states (what each formation is weak against).
+  4. Define compatibility with morale, banner penalties, and movement-state bonuses.
+- Unit Tests Required:
+  - `none (design/docs task)`
+  - `none (design/docs task)`
+- Acceptance Criteria:
+  - Each formation has explicit strengths, weaknesses, and bounded effect ranges.
+  - Runtime implementation can proceed without unresolved spec ambiguity.
+- Documentation Updates Required:
+  - `docs/SYSTEMS_REFERENCE.md`
+  - `docs/SYSTEM_SCOPE_MAP.md`
+  - `docs/requirements.md`
+
+### CRU-256 - Formation Mechanics Runtime Implementation (Anti-Entry, Reflect, Loose Spread)
+- Status: `DONE`
+- Type: `Gameplay`
+- Priority: `P0`
+- Depends on: `CRU-255, CRU-252`
+- Goal: Implement the new formation mechanics and reworked Diamond behavior in runtime systems.
+- Context:
+  - Needs core changes across formation placement, collision/inside-formation checks, combat hooks, and movement modifiers.
+  - Must remain deterministic and compatible with existing wave lock/combat loops.
+  - Files expected to change: `src/formation.rs`, `src/combat.rs`, `src/collision.rs`, `src/squad.rs`, `src/model.rs`, formation data assets.
+- Implementation:
+  1. Add formation enum/data/config entries for `Circle`, `Skean`, `Diamond` (rework), `ShieldWall`, and `Loose`.
+  2. Implement anti-entry enforcement for `Diamond` and `ShieldWall` (blocking enemy interior occupancy).
+  3. Implement `ShieldWall` mechanics: reduced movement, block bonus for block-capable units, melee-hit reflect.
+  4. Implement `Loose` mechanics: widened spacing and unlimited enemy interior occupancy.
+  5. Implement `Skean` and `Circle` modifiers with movement-state and armor interactions.
+- Unit Tests Required:
+  - Formation rule tests for anti-entry, loose interior allowance, and spacing behavior by formation type.
+  - Combat hook tests for shield-wall reflect and block bonus gating to block-capable lines only.
+- Acceptance Criteria:
+  - New formation mechanics are live and deterministic under replay.
+  - Reworked Diamond/Skean behavior matches approved design contract.
+- Documentation Updates Required:
+  - `docs/SYSTEMS_REFERENCE.md`
+  - `docs/SYSTEM_SCOPE_MAP.md`
+  - `docs/ASSET_SOURCES.md`
+
+### CRU-257 - Formation-Specific Lane Policies and Reassignment Rules
+- Status: `DONE`
+- Type: `Core`
+- Priority: `P0`
+- Depends on: `CRU-251, CRU-255, CRU-252`
+- Goal: Support different unit placement policies per formation profile.
+- Context:
+  - Some formations need different lane behavior (for example Loose may tolerate deeper ranged spread, Shield Wall should strongly prioritize frontline shell).
+  - Current slot ordering applies one global policy.
+  - Files expected to change: `src/formation.rs`, lane policy metadata, docs.
+- Implementation:
+  1. Add per-formation lane policy profile (`lane priorities`, `lane quotas`, `fallbacks`).
+  2. Apply formation-specific slot resolver behavior in assignment pass.
+  3. Add policy for hybrid/special units (tracker/scout/flagellant/bannerman/hero subtypes) per formation.
+  4. Add deterministic fallback for sparse rosters.
+- Unit Tests Required:
+  - Per-formation lane assignment tests for representative mixed rosters.
+  - Regression tests ensuring no nondeterministic assignment drift under identical inputs.
+- Acceptance Criteria:
+  - Lane placement changes correctly when formation changes.
+  - Special/hybrid units route to intended lanes per active formation.
+- Documentation Updates Required:
+  - `docs/SYSTEMS_REFERENCE.md`
+  - `docs/SYSTEM_SCOPE_MAP.md`
+  - `docs/ASSET_SOURCES.md`
+
+### CRU-258 - Formation Progression and Skillbar Integration Pass
+- Status: `DONE`
+- Type: `UI`
+- Priority: `P1`
+- Depends on: `CRU-256`
+- Goal: Integrate the expanded formation roster into skillbar unlock/progression and in-run readability.
+- Context:
+  - New formations need consistent unlock path, icons, descriptions, and modal presentation.
+  - Existing skillbar and skill-book views currently assume two formations.
+  - Files expected to change: `src/formation.rs`, `src/ui.rs`, `assets/data/upgrades.json`, formation icons/assets.
+- Implementation:
+  1. Add unlock path and skillbar slots for all new formations.
+  2. Update skill-book and tooltip text with explicit tradeoffs and use-cases.
+  3. Add icon and naming support for new formations.
+  4. Ensure hotkey/selection UX scales beyond two formation choices.
+- Unit Tests Required:
+  - Skillbar/skill-book tests verify all formation entries can be added, selected, and displayed.
+  - UI regression tests verify tooltip contract includes strengths/weaknesses for each formation.
+- Acceptance Criteria:
+  - Players can unlock/select/read all formation types consistently.
+  - Formation UI remains clear and stable with expanded roster.
+- Documentation Updates Required:
+  - `docs/SYSTEMS_REFERENCE.md`
+  - `docs/SYSTEM_SCOPE_MAP.md`
+  - `docs/ASSET_SOURCES.md`
+
+### CRU-259 - Formation Balance and Counterplay QA Matrix
+- Status: `DONE`
+- Type: `QA`
+- Priority: `P0`
+- Depends on: `CRU-256, CRU-257, CRU-258`
+- Goal: Validate expanded formation roster for strategic differentiation and non-degenerate balance.
+- Context:
+  - Formation effects now include anti-entry, reflect, movement-state multipliers, and spacing changes.
+  - Requires scenario-based validation across enemy compositions and difficulties.
+  - Files expected to change: tests in `src/*`, QA docs/checklists.
+- Implementation:
+  1. Build matchup scenarios for each formation vs ranged-heavy, cavalry-heavy, mixed, and swarm enemy patterns.
+  2. Validate counterplay exists for each formation (no universally dominant default).
+  3. Tune effect magnitudes and caps from test outcomes.
+  4. Record recommended usage windows in docs.
+- Unit Tests Required:
+  - Scenario tests asserting formation-specific expected outcomes under fixed seeds.
+  - Regression tests preventing reflect/anti-entry/block interactions from exceeding bounds.
+- Acceptance Criteria:
+  - Each formation has a clear strategic identity with meaningful tradeoffs.
+  - No formation trivially outperforms others across all scenarios.
+- Documentation Updates Required:
+  - `docs/SYSTEMS_REFERENCE.md`
+  - `docs/SYSTEM_SCOPE_MAP.md`
+  - `docs/ASSET_SOURCES.md`
+
+### CRU-260 - Full Skill/Upgrade Audit Against New Pacing and Systems
+- Status: `DONE`
+- Type: `Docs`
+- Priority: `P0`
+- Depends on: `CRU-200, CRU-202, CRU-203, CRU-255`
+- Goal: Perform a formal audit of all skills/upgrades against new level pacing, economy, formation roster, and counter-matrix goals.
+- Context:
+  - Existing revamp cards define direction, but system changes since then can cause drift and stale assumptions.
+  - Audit should classify every skill/upgrade as keep/rework/remove.
+  - Files expected to change: `docs/SYSTEMS_REFERENCE.md`, `docs/requirements.md`, `docs/TASKS.md`.
+- Implementation:
+  1. Inventory all active upgrades and skill effects with ownership systems and dependencies.
+  2. Evaluate each for strategic impact, redundancy, contradiction, and balance risk under current run pacing.
+  3. Produce disposition list (`keep`, `merge`, `rework`, `deprecate`) with rationale.
+  4. Generate follow-up implementation cards for each rework/deprecation cluster.
+- Unit Tests Required:
+  - `none (audit/docs task)`
+  - `none (audit/docs task)`
+- Acceptance Criteria:
+  - Every skill/upgrade has an explicit disposition and next action.
+  - No high-impact legacy effect remains unreviewed.
+- Documentation Updates Required:
+  - `docs/SYSTEMS_REFERENCE.md`
+  - `docs/SYSTEM_SCOPE_MAP.md`
+  - `docs/requirements.md`
+
+### CRU-261 - Skill and Upgrade Schema Refactor Pass (Post-Audit Cutover)
+- Status: `DONE`
+- Type: `Core`
+- Priority: `P0`
+- Depends on: `CRU-260`
+- Goal: Refactor skill/upgrade data schema and runtime to match audit decisions and remove stale mechanics.
+- Context:
+  - Requires schema/runtime changes where effects are deprecated, merged, or re-authored.
+  - Must keep deterministic draft behavior and compatibility with major/minor cadence.
+  - Files expected to change: `src/upgrades.rs`, `src/data.rs`, `assets/data/upgrades.json`, skill-related UI/data paths.
+- Implementation:
+  1. Apply schema updates for retained/reworked effect definitions.
+  2. Remove deprecated effect handlers and dead UI metadata.
+  3. Add migration validators for forbidden legacy fields/effects.
+  4. Ensure draft and skill-book surfaces consume updated schema consistently.
+- Unit Tests Required:
+  - Schema validation tests for new/legacy effect forms.
+  - Runtime effect tests for reworked high-impact skills/upgrades.
+- Acceptance Criteria:
+  - Runtime uses only post-audit skill/upgrade definitions.
+  - Removed mechanics are no longer loadable or executable.
+- Documentation Updates Required:
+  - `docs/SYSTEMS_REFERENCE.md`
+  - `docs/SYSTEM_SCOPE_MAP.md`
+  - `docs/ASSET_SOURCES.md`
+
+### CRU-262 - Skill/Upgrade Rebalance and Regression Certification
+- Status: `TODO`
+- Type: `QA`
+- Priority: `P1`
+- Depends on: `CRU-261, CRU-210, CRU-211`
+- Goal: Certify that audited/refactored skills and upgrades are balanced, strategic, and regression-safe.
+- Context:
+  - This pass validates strategic value under limited level budget and expanded formation options.
+  - Requires deterministic scenario coverage and manual QA heuristics.
+  - Files expected to change: tests in `src/*`, QA docs/checklists.
+- Implementation:
+  1. Build targeted test scenarios for each major doctrine path and formation pairing.
+  2. Validate pick value contrast (major vs minor) and absence of dead/on-rails picks.
+  3. Validate economy and pacing interactions with gold/token/chest changes.
+  4. Publish final tuning deltas and residual risks.
+- Unit Tests Required:
+  - Deterministic doctrine-path tests for representative build archetypes.
+  - Regression tests for previously identified exploit or runaway interactions.
+- Acceptance Criteria:
+  - Skill/upgrade ecosystem is strategically differentiated and stable.
+  - No known high-severity balance regressions remain open.
+- Documentation Updates Required:
+  - `docs/SYSTEMS_REFERENCE.md`
+  - `docs/SYSTEM_SCOPE_MAP.md`
+  - `docs/ASSET_SOURCES.md`
+
+### CRU-263 - Integer-First Combat Baseline Refactor (Low-Number Scale)
+- Status: `TODO`
+- Type: `Core`
+- Priority: `P0`
+- Depends on: `CRU-255, CRU-260`
+- Goal: Convert core combat values to low-range, integer-first baselines while preserving deterministic behavior.
+- Context:
+  - New direction uses low visible power ranges (for example single-digit damage bands) with hidden backend values.
+  - Current combat stack mixes larger float-derived multipliers and percentage-heavy scaling.
+  - Files expected to change: `src/combat.rs`, `src/model.rs`, `src/data.rs`, unit/enemy tuning data assets.
+- Implementation:
+  1. Define integer-first baseline ranges for core stats (`hp`, `damage`, `armor`, `block chance points`, `crit chance points`, `crit damage points`).
+  2. Normalize combat calculations to additive point math where possible, with bounded conversions to runtime float operations only when required.
+  3. Rebalance unit/enemy baseline profiles to low-number scale while preserving role identity.
+  4. Add migration notes and validators for deprecated high-scale assumptions.
+- Unit Tests Required:
+  - Deterministic combat regression tests verifying identical outcomes under fixed seeds after scale conversion.
+  - Baseline profile validation tests ensuring all core stats fall within approved integer-scale bounds.
+- Acceptance Criteria:
+  - Core combat runs on low-number integer-first semantics.
+  - No system-critical path depends on legacy high-scale assumptions.
+- Documentation Updates Required:
+  - `docs/SYSTEMS_REFERENCE.md`
+  - `docs/SYSTEM_SCOPE_MAP.md`
+  - `docs/ASSET_SOURCES.md`
+
+### CRU-264 - Additive-Only Upgrade Math Cutover (Remove Multiplicative Drift)
+- Status: `TODO`
+- Type: `Gameplay`
+- Priority: `P0`
+- Depends on: `CRU-263, CRU-261`
+- Goal: Ensure upgrades/skills primarily apply additive point deltas and remove multiplicative stacking drift.
+- Context:
+  - Player direction is additive outcomes (`+1 damage`, `+2 crit chance`) instead of percentage-first scaling.
+  - Existing legacy effects may still stack multiplicatively in some paths.
+  - Files expected to change: `src/upgrades.rs`, `src/combat.rs`, upgrade data assets, skill metadata/UI text.
+- Implementation:
+  1. Replace percentage-based primary upgrade effects with additive point effects.
+  2. Restrict multiplicative effects to explicitly whitelisted exceptional mechanics with hard caps.
+  3. Update upgrade descriptions and skill-book metadata to additive phrasing.
+  4. Add validators rejecting non-whitelisted multiplicative effect definitions.
+- Unit Tests Required:
+  - Upgrade application tests verifying additive accumulation and cap behavior.
+  - Schema validator tests rejecting forbidden multiplicative effect forms.
+- Acceptance Criteria:
+  - Primary upgrade ecosystem is additive and predictable.
+  - Multiplicative runaway interactions are removed or hard-bounded.
+- Documentation Updates Required:
+  - `docs/SYSTEMS_REFERENCE.md`
+  - `docs/SYSTEM_SCOPE_MAP.md`
+  - `docs/ASSET_SOURCES.md`
+
+### CRU-265 - Hidden Numeric Bands + Threshold-Crossing UX Contract
+- Status: `DONE`
+- Type: `UI`
+- Priority: `P0`
+- Depends on: `CRU-215, CRU-263, CRU-264`
+- Goal: Keep backend numeric values hidden while surfacing stat-band changes and threshold crossings clearly to players.
+- Context:
+  - Player-facing model should remain abstract/qualitative while backend keeps numeric precision.
+  - Need explicit UI signaling when additive changes cross a band boundary.
+  - Files expected to change: `src/ui.rs`, tooltip/status render helpers, docs.
+- Implementation:
+  1. Define per-stat-family band thresholds mapped from backend numeric points.
+  2. Render trait-first plus band-first outputs (no raw combat numbers in primary surfaces).
+  3. Add threshold-crossing feedback events (`Low -> Moderate`, etc.) on upgrade/item changes.
+  4. Keep optional advanced/debug views gated and non-default.
+- Unit Tests Required:
+  - Band-mapping tests for each core stat family and boundary edge cases.
+  - UI feedback tests confirming threshold-crossing messages trigger only on actual band transitions.
+- Acceptance Criteria:
+  - Players receive clear qualitative stat information and progression feedback.
+  - Backend numeric values remain hidden in primary gameplay UI.
+- Documentation Updates Required:
+  - `docs/SYSTEMS_REFERENCE.md`
+  - `docs/SYSTEM_SCOPE_MAP.md`
+  - `docs/ASSET_SOURCES.md`
+
+### CRU-266 - Shielded Trait and Block-Capable Unit Contract
+- Status: `DONE`
+- Type: `Gameplay`
+- Priority: `P0`
+- Depends on: `CRU-247, CRU-248, CRU-263`
+- Goal: Introduce explicit `Shielded` trait badge and make block chance exclusive to block-capable (`Shielded`) units.
+- Context:
+  - Player direction: only shield-bearing lines should have block chance and receive shield-wall block bonuses.
+  - Current block behavior still relies on broader line checks.
+  - Files expected to change: `src/model.rs`, `src/combat.rs`, `src/data.rs`, UI trait presentation paths.
+- Implementation:
+  1. Add explicit `Shielded` trait/tag in unit/hero profile data.
+  2. Gate block stat/roll logic behind `Shielded` capability.
+  3. Update tooltip/trait badges and formation interactions to reference block-capable units via trait.
+  4. Add migration pass for current units that should/shouldn’t carry `Shielded`.
+- Unit Tests Required:
+  - Block gating tests verifying non-shielded units never roll block.
+  - Trait-resolution tests verifying shielded line mapping and UI badge exposure.
+- Acceptance Criteria:
+  - Block mechanics are strictly trait-gated to shielded units.
+  - Shield Wall block bonuses apply only to `Shielded` units.
+- Documentation Updates Required:
+  - `docs/SYSTEMS_REFERENCE.md`
+  - `docs/SYSTEM_SCOPE_MAP.md`
+  - `docs/ASSET_SOURCES.md`
+
+### CRU-267 - Formation Rule Enforcement Semantics (Hard Anti-Entry + Reflect Rules)
+- Status: `DONE`
+- Type: `Gameplay`
+- Priority: `P0`
+- Depends on: `CRU-255, CRU-256, CRU-266`
+- Goal: Enforce exact anti-entry and reflect semantics for reworked formations.
+- Context:
+  - Player constraints:
+    - anti-entry formations must enforce hard `0` enemies inside (`Shield Wall`, `Diamond`),
+    - reflect uses post-armor incoming damage,
+    - reflected damage mirrors crit-influenced incoming result but reflected hit itself cannot crit.
+  - Files expected to change: `src/formation.rs`, `src/combat.rs`, `src/collision.rs`, docs.
+- Implementation:
+  1. Enforce hard anti-entry occupancy behavior and robust edge fallback for pathing congestion.
+  2. Implement reflect calculation from post-mitigation hit result.
+  3. Prevent reflected packets from rolling crits while preserving source-hit crit impact in reflected amount.
+  4. Add explicit formation-rule tests and invariants.
+- Unit Tests Required:
+  - Anti-entry tests asserting inside enemy count remains `0` for protected formations.
+  - Reflect tests covering regular hit, crit hit, and non-crit reflected packet behavior.
+- Acceptance Criteria:
+  - Anti-entry and reflect behaviors match the agreed semantics exactly.
+  - No ambiguity remains in combat logs/tests for reflected damage behavior.
+- Documentation Updates Required:
+  - `docs/SYSTEMS_REFERENCE.md`
+  - `docs/SYSTEM_SCOPE_MAP.md`
+  - `docs/ASSET_SOURCES.md`
+
+### CRU-268 - Formation Unlock Economy Rework (Square Default, Others via Upgrades)
+- Status: `DONE`
+- Type: `Gameplay`
+- Priority: `P0`
+- Depends on: `CRU-255, CRU-258, CRU-264`
+- Goal: Keep `Square` as the always-available default and unlock other formations through upgrades (major-first policy).
+- Context:
+  - Player direction: formations should be strategic progression choices, not fully available at run start.
+  - Unlock flow should align with revised major/minor cadence and draft quality goals.
+  - Files expected to change: `assets/data/upgrades.json`, `src/upgrades.rs`, `src/formation.rs`, `src/ui.rs`.
+- Implementation:
+  1. Keep `Square` unlocked by default at run start.
+  2. Define formation unlock upgrades (major-lane primary; optional minor exceptions only by explicit design).
+  3. Update draft gating/filters so locked formations cannot appear in skillbar selection.
+  4. Ensure skill-book and tooltips show locked/unlocked formation states and requirements.
+- Unit Tests Required:
+  - Progression tests verifying `Square` default availability and gated unlocks for all other formations.
+  - Draft/filter tests verifying locked formation upgrades follow lane and requirement policies.
+- Acceptance Criteria:
+  - `Square` is baseline in every run.
+  - Non-default formations are unlocked only through configured upgrade flow.
+- Documentation Updates Required:
+  - `docs/SYSTEMS_REFERENCE.md`
+  - `docs/SYSTEM_SCOPE_MAP.md`
+  - `docs/ASSET_SOURCES.md`
+
+### CRU-269 - Trait-Gated Upgrade Authoring Pass (Bracket/Tag Conditional Effects)
+- Status: `DONE`
+- Type: `Balance`
+- Priority: `P1`
+- Depends on: `CRU-247, CRU-264, CRU-265, CRU-266`
+- Goal: Author upgrades that target stat brackets and traits (for example low-armor -> shielded + block) under additive balance rules.
+- Context:
+  - Player direction includes conditional upgrades keyed to abstract brackets/traits rather than raw stat percentages.
+  - Needs consistent interaction with hidden numeric thresholds and trait tags.
+  - Files expected to change: `assets/data/upgrades.json`, `src/upgrades.rs`, `src/ui.rs`.
+- Implementation:
+  1. Add requirement types for stat-band and trait predicates (`has_trait`, `band_at_most`, `band_at_least`).
+  2. Author first pass of bracket/trait-gated upgrades across infantry/ranged/support/hero lines.
+  3. Ensure UI clearly explains eligibility and current active/inactive reasons.
+  4. Balance additive values to avoid runaway band skipping.
+- Unit Tests Required:
+  - Requirement evaluator tests for trait+band condition combinations.
+  - Runtime activation tests for representative upgrades (including shielded-conversion style effects).
+- Acceptance Criteria:
+  - Upgrade pool contains meaningful trait/bracket-targeted choices.
+  - Conditional upgrade behavior is deterministic and clearly communicated in UI.
+- Documentation Updates Required:
+  - `docs/SYSTEMS_REFERENCE.md`
+  - `docs/SYSTEM_SCOPE_MAP.md`
+  - `docs/ASSET_SOURCES.md`
+
+### CRU-241 - New-Faction Onboarding Harness (Config-Only Expansion Gate)
+- Status: `DONE`
 - Type: `QA`
 - Priority: `P1`
 - Depends on: `CRU-239, CRU-240, CRU-244`
@@ -1224,7 +1825,7 @@
   - `docs/ASSET_SOURCES.md`
 
 ### CRU-242 - Legacy Cleanup Cutover (Remove Faction-Duplicated Unit/Hero/Item Definitions)
-- Status: `TODO`
+- Status: `DONE`
 - Type: `Core`
 - Priority: `P0`
 - Depends on: `CRU-241`
@@ -1250,7 +1851,7 @@
   - `docs/ASSET_SOURCES.md`
 
 ### CRU-233 - Faction-Specific Hero Pools and Name Rosters
-- Status: `BLOCKED`
+- Status: `DONE`
 - Type: `Gameplay`
 - Priority: `P0`
 - Depends on: `CRU-240, CRU-242`
@@ -1298,6 +1899,136 @@
 - Acceptance Criteria:
   - Army/difficulty/tier/hero systems are stable under automated and manual QA matrices.
   - Expansion is ready for release packaging without regression against revamp foundations.
+- Documentation Updates Required:
+  - `docs/SYSTEMS_REFERENCE.md`
+  - `docs/SYSTEM_SCOPE_MAP.md`
+  - `docs/ASSET_SOURCES.md`
+
+### CRU-270 - Floating Combat Text Signal-Only Pass (`Block!` / `Critical Hit!`)
+- Status: `DONE`
+- Type: `UI`
+- Priority: `P0`
+- Depends on: `CRU-263, CRU-264`
+- Goal: Limit floating combat text to high-signal events only (`Block!`, `Critical Hit!`) and remove routine damage-number noise.
+- Context:
+  - Integer-first combat and hidden numeric presentation reduce the need for per-hit damage numbers in primary combat UX.
+  - Player direction is explicit: only block and critical should produce combat text.
+  - Files expected to change: `src/model.rs`, `src/combat.rs`, `src/ui.rs`.
+- Implementation:
+  1. Replace numeric damage-text payload semantics with explicit event kinds (`blocked`, `critical_hit`).
+  2. Emit `blocked` text events on blocked hits and `critical_hit` events on critical landed hits.
+  3. Remove regular numeric/execute floating text rendering from the default combat loop.
+  4. Keep text styling distinct and readable at swarm scale.
+- Unit Tests Required:
+  - Combat event emission tests confirm `blocked` and `critical_hit` are emitted only under correct conditions.
+  - UI spawn-data tests confirm text labels and styling are correct for both event kinds.
+- Acceptance Criteria:
+  - Normal non-critical hits show no floating damage numbers.
+  - `Block!` and `Critical Hit!` are the only default floating combat-text signals.
+- Documentation Updates Required:
+  - `docs/SYSTEMS_REFERENCE.md`
+  - `docs/SYSTEM_SCOPE_MAP.md`
+  - `docs/ASSET_SOURCES.md`
+
+### CRU-271 - Segmented Health Bar Threshold-Snap Rendering
+- Status: `DONE`
+- Type: `UI`
+- Priority: `P0`
+- Depends on: `CRU-265`
+- Goal: Render health bars as snapped segments tied to stat-band thresholds instead of continuous fill values.
+- Context:
+  - Player-facing readability direction favors abstracted bracket feedback over precise raw numeric depletion.
+  - Requested behavior: health fill snaps to the next segment only when threshold boundaries are crossed.
+  - Files expected to change: `src/ui.rs`, health-bar helper tests, relevant HUD docs.
+- Implementation:
+  1. Add segmented-fill helper logic (canonical segment count and threshold snap policy).
+  2. Replace continuous health fill rendering with snapped segment widths.
+  3. Ensure threshold transitions are stable on both damage and healing updates.
+  4. Keep team color semantics and existing bar entity structure intact.
+- Unit Tests Required:
+  - Segment snap tests for threshold edges (`full`, `boundary`, `below-boundary`, `zero`).
+  - Fill width tests verify clamping and monotonic segmented behavior under invalid/overflow input.
+- Acceptance Criteria:
+  - Health bars change only on segment-threshold crossing and no longer animate continuously per point loss.
+  - Segment behavior is deterministic and test-covered at boundary edges.
+- Documentation Updates Required:
+  - `docs/SYSTEMS_REFERENCE.md`
+  - `docs/SYSTEM_SCOPE_MAP.md`
+  - `docs/ASSET_SOURCES.md`
+
+### CRU-272 - Combat Readability Regression and UX Certification (Signal Text + Segments)
+- Status: `DONE`
+- Type: `QA`
+- Priority: `P1`
+- Depends on: `CRU-270, CRU-271`
+- Goal: Certify readability and gameplay clarity after removing numeric damage text and introducing segmented health bars.
+- Context:
+  - UI feedback changes can affect perceived combat responsiveness and balance readability.
+  - This pass validates both deterministic correctness and practical combat readability.
+  - Files expected to change: test suites in `src/*`, QA notes/checklists.
+- Implementation:
+  1. Add deterministic scenarios covering mixed crit/block frequency under high unit counts.
+  2. Validate that floating text volume remains bounded and legible in late-wave swarms.
+  3. Validate health-segment transitions across diverse max-health profiles and rapid heal/damage cycles.
+  4. Capture residual readability risks and tuning recommendations.
+- Unit Tests Required:
+  - Stress test for floating-text spawn caps under crit/block-heavy combat.
+  - Segmented health-transition regression tests for repeated boundary oscillation.
+- Acceptance Criteria:
+  - No regressions in combat readability or UI stability are observed in automated and manual QA coverage.
+  - UX behavior aligns with abstract stat-band presentation goals.
+- Documentation Updates Required:
+  - `docs/SYSTEMS_REFERENCE.md`
+  - `docs/SYSTEM_SCOPE_MAP.md`
+  - `docs/ASSET_SOURCES.md`
+
+### CRU-273 - Upgrade Catalog Consolidation (Doctrine Families + Economy Ladder)
+- Status: `DONE`
+- Type: `Core`
+- Priority: `P0`
+- Depends on: `CRU-260`
+- Goal: Consolidate duplicate upgrade IDs into schema-driven families without losing doctrine variety.
+- Context:
+  - Audit identified parallel duplicate IDs that encode variants in ID names instead of data fields (`fast_learner_up_10`, `fast_learner_up_15`, doctrine variant suffixes).
+  - Consolidation should reduce maintenance overhead and simplify balancing under major/minor pacing.
+  - Files expected to change: `assets/data/upgrades.json`, `src/data.rs`, `src/upgrades.rs`, UI metadata mapping.
+- Implementation:
+  1. Define canonical schema fields for doctrine/economy variant tuning (weights, thresholds, trait predicates, caps) under one family ID.
+  2. Collapse duplicate legacy IDs into consolidated entries while preserving deterministic draft behavior.
+  3. Update runtime resolver and skill-book rendering to consume consolidated variant metadata.
+  4. Add migration notes mapping old IDs to consolidated family entries.
+- Unit Tests Required:
+  - Data-validation tests ensuring consolidated families load and old duplicate IDs are not required.
+  - Runtime selection tests ensuring deterministic variant resolution under fixed seeds.
+- Acceptance Criteria:
+  - Duplicate upgrade IDs are removed from active authoring and replaced by consolidated family definitions.
+  - Doctrine/economy variants remain selectable and deterministic through data-driven fields.
+- Documentation Updates Required:
+  - `docs/SYSTEMS_REFERENCE.md`
+  - `docs/SYSTEM_SCOPE_MAP.md`
+  - `docs/ASSET_SOURCES.md`
+
+### CRU-274 - Legacy Upgrade ID Deprecation Guards and Cutover
+- Status: `DONE`
+- Type: `Core`
+- Priority: `P0`
+- Depends on: `CRU-261, CRU-273`
+- Goal: Enforce hard deprecation of audited legacy upgrade IDs and prevent reintroduction.
+- Context:
+  - Post-consolidation, legacy duplicate IDs must become invalid inputs to avoid drift and accidental regressions.
+  - Deprecated IDs from audit: `fast_learner_up_10`, `fast_learner_up_15`, `mob_fury_shielded_host`, `mob_justice_frontline_bias`, `mob_mercy_support_ceiling`.
+  - Files expected to change: `src/data.rs`, `src/upgrades.rs`, upgrade validators/tests, docs.
+- Implementation:
+  1. Add explicit validator blacklist for deprecated upgrade IDs and fail-fast load errors.
+  2. Remove any runtime handling paths that reference deprecated IDs.
+  3. Add migration notes and diagnostic error text pointing to consolidated replacements.
+  4. Add regression tests preventing deprecated IDs from loading in fixtures/assets.
+- Unit Tests Required:
+  - Loader tests asserting deprecated IDs are rejected with clear errors.
+  - Regression tests ensuring no runtime resolver path accepts deprecated IDs.
+- Acceptance Criteria:
+  - Deprecated IDs cannot be authored or loaded.
+  - Runtime and docs reference only consolidated post-audit upgrade identities.
 - Documentation Updates Required:
   - `docs/SYSTEMS_REFERENCE.md`
   - `docs/SYSTEM_SCOPE_MAP.md`

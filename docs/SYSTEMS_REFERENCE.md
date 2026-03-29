@@ -4,7 +4,7 @@
 Single-file technical reference for current MVP runtime behavior.
 Use this for entity/component/system lookup without scanning all source files.
 
-## Latest Update (2026-03-28)
+## Latest Update (2026-03-29)
 - Added faction-agnostic identity scaffold in runtime model:
   - `UnitRef { faction, unit_id, rescuable }` is now derivable from any `UnitKind`,
   - shared `unit_id` strings now map Christian/Muslim/rescuable variants into one generic ID space (for example both faction peasant infantry variants resolve to `peasant_infantry`).
@@ -17,6 +17,11 @@ Use this for entity/component/system lookup without scanning all source files.
   - catalog loader now allows duplicate `item_id` values when scoped to different factions (for override-style entries),
   - chest rolls now use catalog templates via faction-aware weighted selection,
   - UI icon fallback now resolves through `icon_key` + faction (`item_symbol_faction`) instead of hardcoded symbol branches.
+- Migrated units/enemies runtime schema to strict base+override contracts:
+  - `assets/data/units.json` now resolves from `base { commander, recruits }` + `overrides.{faction}`,
+  - `assets/data/enemies.json` now resolves from `base { profiles }` + `overrides.{faction}`,
+  - override keys are validated (`faction`, `unit_id`) and unknown keys fail load with explicit parse errors,
+  - legacy faction-duplicated top-level schema keys are rejected after cutover.
 - Added generic archetype resolver pass in core data/runtime paths:
   - `UnitsConfigFile` now resolves recruit stats via `faction + archetype`,
   - `EnemiesConfigFile` now resolves enemy profiles via `faction + archetype`,
@@ -25,6 +30,14 @@ Use this for entity/component/system lookup without scanning all source files.
   - inventory combat-role resolution now keys off generic `unit_id` instead of explicit Christian/Muslim variant lists,
   - enemy sprite family mapping now keys off generic `unit_id` + faction presentation assets,
   - rescuable spawn presentation now resolves from `faction + archetype` helpers.
+- Continued runtime identity cutover in squad/archive/rescue paths:
+  - `friendly_stats_for_kind` now resolves from `tier + faction + unit_id` instead of duplicated Christian/Muslim tier branches,
+  - tier3/4/5 source progression lookups now route through shared `unit_id` source maps + `UnitKind::from_faction_and_unit_id(...)`,
+  - archive core unit/enemy profile entries now read through `faction + archetype` resolvers rather than direct faction-specific config fields.
+- Migrated rescue pool schema to generic archetype IDs:
+  - `assets/data/rescue.json` `recruit_pool` now uses `peasant_infantry|peasant_archer|peasant_priest` only,
+  - rescue spawn selection resolves player-faction variants at runtime from generic pool entries,
+  - pity counters now track archetype drought (infantry/archer/priest) instead of faction-specific recruit entries.
 - Moved promotion graph resolution to generic IDs:
   - `promotion_targets_for_kind` now routes through a shared `unit_id -> target unit_id[]` graph and resolves faction variants via `UnitKind::from_faction_and_unit_id(...)`,
   - rescuable variants are explicitly non-promotable,
@@ -32,9 +45,11 @@ Use this for entity/component/system lookup without scanning all source files.
 - Removed hardcoded wave fallback enemy identity:
   - enemy kind fallback selection now resolves the opposing faction's `peasant_infantry` via `UnitKind::from_faction_and_unit_id(...)`,
   - wave selection tests now cover faction-aware fallback behavior.
-- Reduced hero recruit identity branching:
-  - hero subtype recruit mapping now resolves from shared hero `unit_id` values (`citadel_guard`, `elite_longbowman`, etc.) plus selected faction via `UnitKind::from_faction_and_unit_id(...)`,
-  - recruit flow now fails safe if a subtype cannot resolve and refunds the consumed `Hear the Call` token.
+- Completed data-driven hero recruit resolver:
+  - added `assets/data/heroes.json` with generic hero subtype definitions and faction override entry pools,
+  - each hero subtype now resolves recruit candidates by `faction + subtype_id` (no hardcoded subtype->unit runtime mapping path),
+  - recruit gold cost now resolves from hero subtype config, and recruit flow still keeps wave-60 unlock + `Hear the Call` token gating,
+  - hero recruit tooltips now display subtype description, pool size, preview names, and configured abilities/stat notes.
 - Added wave-tier composition ramp + major-army preview logic:
   - regular waves now blend `previous_tier -> unlocked_tier` by wave index (`11..20`, `21..30`, etc.) and reach `100%` unlocked-tier by the next major wave,
   - major-army lane now includes a difficulty-scaled next-tier preview share (`Recruit 20%`, `Experienced 35%`, `Alone 50%`) when a higher tier exists,
@@ -66,11 +81,13 @@ Use this for entity/component/system lookup without scanning all source files.
 - Added hero-tier unlock + `Hear the Call` token economy and recruit actions:
   - hero-tier unlock state now tracks major-army progression and flips at wave-60 major defeat,
   - `Hear the Call` now drops as a dedicated single-item chest reward (not gold-style auto pickup),
-  - token chest drops now roll from army-lane clear rewards across all waves (`small` lane each wave, `minor` lane every other wave, `major` lane on major-army defeat) with lane-scaled RNG (`small < minor < major`) plus stash damping,
-  - army-lane clear rewards now roll equipment and `Hear the Call` independently (both can drop on the same lane clear),
+  - token chest drops now roll on enemy deaths across all waves using source-lane metadata (`small`/`minor`/`major`) with very-low lane-scaled RNG (`major > minor > small`) plus stash damping,
+  - major-wave and lane-clear reward handlers no longer inject deterministic token grants; token flow is fully lane/death RNG driven,
+  - army-lane clear rewards continue to roll equipment chests independently of token drops,
   - periodic random world equipment chests remain active on the existing cadence (every 3 waves),
   - equipment chest item-quality weighting now scales gradually by wave so higher-quality outcomes become more likely over time,
   - token chest pickups add `+1` `Hear the Call` to progression and HUD/unit-upgrade surfaces show token count,
+  - token chest channel bars and minimap markers now render with distinct colors from equipment chests for pickup readability,
   - hero subtype buttons are now actionable in `Unit Upgrade` and spend `1` token per recruit.
 - Synced wave runtime docs to current code:
   - 30s wave windows, `MAX_WAVES=100`,
@@ -89,6 +106,7 @@ Use this for entity/component/system lookup without scanning all source files.
 - Synced gold economy + deterministic wave-level docs to current values:
   - no XP thresholds; level rewards are queued from `WaveCompletedEvent`,
   - each completed wave grants `+1` level reward, and wave `98` grants `+2` (reaches level 100 at wave 98 completion),
+  - reward queue now stores explicit reward kinds and drains in deterministic FIFO order (`Minor` per level, `Major` when resulting level `% 5 == 0`),
   - drop gold scaling remains `base * (1 + 0.06*(wave-1)) * (1 + 0.03*(level-1))`,
   - roster level budget cap uses `MAX_COMMANDER_LEVEL=100` (`100 - locked_levels`, saturating).
 - Reworked in-run `Unit Upgrade (U)` modal into a tier-column graph:
@@ -108,7 +126,23 @@ Use this for entity/component/system lookup without scanning all source files.
   - row status includes source/target counts, target-option count, affordability, and gold cost.
 - Added `Unit Upgrade` hover tooltip overlay:
   - hovering unit nodes now shows `Name`, `Type`, `Description`, `Stats`, and `Abilities`,
+  - stats now render as qualitative 5-band descriptors (`|....` to `|||||`) instead of raw numeric stat dumps in the default tooltip surface,
+  - tooltip trait badges now explicitly show `Shielded` when applicable,
   - scaffold nodes provide explicit placeholder metadata and tier-rule guidance.
+- Added stat-band threshold feedback to the in-run toast channel:
+  - monitors qualitative bands for `Damage`, `Armor`, `Move Speed`, and `Luck`,
+  - emits explicit transition messages (for example `Damage: Low -> Moderate`) when bands change due upgrade/equipment state changes.
+- Added faction-agnostic counter-matrix runtime hooks:
+  - `UnitKind` now exposes tag-like role metadata (`frontline`, `anti_cavalry`, `cavalry`, `anti_armor`, `skirmisher`, `support`, `hero_doctrine`) and an `armor_class` resolver from shared `unit_id`,
+  - combat now applies bounded matchup multipliers through `role_counter_damage_multiplier(attacker_kind, defender_kind)` for both melee and projectile hits,
+  - projectile packets now carry `source_kind` so ranged counters resolve against the actual hit target kind.
+- Added hero subtype specialization runtime pass:
+  - recruited heroes now receive a `HeroSubtypeUnit` marker storing selected subtype,
+  - each subtype has explicit combat tradeoff profile (`outgoing`, `incoming`, `attack_speed`) plus matchup-specific modifiers,
+  - hero subtype modifiers now apply in melee and projectile combat paths, and in attack timer scaling.
+- Expanded trait-first tooltip clarity:
+  - unit tooltips now include `Strengths`, `Weaknesses`, and `Key Matchups` sections based on role tags/counter matrix,
+  - hero recruit subtype tooltips now include the same sections from subtype doctrine mappings.
 - Enabled Tier-1 promotion runtime in `U`:
   - each tier-0 source row now has one active tier-1 promotion target (`+1` promotion action),
   - promotion buttons are gated by boss-tier unlock state, source count, treasury, and level-budget affordability,
@@ -143,7 +177,10 @@ Use this for entity/component/system lookup without scanning all source files.
   - Muslim rescuable variants and faction-aware pity-weighted rescue spawning.
 - Replaced single `bandit_raider` enemy schema with faction-mirrored enemy profiles (Christian + Muslim infantry/archer/priest entries).
 - Formation footprint occupancy cap now uses a strict retinue ratio: `floor(retinue_count / 4)` enemies allowed inside.
-- Floating critical-hit damage text now renders as magenta, slightly larger text, and appends `!` (example: `75!`).
+- Floating combat text is signal-only:
+  - `BLOCK!` when an enemy successfully blocks,
+  - `CRITICAL HIT!` on landed critical hits,
+  - regular damage numbers and execute text are not shown in default combat feedback.
 - Stats modal table now reports aggregated stat bonuses by stat name (for example `Health`, `Damage`, `Morale Regen/s`, `Morale Loss Resist`) instead of effect-source row names.
 - Collision pause artifact fix: collision correction now applies `0` movement when simulation `delta_seconds == 0` (modal/paused virtual-time frames), preventing enemies from spreading while menus are open.
 - Removed legacy enemy data dependency in runtime enemy config:
@@ -163,7 +200,27 @@ Use this for entity/component/system lookup without scanning all source files.
 - Stabilized Unit Upgrade modal close/interaction behavior by removing per-frame refresh churn from promotion feedback updates.
 - Added top-right in-run utility bar with five icon buttons mapped to the same modal requests as hotkeys.
 - Added in-run commander aura footprint gizmo for clearer aura coverage.
-- Formation slot assignment now prioritizes melee units on outer slots and ranged/support units on inner slots.
+- Formation slot resolver now uses a lane-policy model (`outer`, `middle`, `inner`) with deterministic quota assignment:
+  - lane quotas are computed per active roster footprint and reserve outer shell capacity for frontline pressure first,
+  - quotas are formation-profiled (`Shield Wall` outer-heavy shell, `Loose` middle-heavy spread, `Circle` balanced shell, `Skean`/`Diamond` momentum-frontloaded),
+  - lane preferences are resolved from unit traits/tags (`frontline`, `anti_cavalry`, `cavalry`, `skirmisher`, `support`, `shielded`) instead of faction-duplicated unit-match tables,
+  - support lines prefer `inner -> middle -> outer` and are capped on outer-shell crowding when other lanes remain available,
+  - square profile keeps cavalry/skirmisher on `middle` by default, while diamond profile shifts cavalry/skirmisher preference to `outer`,
+  - special-role overrides are formation-aware (`tracker`, `scout`, fanatic branch, priest/support branches) while preserving deterministic fallback ordering,
+  - tie-breaking remains deterministic (`lane_priority_key`, then stable entity index ordering).
+- Formation roster and mechanics are now expanded:
+  - live formations: `Square`, `Circle`, `Skean`, reworked `Diamond`, `Shield Wall`, `Loose`,
+  - anti-entry is config-driven (`Diamond` + `Shield Wall` enforce hard `0` enemies inside),
+  - `Loose` allows unlimited enemy interior occupancy (inside-cap repel disabled),
+  - `Shield Wall` grants shielded block bonus and reflects melee-hit damage based on post-mitigation hit result.
+- Formation QA usage windows (counterplay matrix) are locked by deterministic tests:
+  - `Shield Wall` tops swarm/cavalry-heavy pressure profiles,
+  - `Loose` tops ranged-heavy spread pressure profiles,
+  - `Diamond` tops mixed pressure profiles with movement-centric engagement,
+  - no single formation is allowed to dominate all tested pressure profiles.
+- Anti-entry and reflect semantics are explicitly regression-covered:
+  - anti-entry formations enforce zero interior occupancy caps,
+  - Shield Wall reflect uses post-mitigation hit result, preserves source-hit critical impact in reflected amount, and does not emit reflected critical-hit text.
 - Added `ArchivePlugin` + `ArchiveDataset` with generated codex entries (units/enemies/skills/stats/bonuses/drops).
 - Added shared archive renderer used by both in-run `B` modal and main-menu `Bestiary` screen.
 - Added mouse-wheel scrollable sections for `Archive`/`Bestiary` and `Skill Book` to prevent clipping.
@@ -245,11 +302,12 @@ Use this for entity/component/system lookup without scanning all source files.
   - icon + description rows
   - stack-aware entries
   - formation active/inactive indicators
+  - locked formation entries with explicit unlock requirement text (`Major` level-up rewards).
 - Skill Book now displays cumulative effect totals per owned upgrade entry.
 - Renamed the old recruit `Infantry/Knight` to `Christian Peasant Infantry`.
 - Added `Christian Peasant Archer` as a second recruitable retinue unit.
 - Rescue spawns now use a data-driven recruit pool and are currently constrained to tier-0 entries only.
-- Active tier-0 rescue pool entries are faction-filtered at runtime from the combined Christian+Muslim pool in `rescue.json`.
+- Active tier-0 rescue pool entries now use generic archetype IDs in `rescue.json` and resolve to the selected faction variant at runtime.
 - Added rescuable-priest variant mapping so priest rescues flow through the same recruit pipeline.
 - Recruit events now preserve rescued unit type so formation/combat/collision pipelines auto-handle both variants.
 - Wired equipment bonuses into combat runtime:
@@ -264,18 +322,21 @@ Use this for entity/component/system lookup without scanning all source files.
 - Christian Peasant Archer now uses hybrid combat: weak melee profile + stronger projectile ranged profile.
 - Added formation skillbar (bottom-center, 10 slots, keys `1..0`) with exclusive active formation switching.
 - Square formation now uses neutral multipliers (`x1` baseline).
-- Added one-time `Diamond` formation unlock card in level-up draft:
-  - unlock card is skillbar-bound,
-  - appears once per run,
-  - auto-adds to next free skillbar slot.
+- Added one-time formation unlock cards in level-up draft (`Circle`, `Skean`, `Diamond`, `Shield Wall`, `Loose`):
+  - unlock cards are skillbar-bound,
+  - appear only on `Major` reward level-ups,
+  - each appears once per run,
+  - acquired formation unlocks auto-add to next free skillbar slot.
 - Added simple generated formation icons for skillbar/cards:
   - `assets/sprites/skills/formation_square.png`
   - `assets/sprites/skills/formation_diamond.png`
-- Added Diamond gameplay tuning:
-  - offense bonus while commander is moving,
-  - slight movement speed bonus,
-  - slight defense penalty.
-- Diamond slot assignment now uses explicit ring + clockwise ordering around commander for clearer unit arrangement.
+- Added expanded formation tuning:
+  - `Circle`: higher defense, lower mobility/offense,
+  - `Skean`: faster movement and stronger moving offense with defense penalty,
+  - reworked `Diamond`: moving-offense mobility profile + anti-entry,
+  - `Shield Wall`: high defense, low speed, anti-entry, shielded block bonus, melee reflect,
+  - `Loose`: wider spacing and unlimited enemy interior occupancy.
+- Diamond/Skean slot assignment uses explicit ring + clockwise ordering around commander for clearer unit arrangement.
 - Draft filtering now removes skillbar-bound cards when skillbar is full.
 - Replaced the level-up pool with weighted random 5-option drafts from repeatable upgrades plus one-time skill unlocks.
 - Upgrade values now roll via weighted min/max sampling (higher values are rarer).
@@ -328,10 +389,10 @@ Use this for entity/component/system lookup without scanning all source files.
 - Rebuilt map floor rendering into tiled desert ground.
 - Increased Christian Peasant Infantry attack range from `32` to `36`.
 - Added drop transit-to-commander flow: friendly pickup starts homing, drop effect triggers only on commander contact.
-- Added floating combat damage text:
-  - `DamageTextEvent` emitted from finalized damage application,
-  - world-space numeric text with rise/fade animation,
-  - per-frame and active-entity caps to prevent text spikes under high hit density.
+- Added floating combat signal text:
+  - `DamageTextEvent` emitted from finalized hit resolution,
+  - world-space signal labels (`BLOCK!`, `CRITICAL HIT!`) with rise/fade animation,
+  - per-frame and active-entity caps to prevent feedback spikes under high hit density.
 - Reduced dense enemy crowd jitter/stacking:
   - enemy collision radius is now data-driven per enemy profile in `enemies.json`,
   - collision correction now uses frame-time-aware damping + max push clamp,
@@ -339,13 +400,13 @@ Use this for entity/component/system lookup without scanning all source files.
   - enemy-enemy pairs use larger separation distance (`x1.20`) to reduce mass overlap,
   - chase movement step is clamped to avoid overshooting into stop distance.
 - Added per-upgrade requirement framework:
-  - data schema now supports typed requirement discriminators (`tier0_share`, `formation_active`, `map_tag`),
+  - data schema now supports typed requirement discriminators (`tier0_share`, `formation_active`, `map_tag`, `has_trait`, `band_at_least`, `band_at_most`),
   - conditional upgrade ownership is tracked generically (not hardwired per-mob-flag),
   - conditional effects are re-evaluated continuously and cleanly revoke when requirements are unmet,
   - Skill Book now surfaces owned conditional upgrades as active/inactive with unmet-requirement messaging.
 - Completed `Mob's Fury` + `Mob's Justice` runtime feedback loop:
   - `Mob's Fury` active/inactive state now appears in-run in the top-center HUD status line,
-  - `Mob's Justice` execute hits now emit explicit floating `EXECUTE` combat text,
+  - `Mob's Justice` execute hits no longer use dedicated floating damage text,
   - execute resolution uses a shared threshold helper (`<=10%` HP) across melee and projectile hit paths.
 - Completed `Mob's Mercy` conditional rescue-speed effect:
   - rescue channel duration is computed via shared `effective_rescue_duration` and multiplied by conditional effects,
@@ -428,6 +489,17 @@ flowchart LR
   SHC --> ESHC["Elite Shock Cavalry"]
   ECAR --> DS["Divine Speaker"]
   EFLA --> DJ["Divine Judge"]
+
+  HTU{{"Hero Tier Unlock\n(Wave 60 Major Defeat + Hear the Call)"}}
+  HTU --> HSS["Hero: Sword+Shield"]
+  HTU --> HSPH["Hero: Spear"]
+  HTU --> H2H["Hero: 2H Sword"]
+  HTU --> HBW["Hero: Bow"]
+  HTU --> HJV["Hero: Javelin"]
+  HTU --> HBM["Hero: Beast Master"]
+  HTU --> HPR["Hero: Super Priest"]
+  HTU --> HFAH["Hero: Super Fanatic"]
+  HTU --> HSK["Hero: Super Knight"]
 ```
 
 ## Runtime Architecture
@@ -520,7 +592,11 @@ Loaded from `assets/data` by `GameData::load_from_dir`.
 
 ### `formations.json`
 - `square`: `slot_spacing=30`, `offense=1.0`, `offense_while_moving=1.0`, `defense=1.0`, `anti_cavalry=1.0`, `move_speed=1.0`
-- `diamond`: `slot_spacing=30`, `offense=1.0`, `offense_while_moving=1.2`, `defense=0.9`, `anti_cavalry=0.95`, `move_speed=1.08`
+- `circle`: `slot_spacing=30`, `offense=0.95`, `offense_while_moving=0.95`, `defense=1.12`, `anti_cavalry=1.02`, `move_speed=0.95`
+- `skean`: `slot_spacing=30`, `offense=1.0`, `offense_while_moving=1.28`, `defense=0.82`, `anti_cavalry=0.92`, `move_speed=1.16`
+- `diamond`: `slot_spacing=30`, `offense=1.0`, `offense_while_moving=1.22`, `defense=0.95`, `anti_cavalry=0.95`, `move_speed=1.14`, `anti_entry=true`
+- `shield_wall`: `slot_spacing=30`, `offense=0.92`, `offense_while_moving=0.85`, `defense=1.2`, `anti_cavalry=1.1`, `move_speed=0.72`, `anti_entry=true`, `shielded_block_bonus=0.1`, `melee_reflect_ratio=0.3`
+- `loose`: `slot_spacing=44`, `offense=1.04`, `offense_while_moving=1.04`, `defense=0.94`, `anti_cavalry=0.94`, `move_speed=1.08`, `allow_unlimited_enemy_inside=true`
 
 ### `waves.json`
 Scripted waves:
@@ -551,10 +627,15 @@ Runtime conversion to spawn pacing:
 - `spawn_count=6`
 - `rescue_radius=60`
 - `rescue_duration_secs=2.2`
-- `recruit_pool` includes tier-0 entries for both factions; runtime selection filters this pool to the selected player faction and applies pity weighting.
+- `recruit_pool` uses generic tier-0 archetype IDs (`peasant_infantry`, `peasant_archer`, `peasant_priest`); runtime resolves selected-faction variants and applies pity weighting.
 
 ### `upgrades.json`
-- `unlock_formation_diamond` (`one_time`, `adds_to_skillbar`, `formation_id=diamond`)
+- formation unlock cards (`one_time`, `adds_to_skillbar=true`):
+  - `unlock_formation_circle`
+  - `unlock_formation_skean`
+  - `unlock_formation_diamond`
+  - `unlock_formation_shield_wall`
+  - `unlock_formation_loose`
 - `encirclement_doctrine` (`kind=formation_breach`, `one_time`, grants inside-formation damage bonus)
 - `damage`
 - `attack_speed`
@@ -565,6 +646,7 @@ Runtime conversion to spawn pacing:
 - `authority_aura`
 - `move_speed`
 - `hospitalier_aura`
+- `luck` (repeatable shared luck layer: crit chance, crit damage, loot quality, and drop odds)
 - `mob_fury` (`one_time`, `requirement_type=tier0_share`, `requirement_min_tier0_share=1.0`)
 - `mob_justice` (`one_time`, `requirement_type=tier0_share`, `requirement_min_tier0_share=1.0`)
 - `mob_mercy` (`one_time`, `requirement_type=tier0_share`, `requirement_min_tier0_share=1.0`)
@@ -582,6 +664,27 @@ Roll fields:
   - `requirement_min_tier0_share`
   - `requirement_active_formation`
   - `requirement_map_tag`
+  - `requirement_trait`
+  - `requirement_band_stat`
+  - `requirement_band_at_least`
+  - `requirement_band_at_most`
+
+### Upgrade Audit Disposition (`CRU-260`)
+- Audit scope: all live upgrade IDs in `assets/data/upgrades.json`.
+- `Keep`:
+  - formation unlocks (`unlock_formation_circle`, `unlock_formation_skean`, `unlock_formation_diamond`, `unlock_formation_shield_wall`, `unlock_formation_loose`)
+  - formation doctrine (`encirclement_doctrine`)
+  - auras (`authority_aura_up`, `hospitalier_aura_up`)
+  - tradeoff slot modifier (`war_council_edict`)
+- `Merge/Rework`:
+  - core stat stackers (`damage_up`, `armor_up`, `attack_speed_up`, `move_speed_up`, `cooldown_reduction_up`, `skill_duration_up`) should move to additive integer-point semantics with qualitative threshold messaging (`CRU-261`, `CRU-263`, `CRU-264`, `CRU-265`)
+  - economy stackers are consolidated into one schema-driven `fast_learner_up` ladder (`min/max/step` roll range) instead of parallel fixed-value IDs (`CRU-273`)
+  - conditional doctrine variants are consolidated to canonical doctrine IDs (`mob_fury`, `mob_justice`, `mob_mercy`) and no longer duplicated by variant-ID suffixes (`CRU-273`)
+- `Keep with Balance Pass`:
+  - `luck_up` and pickup/aura radius utility cards stay in roster, but their value contrast and pacing remain under rebalance certification (`CRU-262`)
+- `Deprecate` (enforced at load):
+  - legacy duplicate IDs are hard-rejected by validators with replacement hints: `fast_learner_up_10`, `fast_learner_up_15`, `mob_fury_shielded_host`, `mob_justice_frontline_bias`, `mob_mercy_support_ceiling` (`CRU-274`)
+- No unaudited high-impact upgrade remains in the active catalog.
 
 ### `map.json`
 - Data-driven map list:
@@ -678,6 +781,44 @@ Applied movement multiplier:
 Friendly combined outgoing multiplier has lower clamp:
 - minimum `0.55`
 
+### Role Counter Matrix (`src/model.rs`, `src/combat.rs`, `src/projectiles.rs`)
+Counter contract is tag-driven and faction-agnostic (all checks key off shared `unit_id`-derived tags):
+- role tags:
+  - `frontline`
+  - `anti_cavalry`
+  - `cavalry`
+  - `anti_armor`
+  - `skirmisher`
+  - `support`
+  - `hero_doctrine`
+- armor classes:
+  - `unarmored`
+  - `light`
+  - `armored`
+  - `heavy`
+
+Runtime counter hooks (damage multiplier, clamped to `0.65..1.45`):
+- anti-cavalry attacker vs cavalry defender: `+0.35`
+- cavalry attacker vs frontline defender: `+0.18`
+- cavalry attacker vs anti-cavalry defender: `-0.24`
+- anti-armor attacker vs armor class:
+  - `heavy`: `+0.30`
+  - `armored`: `+0.20`
+  - `light`: `+0.05`
+  - `unarmored`: `-0.10`
+- skirmisher attacker vs support defender: `+0.15`
+- archer attacker (non anti-cavalry) vs cavalry defender: `-0.10`
+- support attacker vs frontline defender: `-0.12`
+
+Representative specialization mapping:
+- shield + knight lines: `frontline`
+- spear/halberd lines: `anti_cavalry`
+- scout/shock lines: `cavalry`
+- crossbow/javelin lines: `anti_armor`
+- tracker/scout/fanatic lines: `skirmisher`
+- priest/bannerman/cardinal/speaker lines: `support`
+- hero endpoint roster (`citadel_guard`, `armored_halberdier`, `elite_heavy_knight`, `elite_longbowman`, `siege_crossbowman`, `elite_houndmaster`, `divine_speaker`, `divine_judge`, `elite_shock_cavalry`): `hero_doctrine`
+
 ### Enemy-In-Formation Vulnerability Bonus (`src/combat.rs`)
 - Base state: no inside-formation vulnerability bonus is active.
 - After the one-time upgrade `Into the Wolf's Dev` is acquired, enemies inside the friendly formation footprint take multiplier `1.2` from friendly outgoing damage.
@@ -688,24 +829,28 @@ Friendly combined outgoing multiplier has lower clamp:
 - If commander has no recruits, bonus does not apply.
 
 ### Movement Slowdown From Enemies Inside Formation (`src/squad.rs`)
-- Commander movement applies additional multiplier based on enemy count inside square formation footprint.
+- Commander movement applies additional multiplier based on enemy count inside active formation footprint.
 - Per-enemy slowdown: `0.04` (4%).
 - Minimum multiplier clamp: `0.5` (commander cannot be fully stopped by this effect).
 - Formula:
   - `multiplier = clamp(1.0 - enemy_count * 0.04, 0.5, 1.0)`
 
 ### Formation Footprint Occupancy Cap + Repel (`src/enemies.rs`)
-- Enemies allowed inside the active formation footprint are capped dynamically by retinue size.
-- Cap model:
-  - `max_inside = floor(retinue_count / 4)`
-- Overflow enemies are sorted deterministically by distance-to-commander and redirected toward the formation perimeter projection (square/diamond-specific boundary math).
+- Enemy interior occupancy policy is formation-config driven:
+  - default cap: `max_inside = floor(retinue_count / 4)`,
+  - anti-entry formations (`Diamond`, `Shield Wall`) force `max_inside = 0`,
+  - loose formation sets unlimited interior occupancy (overflow repel disabled).
+- Overflow enemies are sorted deterministically by distance-to-commander and redirected toward the active formation perimeter projection (square/diamond/circle shape math).
 - Repel movement is step-limited each frame for stability (`280 units/sec`).
 
-### Diamond Formation Combat/Movement Effects
+### Formation Combat/Movement Effects
 - Formation offense multiplier now has a moving-state modifier:
   - `effective_offense = offense_multiplier * offense_while_moving_multiplier` when commander is moving.
 - Commander movement speed is multiplied by active formation move-speed multiplier.
 - Friendly effective armor is multiplied by active formation defense multiplier.
+- Shield Wall adds:
+  - shielded-friendly block chance bonus,
+  - melee-hit reflect based on post-mitigation incoming damage.
 
 ### Ranged Projectile Attacks (`src/combat.rs`, `src/projectiles.rs`)
 - Units with `RangedAttackProfile` fire projectiles only when targets are outside melee range and inside ranged range.
@@ -750,6 +895,8 @@ Friendly combined outgoing multiplier has lower clamp:
 - Owned conditional upgrades are evaluated each frame from live runtime context:
   - `tier0_share` compares roster tier-0 ratio against configured minimum.
   - `formation_active` checks currently active formation id.
+  - `has_trait` checks for minimum roster presence of trait families (`shielded`, `frontline`, `anti_cavalry`, `cavalry`, `anti_armor`, `skirmisher`, `support`).
+  - `band_at_least` / `band_at_most` compares roster share stats (`tier0`, `shielded`, `frontline`, `support`, `cavalry`, `archer`, `anti_armor`) against qualitative bands (`very_low`..`very_high`).
   - `map_tag` is schema-supported; currently reports unmet in runtime until map tags are introduced.
 - Effects are rebuilt from scratch each refresh and deduplicated by upgrade id, preventing duplicate-frame stacking bugs.
 
@@ -920,6 +1067,7 @@ Friendly combined outgoing multiplier has lower clamp:
 - enemy-in-formation vulnerability check (`+20%` friendly damage when inside formation bounds)
 - friendly crit roll on melee and ranged outgoing hits (before armor mitigation)
 - difficulty-gated enemy block behavior in hit resolution (`enemy_block_enabled`)
+  - block rolls now require the target to have the explicit `Shielded` trait.
 - damage apply + `UnitDamagedEvent` + `DamageTextEvent` (uses final applied damage, not requested pre-clamp amount)
 - death resolve + drop spawn events
 
@@ -956,8 +1104,8 @@ Friendly combined outgoing multiplier has lower clamp:
 - bottom-left vertical bar (average morale)
 - morale-threshold toast text below top-center bars
 - commander aura footprint indicator (subtle world-space circle around commander)
-- world-space health bars
-- world-space floating damage text with timed rise/fade cleanup
+- world-space health bars with snapped segmented fill (threshold-crossing updates)
+- world-space floating combat signal text with timed rise/fade cleanup
 - top-right minimap prototype with periodic blip refresh (`204px`, +20% from previous size)
   - commander/friendlies/enemies
   - gold packs (yellow)
@@ -995,6 +1143,7 @@ Friendly combined outgoing multiplier has lower clamp:
   - icon-backed entries with stacked counts
   - cumulative effect descriptions per owned upgrade
   - active/inactive markers for mutually exclusive formation skills
+  - formation entries include explicit `Strengths`, `Weaknesses`, and `Use case` tradeoff text
   - active/inactive markers + unmet-requirement detail for owned conditional upgrades
 - archive/bestiary modal content:
   - mouse-wheel scrolling with clipped viewport to prevent content overflow

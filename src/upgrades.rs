@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 
 use bevy::prelude::*;
 
@@ -8,7 +8,7 @@ use crate::formation::{ActiveFormation, FormationSkillBar};
 use crate::inventory::ItemRarityRollBonus;
 use crate::model::{
     BaseMaxHealth, FriendlyUnit, GainGoldEvent, GainHearTheCallTokenEvent, GameState, GlobalBuffs,
-    Health, MAX_COMMANDER_LEVEL, MatchSetupSelection, StartRunEvent,
+    Health, MAX_COMMANDER_LEVEL, MatchSetupSelection, StartRunEvent, UnitRoleTag,
 };
 use crate::random::runtime_entropy_seed_u64;
 use crate::squad::RosterEconomy;
@@ -34,6 +34,8 @@ const MOB_JUSTICE_EXECUTE_THRESHOLD: f32 = 0.10;
 const MOB_MERCY_RESCUE_TIME_MULTIPLIER: f32 = 0.5;
 const UNIQUE_SLOT_TRADEOFF_KIND: &str = "unique_slot_tradeoff";
 const MAX_SKILL_COOLDOWN_REDUCTION: f32 = 0.75;
+const LUCK_TO_CRIT_CHANCE_MULTIPLIER: f32 = 0.5;
+const LUCK_TO_CRIT_DAMAGE_MULTIPLIER: f32 = 2.0;
 
 pub const fn max_unique_upgrades() -> usize {
     MAX_UNIQUE_UPGRADES
@@ -45,6 +47,7 @@ pub fn is_supported_upgrade_kind(kind: &str) -> bool {
         "damage"
             | "attack_speed"
             | "fast_learner"
+            | "luck"
             | "crit_chance"
             | "crit_damage"
             | "armor"
@@ -84,6 +87,11 @@ pub struct Progression {
     pub hear_the_call_tokens: u32,
     pub level: u32,
     pub pending_level_ups: u32,
+}
+
+#[derive(Resource, Clone, Debug, Default)]
+pub struct PendingRewardQueue {
+    pub kinds: VecDeque<UpgradeRewardKind>,
 }
 
 #[derive(Resource, Clone, Debug, Default)]
@@ -165,9 +173,135 @@ pub struct SkillBookEntry {
 #[derive(Clone, Debug, PartialEq)]
 pub enum UpgradeRequirement {
     None,
-    Tier0Share { min_share: f32 },
-    FormationActive { formation: ActiveFormation },
-    MapTag { tag: String },
+    Tier0Share {
+        min_share: f32,
+    },
+    FormationActive {
+        formation: ActiveFormation,
+    },
+    MapTag {
+        tag: String,
+    },
+    HasTrait {
+        trait_tag: RequirementTraitTag,
+        min_count: u32,
+    },
+    BandAtLeast {
+        stat: RequirementBandStat,
+        band: RequirementBand,
+    },
+    BandAtMost {
+        stat: RequirementBandStat,
+        band: RequirementBand,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RequirementTraitTag {
+    Shielded,
+    Frontline,
+    AntiCavalry,
+    Cavalry,
+    AntiArmor,
+    Skirmisher,
+    Support,
+}
+
+impl RequirementTraitTag {
+    pub fn from_id(id: &str) -> Option<Self> {
+        match id {
+            "shielded" => Some(Self::Shielded),
+            "frontline" => Some(Self::Frontline),
+            "anti_cavalry" => Some(Self::AntiCavalry),
+            "cavalry" => Some(Self::Cavalry),
+            "anti_armor" => Some(Self::AntiArmor),
+            "skirmisher" => Some(Self::Skirmisher),
+            "support" => Some(Self::Support),
+            _ => None,
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Shielded => "Shielded",
+            Self::Frontline => "Frontline",
+            Self::AntiCavalry => "Anti-Cavalry",
+            Self::Cavalry => "Cavalry",
+            Self::AntiArmor => "Anti-Armor",
+            Self::Skirmisher => "Skirmisher",
+            Self::Support => "Support",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RequirementBandStat {
+    Tier0Share,
+    ShieldedShare,
+    FrontlineShare,
+    SupportShare,
+    CavalryShare,
+    ArcherShare,
+    AntiArmorShare,
+}
+
+impl RequirementBandStat {
+    pub fn from_id(id: &str) -> Option<Self> {
+        match id {
+            "tier0_share" => Some(Self::Tier0Share),
+            "shielded_share" => Some(Self::ShieldedShare),
+            "frontline_share" => Some(Self::FrontlineShare),
+            "support_share" => Some(Self::SupportShare),
+            "cavalry_share" => Some(Self::CavalryShare),
+            "archer_share" => Some(Self::ArcherShare),
+            "anti_armor_share" => Some(Self::AntiArmorShare),
+            _ => None,
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Tier0Share => "Tier-0 share",
+            Self::ShieldedShare => "Shielded share",
+            Self::FrontlineShare => "Frontline share",
+            Self::SupportShare => "Support share",
+            Self::CavalryShare => "Cavalry share",
+            Self::ArcherShare => "Archer share",
+            Self::AntiArmorShare => "Anti-armor share",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub enum RequirementBand {
+    VeryLow,
+    Low,
+    Moderate,
+    High,
+    VeryHigh,
+}
+
+impl RequirementBand {
+    pub fn from_id(id: &str) -> Option<Self> {
+        match id {
+            "very_low" => Some(Self::VeryLow),
+            "low" => Some(Self::Low),
+            "moderate" => Some(Self::Moderate),
+            "high" => Some(Self::High),
+            "very_high" => Some(Self::VeryHigh),
+            _ => None,
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::VeryLow => "Very Low",
+            Self::Low => "Low",
+            Self::Moderate => "Moderate",
+            Self::High => "High",
+            Self::VeryHigh => "Very High",
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -229,6 +363,7 @@ pub enum UpgradeCardIcon {
     Damage,
     AttackSpeed,
     FastLearner,
+    Luck,
     CritChance,
     CritDamage,
     Armor,
@@ -318,6 +453,7 @@ pub struct UpgradePlugin;
 impl Plugin for UpgradePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Progression>()
+            .init_resource::<PendingRewardQueue>()
             .init_resource::<ProgressionLockFeedback>()
             .init_resource::<UpgradeDraft>()
             .init_resource::<OneTimeUpgradeTracker>()
@@ -335,6 +471,7 @@ impl Plugin for UpgradePlugin {
                 Update,
                 (
                     reset_progress_on_run_start,
+                    reset_pending_reward_queue_on_run_start,
                     reset_progress_lock_feedback_on_run_start,
                 )
                     .chain(),
@@ -421,6 +558,17 @@ fn reset_progress_on_run_start(
     rng.reseed_from_time();
 }
 
+fn reset_pending_reward_queue_on_run_start(
+    mut start_events: EventReader<StartRunEvent>,
+    mut pending_rewards: ResMut<PendingRewardQueue>,
+) {
+    if start_events.is_empty() {
+        return;
+    }
+    for _ in start_events.read() {}
+    *pending_rewards = PendingRewardQueue::default();
+}
+
 fn reset_progress_lock_feedback_on_run_start(
     mut start_events: EventReader<StartRunEvent>,
     mut lock_feedback: ResMut<ProgressionLockFeedback>,
@@ -451,18 +599,29 @@ fn gain_hear_the_call_tokens(
 
 fn queue_level_rewards_from_wave_completions(
     mut progression: ResMut<Progression>,
+    mut pending_rewards: ResMut<PendingRewardQueue>,
     mut wave_completed_events: EventReader<WaveCompletedEvent>,
 ) {
-    for event in wave_completed_events.read() {
-        progression.pending_level_ups = progression
-            .pending_level_ups
-            .saturating_add(level_rewards_for_wave_completion(event.wave_number));
+    if progression.level >= MAX_COMMANDER_LEVEL {
+        pending_rewards.kinds.clear();
+        progression.pending_level_ups = 0;
+        for _ in wave_completed_events.read() {}
+        return;
     }
+    for event in wave_completed_events.read() {
+        enqueue_reward_kinds(
+            &mut pending_rewards.kinds,
+            progression.level,
+            level_rewards_for_wave_completion(event.wave_number),
+        );
+    }
+    progression.pending_level_ups = pending_reward_queue_len(&pending_rewards);
 }
 
 #[allow(clippy::too_many_arguments)]
 fn open_draft_on_pending_levels(
     mut progression: ResMut<Progression>,
+    mut pending_rewards: ResMut<PendingRewardQueue>,
     mut lock_feedback: ResMut<ProgressionLockFeedback>,
     mut draft: ResMut<UpgradeDraft>,
     one_time_tracker: Res<OneTimeUpgradeTracker>,
@@ -490,25 +649,33 @@ fn open_draft_on_pending_levels(
 
     if progression.level >= MAX_COMMANDER_LEVEL {
         progression.level = MAX_COMMANDER_LEVEL;
+        pending_rewards.kinds.clear();
+        progression.pending_level_ups = 0;
         lock_feedback.message = None;
         return;
     }
 
-    if progression.pending_level_ups == 0 {
+    if pending_rewards.kinds.is_empty() {
+        progression.pending_level_ups = 0;
         return;
     }
 
-    progression.pending_level_ups = progression.pending_level_ups.saturating_sub(1);
+    let Some(reward_kind) = pending_rewards.kinds.pop_front() else {
+        progression.pending_level_ups = 0;
+        return;
+    };
+    progression.pending_level_ups = pending_reward_queue_len(&pending_rewards);
     progression.level += 1;
     progression.level = progression
         .level
         .min(allowed_max_level)
         .min(MAX_COMMANDER_LEVEL);
-    draft.reward_kind = reward_kind_for_level(progression.level);
+    draft.reward_kind = reward_kind;
     draft.options = roll_upgrade_options(
         &data.upgrades.upgrades,
         &mut rng,
         LEVEL_UP_OPTION_COUNT,
+        draft.reward_kind,
         upgrade_rarity_bonus.percent,
         &one_time_tracker,
         &skillbar,
@@ -549,6 +716,32 @@ pub fn major_minor_reward_counts_for_level(level: u32) -> (u32, u32) {
     let major = level / MAJOR_REWARD_LEVEL_INTERVAL;
     let minor = level.saturating_sub(major);
     (major, minor)
+}
+
+fn pending_reward_queue_len(queue: &PendingRewardQueue) -> u32 {
+    queue.kinds.len().min(u32::MAX as usize) as u32
+}
+
+fn enqueue_reward_kinds(
+    queue: &mut VecDeque<UpgradeRewardKind>,
+    current_level: u32,
+    reward_count: u32,
+) -> u32 {
+    let mut queued = 0;
+    let queued_existing = queue.len().min(u32::MAX as usize) as u32;
+    let mut projected_level = current_level.saturating_add(queued_existing);
+    for _ in 0..reward_count {
+        if projected_level >= MAX_COMMANDER_LEVEL {
+            break;
+        }
+        projected_level = projected_level.saturating_add(1);
+        if projected_level > MAX_COMMANDER_LEVEL {
+            break;
+        }
+        queue.push_back(reward_kind_for_level(projected_level));
+        queued += 1;
+    }
+    queued
 }
 
 pub fn commander_level_hp_bonus(level: u32) -> f32 {
@@ -697,6 +890,10 @@ pub fn skill_book_entry_cumulative_description(entry: &SkillBookEntry) -> String
             "Total gold gain bonus from pickups: +{:.0}%.",
             entry.total_value.max(0.0) * 100.0
         ),
+        "luck" => format!(
+            "Total luck bonus: +{:.0}% (boosts crit chance/damage, loot rarity, and drop odds).",
+            entry.total_value.max(0.0) * 100.0
+        ),
         "crit_chance" => format!(
             "Total critical hit chance: +{:.1}%.",
             entry.total_value.max(0.0) * 100.0
@@ -764,6 +961,7 @@ fn roll_upgrade_options(
     pool: &[UpgradeConfig],
     rng: &mut UpgradeRngState,
     count: usize,
+    reward_kind: UpgradeRewardKind,
     upgrade_rarity_bonus_percent: f32,
     one_time_tracker: &OneTimeUpgradeTracker,
     skillbar: &FormationSkillBar,
@@ -777,6 +975,9 @@ fn roll_upgrade_options(
         .iter()
         .enumerate()
         .filter(|(_, upgrade)| {
+            if reward_kind == UpgradeRewardKind::Minor && upgrade.kind == "unlock_formation" {
+                return false;
+            }
             if upgrade.one_time && one_time_tracker.acquired_ids.contains(&upgrade.id) {
                 return false;
             }
@@ -965,6 +1166,7 @@ pub fn upgrade_card_icon(upgrade: &UpgradeConfig) -> UpgradeCardIcon {
         "damage" => UpgradeCardIcon::Damage,
         "attack_speed" => UpgradeCardIcon::AttackSpeed,
         "fast_learner" => UpgradeCardIcon::FastLearner,
+        "luck" => UpgradeCardIcon::Luck,
         "crit_chance" => UpgradeCardIcon::CritChance,
         "crit_damage" => UpgradeCardIcon::CritDamage,
         "armor" => UpgradeCardIcon::Armor,
@@ -983,7 +1185,7 @@ pub fn upgrade_card_icon(upgrade: &UpgradeConfig) -> UpgradeCardIcon {
         "mob_justice" => UpgradeCardIcon::MobJustice,
         "mob_mercy" => UpgradeCardIcon::MobMercy,
         "unlock_formation" => match upgrade.formation_id.as_deref() {
-            Some("diamond") => UpgradeCardIcon::FormationDiamond,
+            Some("skean") | Some("diamond") => UpgradeCardIcon::FormationDiamond,
             _ => UpgradeCardIcon::FormationSquare,
         },
         _ => UpgradeCardIcon::Damage,
@@ -995,6 +1197,7 @@ pub fn upgrade_display_title(upgrade: &UpgradeConfig) -> &'static str {
         "damage" => "Sharpened Steel",
         "attack_speed" => "Rapid Drill",
         "fast_learner" => "Fast Learner",
+        "luck" => "Fortune's Favor",
         "crit_chance" => "Killer Instinct",
         "crit_damage" => "Deadly Precision",
         "armor" => "Hardened Armor",
@@ -1013,7 +1216,11 @@ pub fn upgrade_display_title(upgrade: &UpgradeConfig) -> &'static str {
         "mob_justice" => "Mob's Justice",
         "mob_mercy" => "Mob's Mercy",
         "unlock_formation" => match upgrade.formation_id.as_deref() {
+            Some("circle") => "Circle Formation",
+            Some("skean") => "Skean Formation",
             Some("diamond") => "Diamond Formation",
+            Some("shield_wall") => "Shield Wall Formation",
+            Some("loose") => "Loose Formation",
             Some("square") => "Square Formation",
             _ => "Formation Unlock",
         },
@@ -1030,6 +1237,10 @@ pub fn upgrade_display_description(upgrade: &UpgradeConfig) -> String {
         ),
         "fast_learner" => format!(
             "Increase gold gained from all gold pickups by +{:.0}%.",
+            upgrade.value * 100.0
+        ),
+        "luck" => format!(
+            "Increase Luck by +{:.0}%: improves crit chance, crit damage, item quality, and drop chances.",
             upgrade.value * 100.0
         ),
         "crit_chance" => format!(
@@ -1082,9 +1293,13 @@ pub fn upgrade_display_description(upgrade: &UpgradeConfig) -> String {
         "mob_justice" => "If tier-0 share requirement is met, hits execute enemies below 10% HP.".to_string(),
         "mob_mercy" => "If tier-0 share requirement is met, rescue channel time is reduced by 50%.".to_string(),
         "unlock_formation" => match upgrade.formation_id.as_deref() {
-            Some("diamond") => "Unlock Diamond formation on the skill bar: offense bonus while moving, faster movement, lower defense.".to_string(),
-            Some("square") => "Unlock Square formation on the skill bar.".to_string(),
-            _ => "Unlock a formation skill for the skill bar.".to_string(),
+            Some("circle") => "Major reward only: unlock Circle formation on the skill bar (higher defense, lower mobility and offense).".to_string(),
+            Some("skean") => "Major reward only: unlock Skean formation on the skill bar (faster movement and stronger moving offense, lower defense).".to_string(),
+            Some("diamond") => "Major reward only: unlock Diamond formation on the skill bar (offense bonus while moving, faster movement, lower defense).".to_string(),
+            Some("shield_wall") => "Major reward only: unlock Shield Wall formation on the skill bar (anti-entry, shielded block bonus, and melee reflect).".to_string(),
+            Some("loose") => "Major reward only: unlock Loose formation on the skill bar (wider spacing and unlimited enemy interior occupancy).".to_string(),
+            Some("square") => "Major reward only: unlock Square formation on the skill bar.".to_string(),
+            _ => "Major reward only: unlock a formation skill for the skill bar.".to_string(),
         },
         _ => "Apply a battlefield improvement.".to_string(),
     }
@@ -1108,6 +1323,17 @@ fn apply_upgrade(
         }
         "fast_learner" => {
             buffs.gold_gain_multiplier += upgrade.value;
+        }
+        "luck" => {
+            buffs.luck_bonus += upgrade.value;
+            buffs.crit_chance_bonus = (buffs.crit_chance_bonus
+                + upgrade.value * LUCK_TO_CRIT_CHANCE_MULTIPLIER)
+                .clamp(0.0, 0.95);
+            buffs.crit_damage_multiplier = (buffs.crit_damage_multiplier
+                + upgrade.value * LUCK_TO_CRIT_DAMAGE_MULTIPLIER)
+                .max(1.0);
+            item_rarity_bonus.percent = (item_rarity_bonus.percent + upgrade.value).max(0.0);
+            upgrade_rarity_bonus.percent = (upgrade_rarity_bonus.percent + upgrade.value).max(0.0);
         }
         "crit_chance" => {
             buffs.crit_chance_bonus = (buffs.crit_chance_bonus + upgrade.value).clamp(0.0, 0.95);
@@ -1221,6 +1447,43 @@ pub fn parse_upgrade_requirement(upgrade: &UpgradeConfig) -> UpgradeRequirement 
         "map_tag" => UpgradeRequirement::MapTag {
             tag: upgrade.requirement_map_tag.clone().unwrap_or_default(),
         },
+        "has_trait" => upgrade
+            .requirement_trait
+            .as_deref()
+            .and_then(|value| RequirementTraitTag::from_id(value.trim()))
+            .map(|trait_tag| UpgradeRequirement::HasTrait {
+                trait_tag,
+                min_count: 1,
+            })
+            .unwrap_or(UpgradeRequirement::None),
+        "band_at_least" => {
+            let stat = upgrade
+                .requirement_band_stat
+                .as_deref()
+                .and_then(|value| RequirementBandStat::from_id(value.trim()));
+            let band = upgrade
+                .requirement_band_at_least
+                .as_deref()
+                .and_then(|value| RequirementBand::from_id(value.trim()));
+            match (stat, band) {
+                (Some(stat), Some(band)) => UpgradeRequirement::BandAtLeast { stat, band },
+                _ => UpgradeRequirement::None,
+            }
+        }
+        "band_at_most" => {
+            let stat = upgrade
+                .requirement_band_stat
+                .as_deref()
+                .and_then(|value| RequirementBandStat::from_id(value.trim()));
+            let band = upgrade
+                .requirement_band_at_most
+                .as_deref()
+                .and_then(|value| RequirementBand::from_id(value.trim()));
+            match (stat, band) {
+                (Some(stat), Some(band)) => UpgradeRequirement::BandAtMost { stat, band },
+                _ => UpgradeRequirement::None,
+            }
+        }
         _ => UpgradeRequirement::None,
     }
 }
@@ -1232,20 +1495,19 @@ fn refresh_conditional_upgrade_effects(
     mut effects: ResMut<ConditionalUpgradeEffects>,
     mut status: ResMut<ConditionalUpgradeStatus>,
 ) {
-    let tier0_share = roster
-        .as_deref()
-        .map(roster_tier0_share)
-        .unwrap_or(0.0)
-        .clamp(0.0, 1.0);
-    let (next_effects, next_status) =
-        conditional_effects_from_owned(&conditional_owned.entries, tier0_share, *active_formation);
+    let eval_context = requirement_eval_context(roster.as_deref());
+    let (next_effects, next_status) = conditional_effects_from_owned(
+        &conditional_owned.entries,
+        &eval_context,
+        *active_formation,
+    );
     *effects = next_effects;
     status.entries = next_status;
 }
 
 fn conditional_effects_from_owned(
     entries: &[OwnedConditionalUpgrade],
-    tier0_share: f32,
+    eval_context: &RequirementEvalContext,
     active_formation: ActiveFormation,
 ) -> (
     ConditionalUpgradeEffects,
@@ -1257,7 +1519,7 @@ fn conditional_effects_from_owned(
 
     for entry in entries {
         let (active, detail) =
-            evaluate_upgrade_requirement(&entry.requirement, tier0_share, active_formation);
+            evaluate_upgrade_requirement(&entry.requirement, eval_context, active_formation);
         status_entries.push(ConditionalUpgradeStatusEntry {
             id: entry.id.clone(),
             kind: entry.kind.clone(),
@@ -1296,12 +1558,13 @@ fn conditional_effects_from_owned(
 
 pub fn evaluate_upgrade_requirement(
     requirement: &UpgradeRequirement,
-    tier0_share: f32,
+    eval_context: &RequirementEvalContext,
     active_formation: ActiveFormation,
 ) -> (bool, Option<String>) {
     match requirement {
         UpgradeRequirement::None => (true, None),
         UpgradeRequirement::Tier0Share { min_share } => {
+            let tier0_share = eval_context.tier0_share;
             if tier0_share >= *min_share {
                 (true, None)
             } else {
@@ -1332,6 +1595,56 @@ pub fn evaluate_upgrade_requirement(
                 tag
             )),
         ),
+        UpgradeRequirement::HasTrait {
+            trait_tag,
+            min_count,
+        } => {
+            let count = eval_context.count_for_trait(*trait_tag);
+            if count >= *min_count {
+                (true, None)
+            } else {
+                (
+                    false,
+                    Some(format!(
+                        "Requires at least {min_count} {} unit(s) in roster (current {}).",
+                        trait_tag.label(),
+                        count
+                    )),
+                )
+            }
+        }
+        UpgradeRequirement::BandAtLeast { stat, band } => {
+            let current = eval_context.band_for_stat(*stat);
+            if current >= *band {
+                (true, None)
+            } else {
+                (
+                    false,
+                    Some(format!(
+                        "Requires {} at least {} (current {}).",
+                        stat.label(),
+                        band.label(),
+                        current.label()
+                    )),
+                )
+            }
+        }
+        UpgradeRequirement::BandAtMost { stat, band } => {
+            let current = eval_context.band_for_stat(*stat);
+            if current <= *band {
+                (true, None)
+            } else {
+                (
+                    false,
+                    Some(format!(
+                        "Requires {} at most {} (current {}).",
+                        stat.label(),
+                        band.label(),
+                        current.label()
+                    )),
+                )
+            }
+        }
     }
 }
 
@@ -1340,6 +1653,130 @@ fn roster_tier0_share(roster: &RosterEconomy) -> f32 {
         return 0.0;
     }
     roster.tier0_retinue_count as f32 / roster.total_retinue_count as f32
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RequirementEvalContext {
+    tier0_share: f32,
+    shielded_share: f32,
+    frontline_share: f32,
+    support_share: f32,
+    cavalry_share: f32,
+    archer_share: f32,
+    anti_armor_share: f32,
+    shielded_count: u32,
+    frontline_count: u32,
+    anti_cavalry_count: u32,
+    cavalry_count: u32,
+    anti_armor_count: u32,
+    skirmisher_count: u32,
+    support_count: u32,
+}
+
+impl RequirementEvalContext {
+    fn count_for_trait(self, trait_tag: RequirementTraitTag) -> u32 {
+        match trait_tag {
+            RequirementTraitTag::Shielded => self.shielded_count,
+            RequirementTraitTag::Frontline => self.frontline_count,
+            RequirementTraitTag::AntiCavalry => self.anti_cavalry_count,
+            RequirementTraitTag::Cavalry => self.cavalry_count,
+            RequirementTraitTag::AntiArmor => self.anti_armor_count,
+            RequirementTraitTag::Skirmisher => self.skirmisher_count,
+            RequirementTraitTag::Support => self.support_count,
+        }
+    }
+
+    fn share_for_stat(self, stat: RequirementBandStat) -> f32 {
+        match stat {
+            RequirementBandStat::Tier0Share => self.tier0_share,
+            RequirementBandStat::ShieldedShare => self.shielded_share,
+            RequirementBandStat::FrontlineShare => self.frontline_share,
+            RequirementBandStat::SupportShare => self.support_share,
+            RequirementBandStat::CavalryShare => self.cavalry_share,
+            RequirementBandStat::ArcherShare => self.archer_share,
+            RequirementBandStat::AntiArmorShare => self.anti_armor_share,
+        }
+    }
+
+    fn band_for_stat(self, stat: RequirementBandStat) -> RequirementBand {
+        requirement_band_from_share(self.share_for_stat(stat))
+    }
+}
+
+fn requirement_eval_context(roster: Option<&RosterEconomy>) -> RequirementEvalContext {
+    let Some(roster) = roster else {
+        return RequirementEvalContext::default();
+    };
+    let total = roster.total_retinue_count.max(1);
+    let mut shielded = 0u32;
+    let mut frontline = 0u32;
+    let mut anti_cavalry = 0u32;
+    let mut cavalry = 0u32;
+    let mut anti_armor = 0u32;
+    let mut skirmisher = 0u32;
+    let mut support = 0u32;
+    let mut archer = 0u32;
+
+    for (kind, count) in &roster.kind_counts {
+        let count = *count;
+        if kind.has_shielded_trait() {
+            shielded = shielded.saturating_add(count);
+        }
+        if kind.has_role_tag(UnitRoleTag::Frontline) {
+            frontline = frontline.saturating_add(count);
+        }
+        if kind.has_role_tag(UnitRoleTag::AntiCavalry) {
+            anti_cavalry = anti_cavalry.saturating_add(count);
+        }
+        if kind.has_role_tag(UnitRoleTag::Cavalry) {
+            cavalry = cavalry.saturating_add(count);
+        }
+        if kind.has_role_tag(UnitRoleTag::AntiArmor) {
+            anti_armor = anti_armor.saturating_add(count);
+        }
+        if kind.has_role_tag(UnitRoleTag::Skirmisher) {
+            skirmisher = skirmisher.saturating_add(count);
+        }
+        if kind.has_role_tag(UnitRoleTag::Support) {
+            support = support.saturating_add(count);
+        }
+        if kind.is_archer_line() {
+            archer = archer.saturating_add(count);
+        }
+    }
+
+    let to_share = |count: u32| count as f32 / total as f32;
+    RequirementEvalContext {
+        tier0_share: roster_tier0_share(roster).clamp(0.0, 1.0),
+        shielded_share: to_share(shielded),
+        frontline_share: to_share(frontline),
+        support_share: to_share(support),
+        cavalry_share: to_share(cavalry),
+        archer_share: to_share(archer),
+        anti_armor_share: to_share(anti_armor),
+        shielded_count: shielded,
+        frontline_count: frontline,
+        anti_cavalry_count: anti_cavalry,
+        cavalry_count: cavalry,
+        anti_armor_count: anti_armor,
+        skirmisher_count: skirmisher,
+        support_count: support,
+    }
+}
+
+fn requirement_band_from_share(share: f32) -> RequirementBand {
+    let clamped = share.clamp(0.0, 1.0);
+    if clamped < 0.10 {
+        RequirementBand::VeryLow
+    } else if clamped < 0.25 {
+        RequirementBand::Low
+    } else if clamped < 0.45 {
+        RequirementBand::Moderate
+    } else if clamped < 0.70 {
+        RequirementBand::High
+    } else {
+        RequirementBand::VeryHigh
+    }
 }
 
 #[cfg(test)]
@@ -1376,6 +1813,10 @@ mod tests {
             requirement_min_tier0_share: None,
             requirement_active_formation: None,
             requirement_map_tag: None,
+            requirement_trait: None,
+            requirement_band_stat: None,
+            requirement_band_at_least: None,
+            requirement_band_at_most: None,
         }
     }
 
@@ -1389,6 +1830,15 @@ mod tests {
             UpgradeRarityRollBonus::default(),
             SkillTimingBuffs::default(),
         )
+    }
+
+    fn requirement_eval_context_with_tier0_share(
+        tier0_share: f32,
+    ) -> super::RequirementEvalContext {
+        super::RequirementEvalContext {
+            tier0_share,
+            ..Default::default()
+        }
     }
 
     #[test]
@@ -1420,6 +1870,7 @@ mod tests {
             &pool,
             &mut rng,
             3,
+            super::UpgradeRewardKind::Minor,
             0.0,
             &OneTimeUpgradeTracker::default(),
             &FormationSkillBar::default(),
@@ -1453,6 +1904,7 @@ mod tests {
                 &pool,
                 &mut rng,
                 5,
+                super::UpgradeRewardKind::Minor,
                 0.0,
                 &OneTimeUpgradeTracker::default(),
                 &FormationSkillBar::default(),
@@ -1581,6 +2033,10 @@ mod tests {
             requirement_min_tier0_share: None,
             requirement_active_formation: None,
             requirement_map_tag: None,
+            requirement_trait: None,
+            requirement_band_stat: None,
+            requirement_band_at_least: None,
+            requirement_band_at_most: None,
         };
         let pool = vec![formation_upgrade];
         let mut tracker = OneTimeUpgradeTracker::default();
@@ -1592,6 +2048,7 @@ mod tests {
             &pool,
             &mut rng,
             3,
+            super::UpgradeRewardKind::Minor,
             0.0,
             &tracker,
             &FormationSkillBar::default(),
@@ -1626,6 +2083,7 @@ mod tests {
             &pool,
             &mut rng,
             3,
+            super::UpgradeRewardKind::Minor,
             0.0,
             &tracker,
             &FormationSkillBar::default(),
@@ -1653,6 +2111,10 @@ mod tests {
             requirement_min_tier0_share: None,
             requirement_active_formation: None,
             requirement_map_tag: None,
+            requirement_trait: None,
+            requirement_band_stat: None,
+            requirement_band_at_least: None,
+            requirement_band_at_most: None,
         };
         super::apply_one_time_tracker_effects(&tradeoff, &mut tracker);
         assert_eq!(
@@ -1677,6 +2139,7 @@ mod tests {
             &pool,
             &mut rng,
             3,
+            super::UpgradeRewardKind::Minor,
             0.0,
             &tracker,
             &FormationSkillBar::default(),
@@ -1714,6 +2177,10 @@ mod tests {
             requirement_min_tier0_share: None,
             requirement_active_formation: None,
             requirement_map_tag: None,
+            requirement_trait: None,
+            requirement_band_stat: None,
+            requirement_band_at_least: None,
+            requirement_band_at_most: None,
         };
         let normal_upgrade = upgrade("damage", "damage_up");
         let pool = vec![formation_upgrade, normal_upgrade];
@@ -1738,12 +2205,64 @@ mod tests {
             &pool,
             &mut rng,
             3,
+            super::UpgradeRewardKind::Minor,
             0.0,
             &OneTimeUpgradeTracker::default(),
             &full_skillbar,
         );
         assert_eq!(picks.len(), 1);
         assert_eq!(picks[0].id, "damage_up");
+    }
+
+    #[test]
+    fn formation_unlock_upgrades_only_roll_on_major_rewards() {
+        let formation_upgrade = UpgradeConfig {
+            id: "unlock_diamond".to_string(),
+            kind: "unlock_formation".to_string(),
+            value: 1.0,
+            min_value: None,
+            max_value: None,
+            value_step: None,
+            weight_exponent: None,
+            one_time: true,
+            adds_to_skillbar: true,
+            formation_id: Some("diamond".to_string()),
+            requirement_type: None,
+            requirement_min_tier0_share: None,
+            requirement_active_formation: None,
+            requirement_map_tag: None,
+            requirement_trait: None,
+            requirement_band_stat: None,
+            requirement_band_at_least: None,
+            requirement_band_at_most: None,
+        };
+        let pool = vec![formation_upgrade];
+        let mut rng = UpgradeRngState {
+            state: 0x00AB_CDEF_1234_5678,
+        };
+
+        let minor_picks = roll_upgrade_options(
+            &pool,
+            &mut rng,
+            1,
+            super::UpgradeRewardKind::Minor,
+            0.0,
+            &OneTimeUpgradeTracker::default(),
+            &FormationSkillBar::default(),
+        );
+        assert!(minor_picks.is_empty());
+
+        let major_picks = roll_upgrade_options(
+            &pool,
+            &mut rng,
+            1,
+            super::UpgradeRewardKind::Major,
+            0.0,
+            &OneTimeUpgradeTracker::default(),
+            &FormationSkillBar::default(),
+        );
+        assert_eq!(major_picks.len(), 1);
+        assert_eq!(major_picks[0].kind, "unlock_formation");
     }
 
     #[test]
@@ -1779,6 +2298,10 @@ mod tests {
             requirement_min_tier0_share: None,
             requirement_active_formation: None,
             requirement_map_tag: None,
+            requirement_trait: None,
+            requirement_band_stat: None,
+            requirement_band_at_least: None,
+            requirement_band_at_most: None,
         };
 
         super::apply_upgrade(
@@ -1814,6 +2337,10 @@ mod tests {
             requirement_min_tier0_share: None,
             requirement_active_formation: None,
             requirement_map_tag: None,
+            requirement_trait: None,
+            requirement_band_stat: None,
+            requirement_band_at_least: None,
+            requirement_band_at_most: None,
         };
         super::apply_upgrade(
             &upgrade,
@@ -1868,6 +2395,32 @@ mod tests {
             &mut skillbar,
         );
         assert!((upgrade_rarity.percent - 0.09).abs() < 0.001);
+    }
+
+    #[test]
+    fn luck_upgrade_distributes_into_crit_and_rarity_systems() {
+        let mut buffs = GlobalBuffs::default();
+        let mut conditional = super::ConditionalUpgradeOwnership::default();
+        let mut skillbar = FormationSkillBar::default();
+        let (mut item_rarity, mut upgrade_rarity, mut skill_timing) = empty_upgrade_bonus_state();
+
+        let mut luck = upgrade("luck", "luck_up");
+        luck.value = 0.10;
+        super::apply_upgrade(
+            &luck,
+            &mut buffs,
+            &mut item_rarity,
+            &mut upgrade_rarity,
+            &mut skill_timing,
+            &mut conditional,
+            &mut skillbar,
+        );
+
+        assert!((buffs.luck_bonus - 0.10).abs() < 0.001);
+        assert!((buffs.crit_chance_bonus - 0.05).abs() < 0.001);
+        assert!((buffs.crit_damage_multiplier - 1.4).abs() < 0.001);
+        assert!((item_rarity.percent - 0.10).abs() < 0.001);
+        assert!((upgrade_rarity.percent - 0.10).abs() < 0.001);
     }
 
     #[test]
@@ -1996,6 +2549,30 @@ mod tests {
     }
 
     #[test]
+    fn reward_queue_order_is_deterministic_for_minor_then_major_levels() {
+        let mut queue = std::collections::VecDeque::new();
+        let queued = super::enqueue_reward_kinds(&mut queue, 98, 2);
+        assert_eq!(queued, 2);
+        assert_eq!(queue.pop_front(), Some(super::UpgradeRewardKind::Minor));
+        assert_eq!(queue.pop_front(), Some(super::UpgradeRewardKind::Major));
+        assert!(queue.is_empty());
+    }
+
+    #[test]
+    fn reward_queue_respects_level_cap_when_enqueuing() {
+        let mut queue = std::collections::VecDeque::new();
+        let queued = super::enqueue_reward_kinds(&mut queue, 99, 3);
+        assert_eq!(queued, 1);
+        assert_eq!(queue.pop_front(), Some(super::UpgradeRewardKind::Major));
+        assert!(queue.is_empty());
+
+        let mut capped_queue = std::collections::VecDeque::new();
+        let queued_at_cap = super::enqueue_reward_kinds(&mut capped_queue, 100, 2);
+        assert_eq!(queued_at_cap, 0);
+        assert!(capped_queue.is_empty());
+    }
+
+    #[test]
     fn commander_level_hp_bonus_increases_linearly() {
         assert_eq!(commander_level_hp_bonus(1), 0.0);
         assert_eq!(commander_level_hp_bonus(6), 5.0);
@@ -2016,8 +2593,11 @@ mod tests {
     #[test]
     fn requirement_evaluator_handles_tier0_and_formation_conditions() {
         let tier_gate = super::UpgradeRequirement::Tier0Share { min_share: 0.75 };
-        let (tier_inactive, tier_reason) =
-            super::evaluate_upgrade_requirement(&tier_gate, 0.4, ActiveFormation::Square);
+        let (tier_inactive, tier_reason) = super::evaluate_upgrade_requirement(
+            &tier_gate,
+            &requirement_eval_context_with_tier0_share(0.4),
+            ActiveFormation::Square,
+        );
         assert!(!tier_inactive);
         assert!(
             tier_reason
@@ -2026,20 +2606,81 @@ mod tests {
                 .contains("tier-0 share")
         );
 
-        let (tier_active, tier_reason_active) =
-            super::evaluate_upgrade_requirement(&tier_gate, 0.9, ActiveFormation::Square);
+        let (tier_active, tier_reason_active) = super::evaluate_upgrade_requirement(
+            &tier_gate,
+            &requirement_eval_context_with_tier0_share(0.9),
+            ActiveFormation::Square,
+        );
         assert!(tier_active);
         assert!(tier_reason_active.is_none());
 
         let formation_gate = super::UpgradeRequirement::FormationActive {
             formation: ActiveFormation::Diamond,
         };
-        let (formation_inactive, _) =
-            super::evaluate_upgrade_requirement(&formation_gate, 1.0, ActiveFormation::Square);
+        let eval_context = requirement_eval_context_with_tier0_share(1.0);
+        let (formation_inactive, _) = super::evaluate_upgrade_requirement(
+            &formation_gate,
+            &eval_context,
+            ActiveFormation::Square,
+        );
         assert!(!formation_inactive);
-        let (formation_active, _) =
-            super::evaluate_upgrade_requirement(&formation_gate, 1.0, ActiveFormation::Diamond);
+        let (formation_active, _) = super::evaluate_upgrade_requirement(
+            &formation_gate,
+            &eval_context,
+            ActiveFormation::Diamond,
+        );
         assert!(formation_active);
+    }
+
+    #[test]
+    fn requirement_evaluator_handles_trait_and_band_conditions() {
+        let has_shielded = super::UpgradeRequirement::HasTrait {
+            trait_tag: super::RequirementTraitTag::Shielded,
+            min_count: 1,
+        };
+        let mut trait_context = super::RequirementEvalContext {
+            shielded_count: 0,
+            ..Default::default()
+        };
+        let (inactive, reason) = super::evaluate_upgrade_requirement(
+            &has_shielded,
+            &trait_context,
+            ActiveFormation::Square,
+        );
+        assert!(!inactive);
+        assert!(reason.as_deref().unwrap_or_default().contains("Shielded"));
+
+        trait_context.shielded_count = 2;
+        let (active, active_reason) = super::evaluate_upgrade_requirement(
+            &has_shielded,
+            &trait_context,
+            ActiveFormation::Square,
+        );
+        assert!(active);
+        assert!(active_reason.is_none());
+
+        let band_gate = super::UpgradeRequirement::BandAtLeast {
+            stat: super::RequirementBandStat::FrontlineShare,
+            band: super::RequirementBand::Moderate,
+        };
+        let mut band_context = super::RequirementEvalContext {
+            frontline_share: 0.12,
+            ..Default::default()
+        };
+        let (band_inactive, band_reason) =
+            super::evaluate_upgrade_requirement(&band_gate, &band_context, ActiveFormation::Square);
+        assert!(!band_inactive);
+        assert!(
+            band_reason
+                .as_deref()
+                .unwrap_or_default()
+                .contains("Frontline")
+        );
+
+        band_context.frontline_share = 0.34;
+        let (band_active, _) =
+            super::evaluate_upgrade_requirement(&band_gate, &band_context, ActiveFormation::Square);
+        assert!(band_active);
     }
 
     #[test]
@@ -2058,15 +2699,21 @@ mod tests {
                 stacks: 2,
             },
         ];
-        let (active_effects, active_status) =
-            super::conditional_effects_from_owned(&entries, 1.0, ActiveFormation::Square);
+        let (active_effects, active_status) = super::conditional_effects_from_owned(
+            &entries,
+            &requirement_eval_context_with_tier0_share(1.0),
+            ActiveFormation::Square,
+        );
         assert!((active_effects.friendly_morale_loss_multiplier - 0.75).abs() < 0.001);
         assert!((active_effects.friendly_damage_multiplier - 1.18).abs() < 0.001);
         assert_eq!(active_status.len(), 2);
         assert!(active_status.iter().all(|entry| entry.active));
 
-        let (inactive_effects, inactive_status) =
-            super::conditional_effects_from_owned(&entries, 0.2, ActiveFormation::Square);
+        let (inactive_effects, inactive_status) = super::conditional_effects_from_owned(
+            &entries,
+            &requirement_eval_context_with_tier0_share(0.2),
+            ActiveFormation::Square,
+        );
         assert!((inactive_effects.friendly_morale_loss_multiplier - 1.0).abs() < 0.001);
         assert!((inactive_effects.friendly_damage_multiplier - 1.0).abs() < 0.001);
         assert!(inactive_status.iter().all(|entry| !entry.active));
@@ -2081,14 +2728,20 @@ mod tests {
             stacks: 1,
         }];
 
-        let (active_effects, active_status) =
-            super::conditional_effects_from_owned(&entries, 1.0, ActiveFormation::Square);
+        let (active_effects, active_status) = super::conditional_effects_from_owned(
+            &entries,
+            &requirement_eval_context_with_tier0_share(1.0),
+            ActiveFormation::Square,
+        );
         assert!((active_effects.rescue_time_multiplier - 0.5).abs() < 0.001);
         assert_eq!(active_effects.execute_below_health_ratio, 0.0);
         assert!(active_status.iter().all(|entry| entry.active));
 
-        let (inactive_effects, inactive_status) =
-            super::conditional_effects_from_owned(&entries, 0.75, ActiveFormation::Square);
+        let (inactive_effects, inactive_status) = super::conditional_effects_from_owned(
+            &entries,
+            &requirement_eval_context_with_tier0_share(0.75),
+            ActiveFormation::Square,
+        );
         assert!((inactive_effects.rescue_time_multiplier - 1.0).abs() < 0.001);
         assert!(inactive_status.iter().all(|entry| !entry.active));
     }
@@ -2118,8 +2771,11 @@ mod tests {
             },
         ];
 
-        let (effects, status) =
-            super::conditional_effects_from_owned(&entries, 1.0, ActiveFormation::Square);
+        let (effects, status) = super::conditional_effects_from_owned(
+            &entries,
+            &requirement_eval_context_with_tier0_share(1.0),
+            ActiveFormation::Square,
+        );
         assert!((effects.friendly_morale_loss_multiplier - 0.75).abs() < 0.001);
         assert!((effects.friendly_damage_multiplier - 1.18).abs() < 0.001);
         assert!((effects.rescue_time_multiplier - 0.5).abs() < 0.001);
@@ -2138,6 +2794,12 @@ mod tests {
         assert_eq!(upgrade_card_icon(&damage_upgrade), UpgradeCardIcon::Damage);
         assert_eq!(upgrade_display_title(&damage_upgrade), "Sharpened Steel");
         assert!(upgrade_display_description(&damage_upgrade).contains("damage"));
+
+        let mut luck_upgrade = upgrade("luck", "luck_up");
+        luck_upgrade.value = 0.06;
+        assert_eq!(upgrade_card_icon(&luck_upgrade), UpgradeCardIcon::Luck);
+        assert_eq!(upgrade_display_title(&luck_upgrade), "Fortune's Favor");
+        assert!(upgrade_display_description(&luck_upgrade).contains("Luck"));
 
         let mut crit_chance_upgrade = upgrade("crit_chance", "crit_chance_up");
         crit_chance_upgrade.value = 0.03;
@@ -2191,6 +2853,10 @@ mod tests {
             requirement_min_tier0_share: None,
             requirement_active_formation: None,
             requirement_map_tag: None,
+            requirement_trait: None,
+            requirement_band_stat: None,
+            requirement_band_at_least: None,
+            requirement_band_at_most: None,
         };
         assert_eq!(
             upgrade_display_title(&unique_slots_upgrade),
@@ -2213,6 +2879,10 @@ mod tests {
             requirement_min_tier0_share: None,
             requirement_active_formation: None,
             requirement_map_tag: None,
+            requirement_trait: None,
+            requirement_band_stat: None,
+            requirement_band_at_least: None,
+            requirement_band_at_most: None,
         };
         assert_eq!(
             upgrade_card_icon(&formation_upgrade),

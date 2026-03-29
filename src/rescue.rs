@@ -48,37 +48,36 @@ struct RescueSpawnPity {
 }
 
 impl RescueSpawnPity {
-    fn drought_for(self, kind: RecruitUnitKind) -> u32 {
-        match kind.archetype() {
+    fn drought_for_archetype(self, archetype: RecruitArchetype) -> u32 {
+        match archetype {
             RecruitArchetype::Infantry => self.infantry_drought,
             RecruitArchetype::Archer => self.archer_drought,
             RecruitArchetype::Priest => self.priest_drought,
         }
     }
 
-    fn set_drought_for(&mut self, kind: RecruitUnitKind, value: u32) {
-        match kind.archetype() {
+    fn set_drought_for_archetype(&mut self, archetype: RecruitArchetype, value: u32) {
+        match archetype {
             RecruitArchetype::Infantry => self.infantry_drought = value,
             RecruitArchetype::Archer => self.archer_drought = value,
             RecruitArchetype::Priest => self.priest_drought = value,
         }
     }
 
-    fn note_spawn(
-        &mut self,
-        spawned: RecruitUnitKind,
-        config: &RescueConfig,
-        player_faction: PlayerFaction,
-    ) {
-        for kind in RecruitUnitKind::all_for_faction(player_faction) {
-            if !rescue_pool_contains_kind(config, kind) {
+    fn note_spawn(&mut self, spawned: RecruitArchetype, config: &RescueConfig) {
+        for archetype in [
+            RecruitArchetype::Infantry,
+            RecruitArchetype::Archer,
+            RecruitArchetype::Priest,
+        ] {
+            if !rescue_pool_contains_archetype(config, archetype) {
                 continue;
             }
-            if kind == spawned {
-                self.set_drought_for(kind, 0);
+            if archetype == spawned {
+                self.set_drought_for_archetype(archetype, 0);
             } else {
-                let next = self.drought_for(kind).saturating_add(1);
-                self.set_drought_for(kind, next);
+                let next = self.drought_for_archetype(archetype).saturating_add(1);
+                self.set_drought_for_archetype(archetype, next);
             }
         }
     }
@@ -131,7 +130,7 @@ fn spawn_rescuables_on_run_start(
             recruit_kind_for_sequence(seeded_sequence, &data.rescue, spawn_runtime.pity, faction);
         spawn_runtime
             .pity
-            .note_spawn(recruit_kind, &data.rescue, faction);
+            .note_spawn(recruit_kind.archetype(), &data.rescue);
         spawn_rescuable(
             &mut commands,
             rescue_spawn_position(&mut spawn_runtime.rng_state, bounds.as_deref().copied()),
@@ -172,7 +171,9 @@ fn spawn_rescuables_over_time(
     let spawn_position = rescue_spawn_position(&mut runtime.rng_state, bounds.as_deref().copied());
     let recruit_kind =
         recruit_kind_for_sequence(seeded_sequence, &data.rescue, runtime.pity, faction);
-    runtime.pity.note_spawn(recruit_kind, &data.rescue, faction);
+    runtime
+        .pity
+        .note_spawn(recruit_kind.archetype(), &data.rescue);
     spawn_rescuable(&mut commands, spawn_position, recruit_kind, &art);
     runtime.sequence = runtime.sequence.saturating_add(1);
 }
@@ -337,11 +338,9 @@ fn recruit_kind_for_sequence(
     let mut total_weight = 0u64;
     let mut weighted_entries = Vec::with_capacity(config.recruit_pool.len());
     for entry in &config.recruit_pool {
-        let kind = entry.as_recruit_unit_kind();
-        if kind.faction() != player_faction {
-            continue;
-        }
-        let drought = pity.drought_for(kind) as u64;
+        let archetype = entry.archetype();
+        let kind = RecruitUnitKind::from_faction_and_archetype(player_faction, archetype);
+        let drought = pity.drought_for_archetype(archetype) as u64;
         let weight = 1u64 + drought * RESCUE_PITY_WEIGHT_STEP as u64;
         total_weight = total_weight.saturating_add(weight);
         weighted_entries.push((kind, weight));
@@ -362,16 +361,16 @@ fn recruit_kind_for_sequence(
         .recruit_pool
         .iter()
         .rev()
-        .map(|value| value.as_recruit_unit_kind())
-        .find(|kind| kind.faction() == player_faction)
+        .map(|value| RecruitUnitKind::from_faction_and_archetype(player_faction, value.archetype()))
+        .next()
         .unwrap_or(fallback)
 }
 
-fn rescue_pool_contains_kind(config: &RescueConfig, kind: RecruitUnitKind) -> bool {
+fn rescue_pool_contains_archetype(config: &RescueConfig, archetype: RecruitArchetype) -> bool {
     config
         .recruit_pool
         .iter()
-        .any(|entry| entry.as_recruit_unit_kind() == kind)
+        .any(|entry| entry.archetype() == archetype)
 }
 
 fn rescue_spawn_position(rng_state: &mut u64, bounds: Option<MapBounds>) -> Vec2 {
@@ -477,7 +476,7 @@ mod tests {
 
     use crate::data::{RescueConfig, RescueRecruitKindConfig};
     use crate::map::MapBounds;
-    use crate::model::{PlayerFaction, RecruitUnitKind};
+    use crate::model::{PlayerFaction, RecruitArchetype, RecruitUnitKind};
     use crate::rescue::{
         RescueSpawnPity, advance_rescue_progress, any_friendly_in_rescue_radius,
         effective_rescue_duration, recruit_kind_for_sequence, rescue_max_active,
@@ -533,46 +532,48 @@ mod tests {
             rescue_radius: 10.0,
             rescue_duration_secs: 1.0,
             recruit_pool: vec![
-                RescueRecruitKindConfig::ChristianPeasantInfantry,
-                RescueRecruitKindConfig::ChristianPeasantArcher,
-                RescueRecruitKindConfig::ChristianPeasantPriest,
+                RescueRecruitKindConfig::PeasantInfantry,
+                RescueRecruitKindConfig::PeasantArcher,
+                RescueRecruitKindConfig::PeasantPriest,
             ],
         };
         let pity = RescueSpawnPity::default();
         for sequence in 0..64 {
             let kind = recruit_kind_for_sequence(sequence, &config, pity, PlayerFaction::Christian);
             assert!(
-                matches!(
-                    kind,
-                    RecruitUnitKind::ChristianPeasantInfantry
-                        | RecruitUnitKind::ChristianPeasantArcher
-                        | RecruitUnitKind::ChristianPeasantPriest
-                ),
+                kind.faction() == PlayerFaction::Christian
+                    && matches!(
+                        kind.archetype(),
+                        RecruitArchetype::Infantry
+                            | RecruitArchetype::Archer
+                            | RecruitArchetype::Priest
+                    ),
                 "kind {kind:?} should be in rescue pool"
             );
         }
     }
 
     #[test]
-    fn rescue_spawn_selector_filters_mixed_pool_by_player_faction() {
+    fn rescue_spawn_selector_resolves_to_player_faction_variants() {
         let config = RescueConfig {
             spawn_count: 3,
             rescue_radius: 10.0,
             rescue_duration_secs: 1.0,
             recruit_pool: vec![
-                RescueRecruitKindConfig::ChristianPeasantInfantry,
-                RescueRecruitKindConfig::ChristianPeasantArcher,
-                RescueRecruitKindConfig::ChristianPeasantPriest,
-                RescueRecruitKindConfig::MuslimPeasantInfantry,
-                RescueRecruitKindConfig::MuslimPeasantArcher,
-                RescueRecruitKindConfig::MuslimPeasantPriest,
+                RescueRecruitKindConfig::PeasantInfantry,
+                RescueRecruitKindConfig::PeasantArcher,
+                RescueRecruitKindConfig::PeasantPriest,
             ],
         };
         let pity = RescueSpawnPity::default();
         for sequence in 0..96 {
+            let christian_kind =
+                recruit_kind_for_sequence(sequence, &config, pity, PlayerFaction::Christian);
             let muslim_kind =
                 recruit_kind_for_sequence(sequence, &config, pity, PlayerFaction::Muslim);
+            assert_eq!(christian_kind.faction(), PlayerFaction::Christian);
             assert_eq!(muslim_kind.faction(), PlayerFaction::Muslim);
+            assert_eq!(christian_kind.unit_id(), muslim_kind.unit_id());
         }
     }
 
@@ -583,26 +584,18 @@ mod tests {
             rescue_radius: 10.0,
             rescue_duration_secs: 1.0,
             recruit_pool: vec![
-                RescueRecruitKindConfig::ChristianPeasantInfantry,
-                RescueRecruitKindConfig::ChristianPeasantArcher,
-                RescueRecruitKindConfig::ChristianPeasantPriest,
+                RescueRecruitKindConfig::PeasantInfantry,
+                RescueRecruitKindConfig::PeasantArcher,
+                RescueRecruitKindConfig::PeasantPriest,
             ],
         };
         let mut pity = RescueSpawnPity::default();
-        pity.note_spawn(
-            RecruitUnitKind::ChristianPeasantInfantry,
-            &config,
-            PlayerFaction::Christian,
-        );
+        pity.note_spawn(RecruitArchetype::Infantry, &config);
         assert_eq!(pity.infantry_drought, 0);
         assert_eq!(pity.archer_drought, 1);
         assert_eq!(pity.priest_drought, 1);
 
-        pity.note_spawn(
-            RecruitUnitKind::ChristianPeasantArcher,
-            &config,
-            PlayerFaction::Christian,
-        );
+        pity.note_spawn(RecruitArchetype::Archer, &config);
         assert_eq!(pity.infantry_drought, 1);
         assert_eq!(pity.archer_drought, 0);
         assert_eq!(pity.priest_drought, 2);
@@ -615,9 +608,9 @@ mod tests {
             rescue_radius: 10.0,
             rescue_duration_secs: 1.0,
             recruit_pool: vec![
-                RescueRecruitKindConfig::ChristianPeasantInfantry,
-                RescueRecruitKindConfig::ChristianPeasantArcher,
-                RescueRecruitKindConfig::ChristianPeasantPriest,
+                RescueRecruitKindConfig::PeasantInfantry,
+                RescueRecruitKindConfig::PeasantArcher,
+                RescueRecruitKindConfig::PeasantPriest,
             ],
         };
         let baseline = RescueSpawnPity::default();
@@ -629,8 +622,12 @@ mod tests {
         let mut baseline_archer = 0u32;
         let mut starved_archer_count = 0u32;
         for sequence in 0..240 {
+            let archer_kind = RecruitUnitKind::from_faction_and_archetype(
+                PlayerFaction::Christian,
+                RecruitArchetype::Archer,
+            );
             if recruit_kind_for_sequence(sequence, &config, baseline, PlayerFaction::Christian)
-                == RecruitUnitKind::ChristianPeasantArcher
+                == archer_kind
             {
                 baseline_archer = baseline_archer.saturating_add(1);
             }
@@ -639,7 +636,7 @@ mod tests {
                 &config,
                 starved_archer,
                 PlayerFaction::Christian,
-            ) == RecruitUnitKind::ChristianPeasantArcher
+            ) == archer_kind
             {
                 starved_archer_count = starved_archer_count.saturating_add(1);
             }

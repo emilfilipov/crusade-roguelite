@@ -12,7 +12,7 @@ use crate::map::MapBounds;
 use crate::model::{
     CommanderUnit, EnemySpawnLane, FriendlyUnit, GainGoldEvent, GainHearTheCallTokenEvent,
     GameState, GlobalBuffs, MatchSetupSelection, MoveSpeed, PlayerFaction, RunModalAction,
-    RunModalRequestEvent, RunModalScreen, SpawnGoldPackEvent, StartRunEvent,
+    RunModalRequestEvent, RunModalScreen, SpawnGoldPackEvent, StartRunEvent, Team, UnitDiedEvent,
 };
 use crate::upgrades::Progression;
 use crate::visuals::ArtAssets;
@@ -36,12 +36,13 @@ const HEAR_THE_CALL_CHEST_PICKUP_SIZE: f32 = 32.0;
 const HEAR_THE_CALL_CHEST_PICKUP_Z: f32 = 44.0;
 const HEAR_THE_CALL_PICKUP_DELAY_SECS: f32 = 0.9;
 const HEAR_THE_CALL_PICKUP_CHANNEL_SECS: f32 = 1.5;
-const HEAR_THE_CALL_SMALL_BASE_CHANCE_PERCENT: f32 = 0.8;
-const HEAR_THE_CALL_SMALL_CAP_CHANCE_PERCENT: f32 = 1.8;
-const HEAR_THE_CALL_MINOR_BASE_CHANCE_PERCENT: f32 = 1.6;
-const HEAR_THE_CALL_MINOR_CAP_CHANCE_PERCENT: f32 = 4.0;
-const HEAR_THE_CALL_MAJOR_BASE_CHANCE_PERCENT: f32 = 6.0;
-const HEAR_THE_CALL_MAJOR_CAP_CHANCE_PERCENT: f32 = 14.0;
+const HEAR_THE_CALL_SMALL_BASE_CHANCE_PERCENT: f32 = 0.006;
+const HEAR_THE_CALL_SMALL_CAP_CHANCE_PERCENT: f32 = 0.05;
+const HEAR_THE_CALL_MINOR_BASE_CHANCE_PERCENT: f32 = 0.015;
+const HEAR_THE_CALL_MINOR_CAP_CHANCE_PERCENT: f32 = 0.12;
+const HEAR_THE_CALL_MAJOR_BASE_CHANCE_PERCENT: f32 = 0.04;
+const HEAR_THE_CALL_MAJOR_CAP_CHANCE_PERCENT: f32 = 0.35;
+const HEAR_THE_CALL_MAX_ACTIVE_CHESTS: usize = 6;
 const EQUIPMENT_SMALL_BASE_CHANCE_PERCENT: f32 = 2.5;
 const EQUIPMENT_SMALL_CAP_CHANCE_PERCENT: f32 = 6.0;
 const EQUIPMENT_MINOR_BASE_CHANCE_PERCENT: f32 = 6.0;
@@ -50,6 +51,8 @@ const EQUIPMENT_MAJOR_BASE_CHANCE_PERCENT: f32 = 25.0;
 const EQUIPMENT_MAJOR_CAP_CHANCE_PERCENT: f32 = 55.0;
 const WAVE_RARITY_BONUS_PER_WAVE: f32 = 0.0035;
 const WAVE_RARITY_BONUS_CAP: f32 = 0.35;
+const LUCK_TO_DROP_CHANCE_MULTIPLIER: f32 = 0.75;
+const LUCK_TO_DROP_CAP_MULTIPLIER: f32 = 0.5;
 
 #[derive(Component, Clone, Copy, Debug)]
 pub struct GoldPack {
@@ -151,6 +154,7 @@ impl Plugin for DropsPlugin {
                     spawn_gold_packs_over_time,
                     spawn_gold_packs_from_events,
                     spawn_army_reward_chests_on_wave_completed,
+                    spawn_hear_the_call_chests_on_enemy_death,
                     update_wave_magnet_pickup,
                     update_wave_chest_drop,
                     spawn_major_army_reward_chests_on_defeat,
@@ -380,47 +384,95 @@ fn spawn_army_reward_chests_on_wave_completed(
     art: Res<ArtAssets>,
     bounds: Option<Res<MapBounds>>,
     commanders: Query<&Transform, With<CommanderUnit>>,
-    progression: Option<Res<Progression>>,
+    buffs: Option<Res<GlobalBuffs>>,
     mut equipment_runtime: ResMut<MajorArmyChestRuntime>,
-    mut hear_runtime: ResMut<HearTheCallDropRuntime>,
     mut wave_completed_events: EventReader<WaveCompletedEvent>,
 ) {
     if wave_completed_events.is_empty() {
         return;
     }
-    let stash_tokens = progression
+    let luck_bonus = buffs
         .as_deref()
-        .map(|value| value.hear_the_call_tokens)
-        .unwrap_or(0);
+        .map(|value| value.luck_bonus)
+        .unwrap_or(0.0);
     let map_bounds = bounds.as_deref().copied();
     let commander_center = commander_spawn_center(&commanders);
 
     for event in wave_completed_events.read() {
         let wave = event.wave_number.max(1);
-        maybe_roll_lane_rewards(
+        maybe_roll_lane_equipment_reward(
             &mut commands,
             &art,
             map_bounds,
             EnemySpawnLane::Small,
             wave,
+            luck_bonus,
             commander_center,
             &mut equipment_runtime.rng_state,
-            &mut hear_runtime.rng_state,
-            stash_tokens,
         );
         if wave.is_multiple_of(2) {
-            maybe_roll_lane_rewards(
+            maybe_roll_lane_equipment_reward(
                 &mut commands,
                 &art,
                 map_bounds,
                 EnemySpawnLane::Minor,
                 wave,
+                luck_bonus,
                 commander_center,
                 &mut equipment_runtime.rng_state,
-                &mut hear_runtime.rng_state,
-                stash_tokens,
             );
         }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spawn_hear_the_call_chests_on_enemy_death(
+    mut commands: Commands,
+    art: Res<ArtAssets>,
+    bounds: Option<Res<MapBounds>>,
+    waves: Option<Res<WaveRuntime>>,
+    progression: Option<Res<Progression>>,
+    buffs: Option<Res<GlobalBuffs>>,
+    mut hear_runtime: ResMut<HearTheCallDropRuntime>,
+    existing_hear_the_call_drops: Query<Entity, With<HearTheCallDrop>>,
+    mut death_events: EventReader<UnitDiedEvent>,
+) {
+    if death_events.is_empty() {
+        return;
+    }
+    let current_wave = current_wave_number(waves.as_deref());
+    let stash_tokens = progression
+        .as_deref()
+        .map(|value| value.hear_the_call_tokens)
+        .unwrap_or(0);
+    let luck_bonus = buffs
+        .as_deref()
+        .map(|value| value.luck_bonus)
+        .unwrap_or(0.0);
+    let map_bounds = bounds.as_deref().copied();
+    let mut active_drop_count = existing_hear_the_call_drops.iter().count();
+    for event in death_events.read() {
+        if event.team != Team::Enemy {
+            continue;
+        }
+        if active_drop_count >= HEAR_THE_CALL_MAX_ACTIVE_CHESTS {
+            break;
+        }
+        let Some(lane) = event.enemy_spawn_lane else {
+            continue;
+        };
+        let token_chance =
+            hear_the_call_drop_chance_percent(lane, current_wave, stash_tokens, luck_bonus);
+        if !roll_chance_percent(&mut hear_runtime.rng_state, token_chance) {
+            continue;
+        }
+        let token_position = chest_spawn_position(
+            &mut hear_runtime.rng_state,
+            map_bounds,
+            event.world_position,
+        );
+        spawn_hear_the_call_drop(&mut commands, &art, current_wave, token_position);
+        active_drop_count = active_drop_count.saturating_add(1);
     }
 }
 
@@ -428,19 +480,18 @@ fn spawn_army_reward_chests_on_wave_completed(
 fn spawn_major_army_reward_chests_on_defeat(
     mut commands: Commands,
     art: Res<ArtAssets>,
-    progression: Option<Res<Progression>>,
     bounds: Option<Res<MapBounds>>,
+    buffs: Option<Res<GlobalBuffs>>,
     mut equipment_runtime: ResMut<MajorArmyChestRuntime>,
-    mut hear_runtime: ResMut<HearTheCallDropRuntime>,
     mut defeated_events: EventReader<MajorArmyDefeatedEvent>,
 ) {
     if defeated_events.is_empty() {
         return;
     }
-    let stash_tokens = progression
+    let luck_bonus = buffs
         .as_deref()
-        .map(|value| value.hear_the_call_tokens)
-        .unwrap_or(0);
+        .map(|value| value.luck_bonus)
+        .unwrap_or(0.0);
     let map_bounds = bounds.as_deref().copied();
     for event in defeated_events.read() {
         if !should_grant_major_boss_chests(&mut equipment_runtime.granted_waves, event.wave_number)
@@ -448,7 +499,8 @@ fn spawn_major_army_reward_chests_on_defeat(
             continue;
         }
         let wave = event.wave_number.max(1);
-        let equipment_chance = equipment_drop_chance_percent(EnemySpawnLane::Major, wave);
+        let equipment_chance =
+            equipment_drop_chance_percent(EnemySpawnLane::Major, wave, luck_bonus);
         if roll_chance_percent(&mut equipment_runtime.rng_state, equipment_chance) {
             let positions = major_army_chest_positions(
                 event.position,
@@ -457,14 +509,6 @@ fn spawn_major_army_reward_chests_on_defeat(
             );
             spawn_equipment_chest(&mut commands, &art, wave, positions[0]);
             spawn_equipment_chest(&mut commands, &art, wave, positions[1]);
-        }
-
-        let token_chance =
-            hear_the_call_drop_chance_percent(EnemySpawnLane::Major, wave, stash_tokens);
-        if roll_chance_percent(&mut hear_runtime.rng_state, token_chance) {
-            let token_position =
-                chest_spawn_position(&mut hear_runtime.rng_state, map_bounds, event.position);
-            spawn_hear_the_call_drop(&mut commands, &art, wave, token_position);
         }
     }
 }
@@ -825,12 +869,16 @@ fn hear_the_call_drop_chance_percent(
     lane: EnemySpawnLane,
     wave_number: u32,
     stash_tokens: u32,
+    luck_bonus: f32,
 ) -> f32 {
     let (base_percent, cap_percent) = hear_the_call_base_and_cap_chance_percent(lane);
     let wave_progress = wave_number.saturating_sub(1).min(99) as f32 / 99.0;
     let scaled = base_percent + (cap_percent - base_percent) * wave_progress;
     let damped = scaled * hear_the_call_stash_damping_multiplier(stash_tokens);
-    damped.clamp(0.0, cap_percent)
+    let luck_multiplier = 1.0 + luck_bonus.max(0.0) * LUCK_TO_DROP_CHANCE_MULTIPLIER;
+    let dynamic_cap =
+        (cap_percent * (1.0 + luck_bonus.max(0.0) * LUCK_TO_DROP_CAP_MULTIPLIER)).clamp(0.0, 100.0);
+    (damped * luck_multiplier).clamp(0.0, dynamic_cap)
 }
 
 fn equipment_base_and_cap_chance_percent(lane: EnemySpawnLane) -> (f32, f32) {
@@ -850,11 +898,14 @@ fn equipment_base_and_cap_chance_percent(lane: EnemySpawnLane) -> (f32, f32) {
     }
 }
 
-fn equipment_drop_chance_percent(lane: EnemySpawnLane, wave_number: u32) -> f32 {
+fn equipment_drop_chance_percent(lane: EnemySpawnLane, wave_number: u32, luck_bonus: f32) -> f32 {
     let (base_percent, cap_percent) = equipment_base_and_cap_chance_percent(lane);
     let wave_progress = wave_number.saturating_sub(1).min(99) as f32 / 99.0;
     let scaled = base_percent + (cap_percent - base_percent) * wave_progress;
-    scaled.clamp(0.0, cap_percent)
+    let luck_multiplier = 1.0 + luck_bonus.max(0.0) * LUCK_TO_DROP_CHANCE_MULTIPLIER;
+    let dynamic_cap =
+        (cap_percent * (1.0 + luck_bonus.max(0.0) * LUCK_TO_DROP_CAP_MULTIPLIER)).clamp(0.0, 100.0);
+    (scaled * luck_multiplier).clamp(0.0, dynamic_cap)
 }
 
 fn roll_chance_percent(rng_state: &mut u64, chance_percent: f32) -> bool {
@@ -864,26 +915,20 @@ fn roll_chance_percent(rng_state: &mut u64, chance_percent: f32) -> bool {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn maybe_roll_lane_rewards(
+fn maybe_roll_lane_equipment_reward(
     commands: &mut Commands,
     art: &ArtAssets,
     map_bounds: Option<MapBounds>,
     lane: EnemySpawnLane,
     wave: u32,
+    luck_bonus: f32,
     center: Vec2,
     equipment_rng_state: &mut u64,
-    hear_rng_state: &mut u64,
-    stash_tokens: u32,
 ) {
-    let equipment_chance = equipment_drop_chance_percent(lane, wave);
+    let equipment_chance = equipment_drop_chance_percent(lane, wave, luck_bonus);
     if roll_chance_percent(equipment_rng_state, equipment_chance) {
         let equipment_position = chest_spawn_position(equipment_rng_state, map_bounds, center);
         spawn_equipment_chest(commands, art, wave, equipment_position);
-    }
-    let hear_chance = hear_the_call_drop_chance_percent(lane, wave, stash_tokens);
-    if roll_chance_percent(hear_rng_state, hear_chance) {
-        let hear_position = chest_spawn_position(hear_rng_state, map_bounds, center);
-        spawn_hear_the_call_drop(commands, art, wave, hear_position);
     }
 }
 
@@ -1356,28 +1401,35 @@ mod tests {
 
     #[test]
     fn hear_the_call_drop_chance_scales_by_lane_wave_and_stash() {
-        let small_early = hear_the_call_drop_chance_percent(EnemySpawnLane::Small, 1, 0);
-        let small_late = hear_the_call_drop_chance_percent(EnemySpawnLane::Small, 100, 0);
-        let minor_late = hear_the_call_drop_chance_percent(EnemySpawnLane::Minor, 100, 0);
-        let major_late = hear_the_call_drop_chance_percent(EnemySpawnLane::Major, 100, 0);
-        let major_late_damped = hear_the_call_drop_chance_percent(EnemySpawnLane::Major, 100, 6);
+        let small_early = hear_the_call_drop_chance_percent(EnemySpawnLane::Small, 1, 0, 0.0);
+        let small_late = hear_the_call_drop_chance_percent(EnemySpawnLane::Small, 100, 0, 0.0);
+        let minor_late = hear_the_call_drop_chance_percent(EnemySpawnLane::Minor, 100, 0, 0.0);
+        let major_late = hear_the_call_drop_chance_percent(EnemySpawnLane::Major, 100, 0, 0.0);
+        let major_late_damped =
+            hear_the_call_drop_chance_percent(EnemySpawnLane::Major, 100, 6, 0.0);
+        let major_late_lucky =
+            hear_the_call_drop_chance_percent(EnemySpawnLane::Major, 100, 0, 0.5);
 
         assert!(small_late > small_early);
         assert!(minor_late > small_late);
         assert!(major_late > minor_late);
         assert!(major_late_damped < major_late);
+        assert!(major_late_lucky > major_late);
     }
 
     #[test]
     fn equipment_drop_chance_scales_by_lane_and_wave() {
-        let small_early = super::equipment_drop_chance_percent(EnemySpawnLane::Small, 1);
-        let small_late = super::equipment_drop_chance_percent(EnemySpawnLane::Small, 100);
-        let minor_late = super::equipment_drop_chance_percent(EnemySpawnLane::Minor, 100);
-        let major_late = super::equipment_drop_chance_percent(EnemySpawnLane::Major, 100);
+        let small_early = super::equipment_drop_chance_percent(EnemySpawnLane::Small, 1, 0.0);
+        let small_late = super::equipment_drop_chance_percent(EnemySpawnLane::Small, 100, 0.0);
+        let minor_late = super::equipment_drop_chance_percent(EnemySpawnLane::Minor, 100, 0.0);
+        let major_late = super::equipment_drop_chance_percent(EnemySpawnLane::Major, 100, 0.0);
+        let major_late_lucky =
+            super::equipment_drop_chance_percent(EnemySpawnLane::Major, 100, 0.5);
 
         assert!(small_late > small_early);
         assert!(minor_late > small_late);
         assert!(major_late > minor_late);
+        assert!(major_late_lucky > major_late);
     }
 
     #[test]

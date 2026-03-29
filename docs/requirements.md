@@ -9,7 +9,7 @@ UI element art is intentionally excluded for now (basic programmatic shapes are 
 - One commander at run start, selected by faction (`Baldiun` or `Saladin`).
 - Six recruitable soldier variants across two factions (`Peasant Infantry`, `Peasant Archer`, `Peasant Priest` per faction).
 - Three enemy archetypes (infantry, archer, priest) mirrored across factions.
-- Two formations in active use (`Square`, `Diamond`).
+- Formation roster in active use: `Square`, `Circle`, `Skean`, `Diamond`, `Shield Wall`, `Loose`.
 - One map biome (desert).
 - Oasis POI assets are optional/deferred until oasis gameplay is re-enabled.
 - Banner drop/recovery and rescue recruitment are included.
@@ -17,9 +17,86 @@ UI element art is intentionally excluded for now (basic programmatic shapes are 
 ## Runtime Identity Requirements (Refactor Baseline)
 - Runtime-facing identity should be generic-first:
   - units resolve to shared `unit_id` values (for example `peasant_infantry`) with faction context carried separately,
-  - hero/item identity follows the same pattern (`id + faction override context`) instead of duplicating definitions per faction.
+  - heroes/items follow the same pattern (`id + faction override context`) instead of duplicating definitions per faction.
+- Canonical identity payloads are:
+  - `UnitRef { faction_id, unit_id, rescuable }`,
+  - `HeroRef { faction_id, hero_id }`,
+  - `ItemRef { faction_id, item_id }`.
+- Content ownership must be split into base catalogs + faction overrides:
+  - base owns default stats/abilities/visuals and generic progression metadata,
+  - faction overrides own presentation/stats/ability tweaks, promotion exclusions, hero pools, item drop-table tuning, and icon swaps.
+- Merge/fallback contract:
+  - unresolved override fields fall back to base values,
+  - unresolved override IDs or unknown faction keys fail fast during config load.
 - Faction differentiation should default to data overrides (display, stats, abilities, visuals, drops), not hardcoded branch-specific names in UI/runtime labels.
 - Item catalogs must allow faction-scoped entries with the same base `item_id` to support override-style authoring.
+- Legacy faction-duplicated schema keys are not part of the supported runtime contract after cutover.
+
+## Counter Role Contract (Gameplay Baseline)
+- Unit counter logic must be tag-driven and faction-agnostic.
+- Canonical role tags:
+  - `frontline`
+  - `anti_cavalry`
+  - `cavalry`
+  - `anti_armor`
+  - `skirmisher`
+  - `support`
+  - `hero_doctrine`
+- Canonical armor classes:
+  - `unarmored`
+  - `light`
+  - `armored`
+  - `heavy`
+- Counter modifiers must be bounded (explicit clamp) and deterministic.
+- Runtime must not depend on faction-name branch logic for matchup effects; it should resolve through shared unit IDs and tag/armor metadata.
+
+## Formation Lane Policy Contract
+- Formation slot assignment must use three canonical lanes:
+  - `outer`
+  - `middle`
+  - `inner`
+- Lane assignment rules must be tag/trait-driven and faction-agnostic.
+- Default lane intent:
+  - `frontline`, `anti_cavalry`, and `shielded` lines prefer `outer -> middle -> inner`,
+  - `support` lines prefer `inner -> middle -> outer`,
+  - ranged anti-armor lines prefer `middle -> inner -> outer`,
+  - `cavalry` and `skirmisher` lines prefer:
+    - `middle -> outer -> inner` in `Square`,
+    - `outer -> middle -> inner` in `Diamond`.
+- Resolver must enforce deterministic tie-breaking under equal priority.
+- Resolver must apply lane quotas and prevent support over-crowding in `outer` when middle/inner slots are available.
+
+## Formation Roster Contract
+- `Square` is the baseline/default formation.
+- `Circle`:
+  - defensive shell profile (higher defense, lower mobility/offense),
+  - no anti-entry lock.
+- `Skean`:
+  - charge profile (higher move speed and moving offense),
+  - persistent defense penalty.
+- `Diamond` (rework):
+  - high-mobility moving-melee pressure profile,
+  - hard anti-entry (`0` enemies allowed inside footprint).
+- `Shield Wall`:
+  - low mobility, high defense profile,
+  - hard anti-entry (`0` enemies allowed inside footprint),
+  - `Shielded` units gain block bonus,
+  - reflects a fixed share of post-mitigation melee-hit damage back to the attacker.
+- `Loose`:
+  - expanded spacing profile,
+  - unlimited enemies may occupy interior footprint (no inside-cap repel).
+- Reflect semantics:
+  - reflected amount derives from post-armor/post-block incoming damage,
+  - source-hit critical impact is preserved in reflected amount,
+  - reflected packet itself cannot crit.
+
+## Upgrade Audit Contract (`CRU-260`)
+- Every active upgrade in `assets/data/upgrades.json` must have an explicit disposition (`keep`, `merge/rework`, `deprecate`) tracked in `docs/SYSTEMS_REFERENCE.md`.
+- Duplicate variant IDs are allowed only as temporary migration state; permanent roster should converge to consolidated schema-driven families.
+- Any deprecated upgrade ID must have:
+  - a blocking validator in the data loader/runtime path,
+  - a mapped replacement path documented in tasks/docs before removal.
+- Follow-up refactor/balance tickets must exist for each merge/rework/deprecation cluster before schema cutover.
 
 ## Global Art Specs
 - Format: `PNG` with transparency for sprites/decals, `PNG` tiles for terrain.
@@ -150,7 +227,7 @@ UI element art is intentionally excluded for now (basic programmatic shapes are 
 - Additional enemy families beyond current infantry/archer/priest (for example cavalry/elites).
 - Additional recruit classes beyond current peasant infantry/archer/priest (for example spearman, engineer).
 - Additional map biomes.
-- Formation-specific art variants beyond current square/diamond gameplay.
+- Formation-specific art variants beyond current six-formation gameplay set.
 
 ## Expansion Hooks (Post-MVP)
 - Add per-faction material swaps for units.

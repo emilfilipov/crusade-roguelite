@@ -1,78 +1,88 @@
 {
-  "enemy_christian_peasant_infantry": {
-    "id": "enemy_christian_peasant_infantry",
-    "max_hp": 40.0,
-    "armor": 1.3,
-    "damage": 5.2,
-    "attack_cooldown_secs": 1.3,
-    "attack_range": 30.0,
-    "move_speed": 118.0,
-    "morale": 90.0,
-    "collision_radius": 18.0
+  "base": {
+    "profiles": {
+      "peasant_infantry": {
+        "id": "enemy_christian_peasant_infantry",
+        "max_hp": 40.0,
+        "armor": 1.3,
+        "damage": 5.2,
+        "attack_cooldown_secs": 1.3,
+        "attack_range": 30.0,
+        "move_speed": 118.0,
+        "morale": 90.0,
+        "collision_radius": 18.0
+      },
+      "peasant_archer": {
+        "id": "enemy_christian_peasant_archer",
+        "max_hp": 31.0,
+        "armor": 0.9,
+        "damage": 3.8,
+        "attack_cooldown_secs": 1.35,
+        "attack_range": 30.0,
+        "ranged_attack_damage": 12.6,
+        "ranged_attack_cooldown_secs": 1.25,
+        "ranged_attack_range": 430.0,
+        "ranged_projectile_speed": 290.0,
+        "ranged_projectile_max_distance": 520.0,
+        "move_speed": 120.0,
+        "morale": 88.0,
+        "collision_radius": 18.0
+      },
+      "peasant_priest": {
+        "id": "enemy_christian_peasant_priest",
+        "max_hp": 37.0,
+        "armor": 0.5,
+        "damage": 0.0,
+        "attack_cooldown_secs": 1.3,
+        "attack_range": 30.0,
+        "move_speed": 116.0,
+        "morale": 96.0,
+        "collision_radius": 18.0
+      }
+    }
   },
-  "enemy_christian_peasant_archer": {
-    "id": "enemy_christian_peasant_archer",
-    "max_hp": 31.0,
-    "armor": 0.9,
-    "damage": 3.8,
-    "attack_cooldown_secs": 1.35,
-    "attack_range": 30.0,
-    "ranged_attack_damage": 12.6,
-    "ranged_attack_cooldown_secs": 1.25,
-    "ranged_attack_range": 430.0,
-    "ranged_projectile_speed": 290.0,
-    "ranged_projectile_max_distance": 520.0,
-    "move_speed": 120.0,
-    "morale": 88.0,
-    "collision_radius": 18.0
-  },
-  "enemy_christian_peasant_priest": {
-    "id": "enemy_christian_peasant_priest",
-    "max_hp": 37.0,
-    "armor": 0.5,
-    "damage": 0.0,
-    "attack_cooldown_secs": 1.3,
-    "attack_range": 30.0,
-    "move_speed": 116.0,
-    "morale": 96.0,
-    "collision_radius": 18.0
-  },
-  "enemy_muslim_peasant_infantry": {
-    "id": "enemy_muslim_peasant_infantry",
-    "max_hp": 40.0,
-    "armor": 1.3,
-    "damage": 5.2,
-    "attack_cooldown_secs": 1.3,
-    "attack_range": 30.0,
-    "move_speed": 118.0,
-    "morale": 90.0,
-    "collision_radius": 18.0
-  },
-  "enemy_muslim_peasant_archer": {
-    "id": "enemy_muslim_peasant_archer",
-    "max_hp": 31.0,
-    "armor": 0.9,
-    "damage": 3.8,
-    "attack_cooldown_secs": 1.35,
-    "attack_range": 30.0,
-    "ranged_attack_damage": 12.6,
-    "ranged_attack_cooldown_secs": 1.25,
-    "ranged_attack_range": 430.0,
-    "ranged_projectile_speed": 290.0,
-    "ranged_projectile_max_distance": 520.0,
-    "move_speed": 120.0,
-    "morale": 88.0,
-    "collision_radius": 18.0
-  },
-  "enemy_muslim_peasant_priest": {
-    "id": "enemy_muslim_peasant_priest",
-    "max_hp": 37.0,
-    "armor": 0.5,
-    "damage": 0.0,
-    "attack_cooldown_secs": 1.3,
-    "attack_range": 30.0,
-    "move_speed": 116.0,
-    "morale": 96.0,
-    "collision_radius": 18.0
+  "overrides": {
+    "muslim": {
+      "profiles": {
+        "peasant_infantry": {
+          "id": "enemy_muslim_peasant_infantry",
+          "max_hp": 40.0,
+          "armor": 1.3,
+          "damage": 5.2,
+          "attack_cooldown_secs": 1.3,
+          "attack_range": 30.0,
+          "move_speed": 118.0,
+          "morale": 90.0,
+          "collision_radius": 18.0
+        },
+        "peasant_archer": {
+          "id": "enemy_muslim_peasant_archer",
+          "max_hp": 31.0,
+          "armor": 0.9,
+          "damage": 3.8,
+          "attack_cooldown_secs": 1.35,
+          "attack_range": 30.0,
+          "ranged_attack_damage": 12.6,
+          "ranged_attack_cooldown_secs": 1.25,
+          "ranged_attack_range": 430.0,
+          "ranged_projectile_speed": 290.0,
+          "ranged_projectile_max_distance": 520.0,
+          "move_speed": 120.0,
+          "morale": 88.0,
+          "collision_radius": 18.0
+        },
+        "peasant_priest": {
+          "id": "enemy_muslim_peasant_priest",
+          "max_hp": 37.0,
+          "armor": 0.5,
+          "damage": 0.0,
+          "attack_cooldown_secs": 1.3,
+          "attack_range": 30.0,
+          "move_speed": 116.0,
+          "morale": 96.0,
+          "collision_radius": 18.0
+        }
+      }
+    }
   }
 }

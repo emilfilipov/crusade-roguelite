@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use crate::banner::BannerState;
-use crate::combat::{compute_damage, should_execute_target};
+use crate::combat::{compute_damage, role_counter_damage_multiplier, should_execute_target};
 use crate::data::GameData;
 use crate::inventory::{
     EquipmentArmyEffects, InventoryState, gear_bonuses_for_unit_with_banner_state,
@@ -11,6 +11,7 @@ use crate::model::{
     Unit,
 };
 use crate::squad::ArmorLockedZero;
+use crate::squad::{HeroRecruitSubtype, hero_subtype_matchup_multiplier};
 use crate::upgrades::ConditionalUpgradeEffects;
 
 #[derive(Component, Clone, Copy, Debug)]
@@ -20,6 +21,8 @@ pub struct Projectile {
     pub remaining_distance: f32,
     pub radius: f32,
     pub source_team: Team,
+    pub source_kind: crate::model::UnitKind,
+    pub source_hero_subtype: Option<HeroRecruitSubtype>,
     pub is_critical: bool,
 }
 
@@ -192,7 +195,17 @@ fn projectile_collisions(
                 let damage = if execute {
                     target_health.current + 1.0
                 } else {
-                    compute_damage(projectile.damage, effective_armor, 1.0)
+                    let counter_multiplier =
+                        role_counter_damage_multiplier(projectile.source_kind, target_unit.kind);
+                    let hero_matchup_multiplier = projectile
+                        .source_hero_subtype
+                        .map(|subtype| hero_subtype_matchup_multiplier(subtype, target_unit.kind))
+                        .unwrap_or(1.0);
+                    compute_damage(
+                        projectile.damage * counter_multiplier * hero_matchup_multiplier,
+                        effective_armor,
+                        1.0,
+                    )
                 };
                 damage_events.send(DamageEvent {
                     target: target_entity,
@@ -265,6 +278,8 @@ mod tests {
             remaining_distance: 50.0,
             radius: 4.0,
             source_team: crate::model::Team::Friendly,
+            source_kind: crate::model::UnitKind::ChristianPeasantArcher,
+            source_hero_subtype: None,
             is_critical: false,
         };
         let mut transform = Transform::from_xyz(0.0, 0.0, 0.0);

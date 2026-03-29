@@ -85,3 +85,5 @@ Track external art sources, licenses, and current runtime mapping.
 - Update this file in the same commit as runtime asset mapping changes.
 - Item/drop presentation now resolves through data in `assets/data/items.json` (icon keys + optional faction-specific entries) on top of the runtime icon handles listed above.
 - Enemy wave tier/role composition now resolves through `assets/data/enemy_tier_pools.json` (data-driven tier buckets instead of hardcoded pools).
+- Counter-matrix role/armor tags are metadata/runtime logic only and currently introduce no new art-asset requirements.
+- Hero subtype specialization + strengths/weaknesses tooltip clarity are text/metadata updates and currently introduce no additional asset requirements.

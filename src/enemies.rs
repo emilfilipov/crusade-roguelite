@@ -7,7 +7,11 @@ use crate::ai::{
 };
 use crate::combat::{RangedAttackCooldown, RangedAttackProfile};
 use crate::data::{DifficultyGameplayConfig, EnemyTierPoolsConfigFile, GameData, WavesConfigFile};
-use crate::formation::{ActiveFormation, active_formation_config, formation_contains_position};
+use crate::formation::{
+    ActiveFormation, active_formation_config, formation_allows_unlimited_enemy_inside,
+    formation_anti_entry_enabled, formation_contains_position, formation_half_extent,
+    formation_shape_perimeter_target,
+};
 use crate::inventory::{
     UnitCombatRole, UnitEquipmentBonuses, aggregate_item_bonuses_for_role,
     roll_chest_items_from_seed,
@@ -483,6 +487,15 @@ fn spawn_enemy_batch(
         0
     };
     let mut major_preview_spawned_count = 0u32;
+    let fallback_enemy_kind =
+        UnitKind::from_faction_and_unit_id(enemy_faction, "peasant_infantry", false)
+            .or_else(|| {
+                data.enemies
+                    .opposing_enemy_pool(player_faction)
+                    .first()
+                    .copied()
+            })
+            .expect("enemy fallback kind should resolve");
 
     for _ in 0..count {
         let seq = *spawn_sequence;
@@ -511,8 +524,7 @@ fn spawn_enemy_batch(
                     &enemy_pool_roles,
                     spawn_role,
                     hash_seed(wave_number ^ spawn_seed, seq ^ spawn_seed, 0xC55A_A5AA),
-                    UnitKind::from_faction_and_unit_id(enemy_faction, "peasant_infantry", false)
-                        .unwrap_or(UnitKind::ChristianPeasantInfantry),
+                    fallback_enemy_kind,
                 )
             })
         } else {
@@ -520,8 +532,7 @@ fn spawn_enemy_batch(
                 &enemy_pool_roles,
                 spawn_role,
                 hash_seed(wave_number ^ spawn_seed, seq ^ spawn_seed, 0xC55A_A5AA),
-                UnitKind::from_faction_and_unit_id(enemy_faction, "peasant_infantry", false)
-                    .unwrap_or(UnitKind::ChristianPeasantInfantry),
+                fallback_enemy_kind,
             )
         };
         if force_preview_this_spawn
@@ -1746,7 +1757,14 @@ fn repel_enemy_overflow_from_formation(
         return;
     }
 
-    let inside_cap = max_inside_enemy_count_for_formation(recruit_count);
+    let inside_cap = max_inside_enemy_count_for_formation(
+        recruit_count,
+        formation_anti_entry_enabled(&data, *active_formation),
+        formation_allows_unlimited_enemy_inside(&data, *active_formation),
+    );
+    if inside_cap == usize::MAX {
+        return;
+    }
     let mut inside_samples = Vec::new();
     for (entity, transform) in &mut enemies {
         let enemy_position = transform.translation.truncate();
@@ -1790,8 +1808,18 @@ fn repel_enemy_overflow_from_formation(
     }
 }
 
-pub fn max_inside_enemy_count_for_formation(recruit_count: usize) -> usize {
+pub fn max_inside_enemy_count_for_formation(
+    recruit_count: usize,
+    anti_entry: bool,
+    allow_unlimited_enemy_inside: bool,
+) -> usize {
     if recruit_count == 0 {
+        return 0;
+    }
+    if allow_unlimited_enemy_inside {
+        return usize::MAX;
+    }
+    if anti_entry {
         return 0;
     }
     recruit_count / 4
@@ -1831,10 +1859,7 @@ pub fn formation_perimeter_target(
         ENEMY_INSIDE_FORMATION_PADDING_SLOTS,
     );
     let delta = enemy_position - commander_position;
-    let local = match active_formation {
-        ActiveFormation::Square => project_to_square_perimeter(delta, half_extent),
-        ActiveFormation::Diamond => project_to_diamond_perimeter(delta, half_extent),
-    };
+    let local = formation_shape_perimeter_target(active_formation, delta, half_extent);
     commander_position + local
 }
 
@@ -1854,39 +1879,8 @@ fn formation_overflow_repel_target(
         ENEMY_INSIDE_FORMATION_PADDING_SLOTS + ENEMY_FORMATION_REPEL_MARGIN_SLOTS,
     );
     let delta = enemy_position - commander_position;
-    let local = match active_formation {
-        ActiveFormation::Square => project_to_square_perimeter(delta, half_extent),
-        ActiveFormation::Diamond => project_to_diamond_perimeter(delta, half_extent),
-    };
+    let local = formation_shape_perimeter_target(active_formation, delta, half_extent);
     commander_position + local
-}
-
-fn formation_half_extent(recruit_count: usize, slot_spacing: f32, padding_slots: f32) -> f32 {
-    let side = ((recruit_count + 1) as f32).sqrt().ceil();
-    ((side - 1.0) * 0.5 + padding_slots) * slot_spacing
-}
-
-fn project_to_square_perimeter(delta: Vec2, half_extent: f32) -> Vec2 {
-    if half_extent <= 0.0 {
-        return delta;
-    }
-    let dominant = delta.x.abs().max(delta.y.abs());
-    if dominant <= f32::EPSILON {
-        return Vec2::new(half_extent, 0.0);
-    }
-    delta * (half_extent / dominant)
-}
-
-fn project_to_diamond_perimeter(delta: Vec2, half_extent: f32) -> Vec2 {
-    let diamond_radius = half_extent * std::f32::consts::SQRT_2;
-    if diamond_radius <= 0.0 {
-        return delta;
-    }
-    let l1 = delta.x.abs() + delta.y.abs();
-    if l1 <= f32::EPSILON {
-        return Vec2::new(diamond_radius, 0.0);
-    }
-    delta * (diamond_radius / l1)
 }
 
 #[allow(clippy::type_complexity)]
@@ -2469,11 +2463,16 @@ mod tests {
 
     #[test]
     fn inside_formation_cap_scales_with_roster_size() {
-        assert_eq!(max_inside_enemy_count_for_formation(0), 0);
-        assert_eq!(max_inside_enemy_count_for_formation(3), 0);
-        assert_eq!(max_inside_enemy_count_for_formation(4), 1);
-        assert_eq!(max_inside_enemy_count_for_formation(40), 10);
-        assert_eq!(max_inside_enemy_count_for_formation(180), 45);
+        assert_eq!(max_inside_enemy_count_for_formation(0, false, false), 0);
+        assert_eq!(max_inside_enemy_count_for_formation(3, false, false), 0);
+        assert_eq!(max_inside_enemy_count_for_formation(4, false, false), 1);
+        assert_eq!(max_inside_enemy_count_for_formation(40, false, false), 10);
+        assert_eq!(max_inside_enemy_count_for_formation(180, false, false), 45);
+        assert_eq!(max_inside_enemy_count_for_formation(40, true, false), 0);
+        assert_eq!(
+            max_inside_enemy_count_for_formation(40, false, true),
+            usize::MAX
+        );
     }
 
     #[test]
@@ -2510,6 +2509,20 @@ mod tests {
         let diamond_radius = ((16.0f32 + 1.0).sqrt().ceil() - 1.0) * 0.5 + 0.35;
         let expected = diamond_radius * 30.0 * std::f32::consts::SQRT_2;
         assert!(((target.x.abs() + target.y.abs()) - expected).abs() < 0.2);
+    }
+
+    #[test]
+    fn circle_perimeter_target_projects_to_boundary() {
+        let target = formation_perimeter_target(
+            ActiveFormation::Circle,
+            Vec2::ZERO,
+            Vec2::new(7.0, 4.0),
+            16,
+            30.0,
+        );
+        let radius =
+            (((16.0f32 + 1.0).sqrt().ceil() - 1.0) * 0.5 + 0.35) * 30.0 * std::f32::consts::SQRT_2;
+        assert!((target.length() - radius).abs() < 0.25);
     }
 
     #[test]
