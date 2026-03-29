@@ -87,3 +87,4 @@ Track external art sources, licenses, and current runtime mapping.
 - Enemy wave tier/role composition now resolves through `assets/data/enemy_tier_pools.json` (data-driven tier buckets instead of hardcoded pools).
 - Counter-matrix role/armor tags are metadata/runtime logic only and currently introduce no new art-asset requirements.
 - Hero subtype specialization + strengths/weaknesses tooltip clarity are text/metadata updates and currently introduce no additional asset requirements.
+- Deterministic itemization (`assets/data/items.json`) now uses authored stat packages plus `nature`/`downside`/`doctrine_tags`; this is metadata-only and introduces no new asset-source requirements.

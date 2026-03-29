@@ -98,6 +98,46 @@ UI element art is intentionally excluded for now (basic programmatic shapes are 
   - a mapped replacement path documented in tasks/docs before removal.
 - Follow-up refactor/balance tickets must exist for each merge/rework/deprecation cluster before schema cutover.
 
+## Major/Minor Revamp Contract (`CRU-200`)
+- Canonical lane taxonomy:
+  - `Minor`: frequent support/doctrine-synergy picks with bounded additive impact.
+  - `Major`: milestone doctrine picks with higher strategic swing and explicit tradeoff.
+- Cadence contract:
+  - one upgrade reward is granted for each level gained,
+  - levels divisible by `5` grant `Major` rewards,
+  - all other levels grant `Minor` rewards,
+  - progression remains deterministic and reaches level `100` by the end of wave `98`.
+- Tradeoff and impact thresholds:
+  - every `Major` upgrade must include at least one explicit downside, opportunity cost, or lockout hook,
+  - every `Major` upgrade must create at least one strategic breakpoint change (band shift, trait/badge unlock, formation/ability behavior change, or equivalent doctrine gating),
+  - `Minor` upgrades remain additive and bounded; they support a strategy rather than replacing it.
+- Data invariants:
+  - upgrade power resolution must not depend on runtime value rolls (`min/max/step/weight` style ranges),
+  - upgrade rarity may affect *option availability* but not rolled strength values,
+  - deterministic item templates own authored stat packages and authored downsides/tradeoffs; drop RNG chooses template/source only,
+  - new or migrated upgrade entries must declare lane identity (`major` or `minor`) and valid requirement metadata.
+
+## Qualitative Stat-Band Contract (`CRU-215`)
+- Primary gameplay-facing stat readouts use five qualitative bands:
+  - `Very Low`
+  - `Low`
+  - `Moderate`
+  - `High`
+  - `Very High`
+- Canonical visual meter uses five segments:
+  - `|....` (`Very Low`)
+  - `||...` (`Low`)
+  - `|||..` (`Moderate`)
+  - `||||.` (`High`)
+  - `|||||` (`Very High`)
+- Wording contract:
+  - unit/tooltips present descriptor-first text (`Moderate damage`, `High durability`) before numeric internals,
+  - upgrade text describes threshold effects (`raise Infantry damage to High`, `units with Low armor become Shielded`) instead of raw floating-number math in primary UI.
+- Backend contract:
+  - internal math remains numeric and deterministic,
+  - UI transitions only when threshold boundaries are crossed,
+  - player-visible comparisons are band-first + trait-first in core surfaces (unit cards, upgrade cards, recruit/promotion UI, inventory summaries).
+
 ## Global Art Specs
 - Format: `PNG` with transparency for sprites/decals, `PNG` tiles for terrain.
 - Style: grounded, dusty, readable silhouettes, low detail noise.

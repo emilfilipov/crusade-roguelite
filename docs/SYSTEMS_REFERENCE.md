@@ -5,6 +5,10 @@ Single-file technical reference for current MVP runtime behavior.
 Use this for entity/component/system lookup without scanning all source files.
 
 ## Latest Update (2026-03-29)
+- Completed CRU-205/206/207 revamp tranche:
+  - Minor upgrades now support authored stack controls (`stack_cap`) plus diminishing returns (`diminishing_factor`) and are filtered from future drafts once capped.
+  - Conditional upgrade requirements were tightened around roster commitment bands/traits (including new `anti_cavalry_share`) and conditional effects now dedupe by upgrade kind.
+  - Item generation is now deterministic per template (fixed stat packages, fixed rarity labels, explicit downside + doctrine tags + `Minor/Major` nature) with no runtime rarity-roll stat generation.
 - Added faction-agnostic identity scaffold in runtime model:
   - `UnitRef { faction, unit_id, rescuable }` is now derivable from any `UnitKind`,
   - shared `unit_id` strings now map Christian/Muslim/rescuable variants into one generic ID space (for example both faction peasant infantry variants resolve to `peasant_infantry`).
@@ -85,7 +89,7 @@ Use this for entity/component/system lookup without scanning all source files.
   - major-wave and lane-clear reward handlers no longer inject deterministic token grants; token flow is fully lane/death RNG driven,
   - army-lane clear rewards continue to roll equipment chests independently of token drops,
   - periodic random world equipment chests remain active on the existing cadence (every 3 waves),
-  - equipment chest item-quality weighting now scales gradually by wave so higher-quality outcomes become more likely over time,
+  - equipment chests now roll deterministic item templates (fixed stats/tradeoffs); RNG selects which template drops, not stat magnitudes,
   - token chest pickups add `+1` `Hear the Call` to progression and HUD/unit-upgrade surfaces show token count,
   - token chest channel bars and minimap markers now render with distinct colors from equipment chests for pickup readability,
   - hero subtype buttons are now actionable in `Unit Upgrade` and spend `1` token per recruit.
@@ -207,7 +211,12 @@ Use this for entity/component/system lookup without scanning all source files.
   - support lines prefer `inner -> middle -> outer` and are capped on outer-shell crowding when other lanes remain available,
   - square profile keeps cavalry/skirmisher on `middle` by default, while diamond profile shifts cavalry/skirmisher preference to `outer`,
   - special-role overrides are formation-aware (`tracker`, `scout`, fanatic branch, priest/support branches) while preserving deterministic fallback ordering,
-  - tie-breaking remains deterministic (`lane_priority_key`, then stable entity index ordering).
+  - tie-breaking remains deterministic (`lane_priority_key`, then stable entity index ordering),
+  - balance fixtures now lock support-heavy and cavalry-heavy placement envelopes to prevent lane-role drift across tier/hero roster growth.
+- Added lane assignment debug overlay for QA:
+  - `F8` toggles runtime lane inspector (`ON/OFF`) without changing gameplay simulation,
+  - HUD row shows live lane totals (`O/M/I`),
+  - friendlies receive per-unit lane labels (`O`, `M`, `I`) color-coded by lane.
 - Formation roster and mechanics are now expanded:
   - live formations: `Square`, `Circle`, `Skean`, reworked `Diamond`, `Shield Wall`, `Loose`,
   - anti-entry is config-driven (`Diamond` + `Shield Wall` enforce hard `0` enemies inside),
@@ -639,7 +648,7 @@ Runtime conversion to spawn pacing:
 - `encirclement_doctrine` (`kind=formation_breach`, `one_time`, grants inside-formation damage bonus)
 - `damage`
 - `attack_speed`
-- `fast_learner` (repeatable gold gain multiplier for all gold packs)
+- `quartermaster` (repeatable gold gain multiplier for all gold packs)
 - `armor`
 - `pickup_radius`
 - `aura_radius`
@@ -651,14 +660,17 @@ Runtime conversion to spawn pacing:
 - `mob_justice` (`one_time`, `requirement_type=tier0_share`, `requirement_min_tier0_share=1.0`)
 - `mob_mercy` (`one_time`, `requirement_type=tier0_share`, `requirement_min_tier0_share=1.0`)
 
-Roll fields:
-- `min_value`
-- `max_value`
-- `value_step`
-- `weight_exponent`
+Deterministic schema fields:
+- `value` (authored fixed effect magnitude; no runtime roll tiers)
+- `reward_lane` (`minor` | `major`)
 - `one_time`
 - `adds_to_skillbar`
 - `formation_id`
+- optional doctrine metadata:
+  - `doctrine_tags`
+  - `stack_cap`
+  - `downside`
+  - `major_unlock_hint`
 - requirement fields:
   - `requirement_type`
   - `requirement_min_tier0_share`
@@ -678,13 +690,45 @@ Roll fields:
   - tradeoff slot modifier (`war_council_edict`)
 - `Merge/Rework`:
   - core stat stackers (`damage_up`, `armor_up`, `attack_speed_up`, `move_speed_up`, `cooldown_reduction_up`, `skill_duration_up`) should move to additive integer-point semantics with qualitative threshold messaging (`CRU-261`, `CRU-263`, `CRU-264`, `CRU-265`)
-  - economy stackers are consolidated into one schema-driven `fast_learner_up` ladder (`min/max/step` roll range) instead of parallel fixed-value IDs (`CRU-273`)
+  - economy stackers are consolidated into one deterministic `quartermaster_up` schema with fixed authored effect + stack controls instead of parallel legacy IDs (`CRU-273`)
   - conditional doctrine variants are consolidated to canonical doctrine IDs (`mob_fury`, `mob_justice`, `mob_mercy`) and no longer duplicated by variant-ID suffixes (`CRU-273`)
 - `Keep with Balance Pass`:
   - `luck_up` and pickup/aura radius utility cards stay in roster, but their value contrast and pacing remain under rebalance certification (`CRU-262`)
 - `Deprecate` (enforced at load):
-  - legacy duplicate IDs are hard-rejected by validators with replacement hints: `fast_learner_up_10`, `fast_learner_up_15`, `mob_fury_shielded_host`, `mob_justice_frontline_bias`, `mob_mercy_support_ceiling` (`CRU-274`)
+  - legacy duplicate IDs are hard-rejected by validators with replacement hints: `fast_learner_up`, `fast_learner_up_10`, `fast_learner_up_15`, `mob_fury_shielded_host`, `mob_justice_frontline_bias`, `mob_mercy_support_ceiling` (`CRU-274`)
 - No unaudited high-impact upgrade remains in the active catalog.
+
+### Major Upgrade Catalogue (`CRU-213`, `CRU-204`)
+- Category matrix (design contract):
+  - broad stat spikes,
+  - unit-role doctrine bonuses,
+  - commander doctrine bonuses,
+  - formation/aura tactical actives,
+  - temporary auto-cast style doctrine effects,
+  - counter-doctrine responses (anti-ranged, anti-cavalry pressure).
+- Live doctrine families and tradeoffs:
+  - `doctrine_command_net` (`control`, commander/aura): larger aura command footprint + stronger enemy morale pressure in aura; downside reduces global damage output.
+  - `doctrine_stalwart_oath` (`sustain`, commander/frontline): stronger armor and sustain profile; downside reduces army movement speed.
+  - `doctrine_forced_march` (`tempo`, commander/mobility): stronger mobility and cadence pressure; downside reduces armor.
+  - `doctrine_execution_rites` (`execute`, frontline): conditional execute breakpoint + conditional damage boost; downside slows rescue throughput while active.
+  - `doctrine_countervolley` (`anti_ranged`, archer pressure): conditional ranged burst cadence; downside increases morale loss under pressure.
+  - `doctrine_pike_hedgehog` (`cavalry_pressure`, anti-cavalry): conditional anti-cavalry pressure + morale stability under encirclement; downside reduces formation movement speed.
+- Exposure and anti-degeneracy rules:
+  - major rewards occur at every level divisible by `5` (20 major rewards by level `100`),
+  - doctrine cards are one-time and must carry explicit `downside`,
+  - role-specialized doctrines rely on requirement gates (`has_trait`, `band_at_least`) to enforce composition commitment and prevent universal best-in-slot picks.
+
+### Minor Upgrade Catalogue (`CRU-214`)
+- Category matrix (implementation-ready):
+  - moderate stat increases (`damage_up`, `attack_speed_up`, `armor_up`, `move_speed_up`),
+  - commander support/economy bonuses (`quartermaster_up`, `commander_aura_radius_up`, `pickup_radius_up`),
+  - aura support modifiers (`authority_aura_up`, `hospitalier_aura_up`),
+  - utility/consistency bonuses (`luck_up`, `skill_duration_up`, `cooldown_reduction_up`).
+- Minor policy contract:
+  - minors are repeatable support picks and remain lane-locked to `reward_lane=minor`,
+  - effect magnitudes are deterministic (`value` only; no value-roll tiers),
+  - stack-control metadata (`stack_cap`, doctrine tags) is supported in schema and reserved for CRU-205 balancing pass,
+  - minors are intended to reinforce chosen major doctrine, not replace it.
 
 ### `map.json`
 - Data-driven map list:
@@ -872,6 +916,22 @@ Representative specialization mapping:
   - `minor_count = level - major_count`.
 - The level-up draft opens from queued rewards while commander level is still under roster-allowed cap.
 
+### Major/Minor Revamp Contract (`CRU-200`)
+- Lane taxonomy:
+  - `Minor`: support/pacing lane (frequent additive picks),
+  - `Major`: milestone doctrine lane (high-impact picks with explicit tradeoff).
+- Cadence:
+  - one draft per level reward,
+  - levels divisible by `5` route to `Major`; all other levels route to `Minor`,
+  - deterministic progression target remains level `100` by end of wave `98`.
+- Impact and tradeoff floor:
+  - every major card must include an explicit downside/opportunity-cost hook,
+  - every major card must produce at least one strategic breakpoint shift (band shift, trait/badge activation, formation/ability behavior change, or equivalent).
+- Schema invariants:
+  - upgrade strength is authored and deterministic (no runtime value-roll power resolution),
+  - upgrade rarity can influence option appearance but not rolled power,
+  - deterministic item templates own authored stat packages/tradeoffs; drop RNG selects template/source only.
+
 ### Commander Allowed Max Level from Roster Budget (`src/squad.rs`)
 - Hard commander cap: `100`.
 - Roster lock rule:
@@ -896,9 +956,9 @@ Representative specialization mapping:
   - `tier0_share` compares roster tier-0 ratio against configured minimum.
   - `formation_active` checks currently active formation id.
   - `has_trait` checks for minimum roster presence of trait families (`shielded`, `frontline`, `anti_cavalry`, `cavalry`, `anti_armor`, `skirmisher`, `support`).
-  - `band_at_least` / `band_at_most` compares roster share stats (`tier0`, `shielded`, `frontline`, `support`, `cavalry`, `archer`, `anti_armor`) against qualitative bands (`very_low`..`very_high`).
+  - `band_at_least` / `band_at_most` compares roster share stats (`tier0`, `shielded`, `frontline`, `anti_cavalry`, `support`, `cavalry`, `archer`, `anti_armor`) against qualitative bands (`very_low`..`very_high`).
   - `map_tag` is schema-supported; currently reports unmet in runtime until map tags are introduced.
-- Effects are rebuilt from scratch each refresh and deduplicated by upgrade id, preventing duplicate-frame stacking bugs.
+- Effects are rebuilt from scratch each refresh and deduplicated by upgrade kind, preventing multi-variant stacking exploits of the same conditional family.
 
 ### Wave Spawn Rate + Victory Gate (`src/enemies.rs`, `src/core.rs`)
 - Wave duration: `30s`.
@@ -916,13 +976,17 @@ Representative specialization mapping:
   - `pending_batches` empty
   - alive enemy count is `0`
 
-### Upgrade Roll Formula (`src/upgrades.rs`)
+### Upgrade Draft Value Contract (`src/upgrades.rs`)
 - Draft picks `5` unique upgrades from the configured pool.
-- Rolled value uses:
-  - `roll = random(0..1)^effective_weight_exponent`
-  - `effective_weight_exponent = weight_exponent / (1 + upgrade_rarity_bonus_percent)`
-  - `value = min + (max - min) * roll`
-  - optional quantization by `value_step`.
+- Draft lane routing is explicit:
+  - `Minor` rewards draw only `reward_lane=minor`,
+  - `Major` rewards draw only `reward_lane=major`.
+- Upgrade value is deterministic:
+  - chosen card uses authored `value` directly,
+  - legacy roll-tier fields (`min_value/max_value/value_step/weight_exponent`) are rejected at load time.
+- Minor repeatables support authored stack policies:
+  - `stack_cap` removes capped cards from future draft pools,
+  - `diminishing_factor` scales each subsequent stack value (`value * factor^current_stacks`).
 
 ### Morale Pressure + Collapse (`src/morale.rs`)
 - Encirclement pressure:
@@ -1006,6 +1070,10 @@ Representative specialization mapping:
 - runtime inventory scaffold resource initialization
 - unit-tier + commander equipment setup defaults
 - serializable bag/equipment model
+- deterministic item template pipeline from `assets/data/items.json`:
+  - fixed per-template stat packages (`kind`, `value`, `rarity`)
+  - explicit `downside`, `doctrine_tags`, and `nature` (`Minor`/`Major`) metadata
+  - chest RNG selects template only; item stat values are not rarity-rolled at runtime
 - slot-aware gear bonus resolution (`gear_bonuses_for_unit`)
   - default slot behavior applies `base_bonus` to matching stat only
   - explicit item bonus fields can add cross-stat effects
@@ -1125,7 +1193,7 @@ Representative specialization mapping:
   - `Unit Upgrade`
 - inventory right-click context menu on backpack items:
   - `Equip` (same target resolution contract as double-click equip path)
-  - `Scrap` (remove item and convert to gold based on item rarity + stat rarity tiers)
+  - `Scrap` (remove item and convert to gold based on deterministic item nature + authored rarity package)
 - inventory modal content:
   - bag drops grid (1 item = 1 slot, with empty placeholders)
   - fixed 5x6 backpack viewport (first 30 slots shown in-grid)
@@ -1157,12 +1225,11 @@ Representative specialization mapping:
 ### `upgrades.rs`
 - Wave-reward level queue and explicit level-up draft flow (`InRun -> LevelUp -> InRun`)
 - 5-option upgrade draft cards (keyboard `1..5` and mouse click selection)
-- weighted random min/max upgrade value rolls
-- upgrade-rarity roll bonus (`upgrade_rarity`) shifts draft value distributions toward higher tiers
-- additive stacked upgrade effects
-- repeatable `fast_learner` upgrade adds to `GlobalBuffs.gold_gain_multiplier`
+- deterministic authored upgrade values (no runtime value-roll tiers)
+- additive stacked upgrade effects with authored `stack_cap` + `diminishing_factor` support for repeatables
+- repeatable `quartermaster` upgrade adds to `GlobalBuffs.gold_gain_multiplier`
 - repeatable crit upgrades (`crit_chance`, `crit_damage`) wired into `GlobalBuffs`
-- repeatable item-rarity upgrade (`item_rarity`) feeds equipment chest roll weighting
+- repeatable item-rarity upgrade (`item_rarity`) feeds drop-layer luck signals; item stat packages remain deterministic once a template is selected
 - shared skill timing buffs:
   - `skill_duration` increases duration of cooldown-based skills
   - `cooldown_reduction` reduces cooldown of cooldown-based skills

@@ -35,7 +35,7 @@
 - Scope intent: replace mild incremental progression with strategic doctrine choices, remove roll-tier dependence from upgrades/items, and preserve `level 100 @ wave 98`.
 
 ### CRU-200 - Revamp Design Contract and Balance Targets
-- Status: `TODO`
+- Status: `DONE`
 - Type: `Docs`
 - Priority: `P0`
 - Depends on: `none`
@@ -61,7 +61,7 @@
   - `docs/requirements.md`
 
 ### CRU-201 - Upgrade and Item Schema Migration (Remove Tier-Roll Fields)
-- Status: `TODO`
+- Status: `DONE`
 - Type: `Core`
 - Priority: `P0`
 - Depends on: `CRU-200`
@@ -113,7 +113,7 @@
   - `docs/ASSET_SOURCES.md` (if event/data diagrams are added)
 
 ### CRU-203 - Draft Engine Rewrite for Major/Minor Lanes
-- Status: `TODO`
+- Status: `DONE`
 - Type: `Core`
 - Priority: `P0`
 - Depends on: `CRU-202`
@@ -139,7 +139,7 @@
   - `docs/ASSET_SOURCES.md` (if UI assets for lane labels are added)
 
 ### CRU-213 - Major Upgrade Design Catalogue and Ability Matrix
-- Status: `TODO`
+- Status: `DONE`
 - Type: `Docs`
 - Priority: `P0`
 - Depends on: `CRU-203`
@@ -177,7 +177,7 @@
   - `docs/ASSET_SOURCES.md` (if planned icon/FX requirements are listed)
 
 ### CRU-214 - Minor Upgrade Design Catalogue and Support Ability Matrix
-- Status: `TODO`
+- Status: `DONE`
 - Type: `Docs`
 - Priority: `P0`
 - Depends on: `CRU-203`
@@ -214,7 +214,7 @@
   - `docs/ASSET_SOURCES.md` (if planned icon/FX requirements are listed)
 
 ### CRU-215 - Qualitative Stat Bands and Descriptor Contract
-- Status: `TODO`
+- Status: `DONE`
 - Type: `Docs`
 - Priority: `P0`
 - Depends on: `CRU-203`
@@ -241,7 +241,7 @@
   - `docs/requirements.md`
 
 ### CRU-204 - Major Upgrade Content Pass (Commander/Unit Doctrine Cards)
-- Status: `TODO`
+- Status: `DONE`
 - Type: `Gameplay`
 - Priority: `P0`
 - Depends on: `CRU-213`
@@ -267,7 +267,7 @@
   - `docs/ASSET_SOURCES.md` (if new major-card icon assets are introduced)
 
 ### CRU-205 - Minor Upgrade Library Rebalance (Support Picks with Caps)
-- Status: `TODO`
+- Status: `DONE`
 - Type: `Balance`
 - Priority: `P1`
 - Depends on: `CRU-214`
@@ -293,7 +293,7 @@
   - `docs/ASSET_SOURCES.md` (if card/icon set changes)
 
 ### CRU-206 - Conditional Upgrade Requirement Rework (Mob Line and Beyond)
-- Status: `TODO`
+- Status: `DONE`
 - Type: `Gameplay`
 - Priority: `P1`
 - Depends on: `CRU-204, CRU-205`
@@ -319,7 +319,7 @@
   - `docs/ASSET_SOURCES.md`
 
 ### CRU-207 - Deterministic Itemization Rebuild (Major/Minor Item Nature)
-- Status: `TODO`
+- Status: `DONE`
 - Type: `Gameplay`
 - Priority: `P0`
 - Depends on: `CRU-201`
@@ -1354,7 +1354,7 @@
   - `docs/ASSET_SOURCES.md`
 
 ### CRU-253 - Formation Placement Balance Pass (All Tiers + Hero Subtypes)
-- Status: `TODO`
+- Status: `DONE`
 - Type: `Balance`
 - Priority: `P1`
 - Depends on: `CRU-252, CRU-249`
@@ -1380,7 +1380,7 @@
   - `docs/ASSET_SOURCES.md`
 
 ### CRU-254 - Formation Debug Surface (Lane Assignment Inspector)
-- Status: `TODO`
+- Status: `DONE`
 - Type: `UI`
 - Priority: `P2`
 - Depends on: `CRU-252`
@@ -1989,7 +1989,7 @@
 - Depends on: `CRU-260`
 - Goal: Consolidate duplicate upgrade IDs into schema-driven families without losing doctrine variety.
 - Context:
-  - Audit identified parallel duplicate IDs that encode variants in ID names instead of data fields (`fast_learner_up_10`, `fast_learner_up_15`, doctrine variant suffixes).
+  - Audit identified parallel duplicate IDs that encode variants in ID names instead of data fields (`fast_learner_up_10`, `fast_learner_up_15`, doctrine variant suffixes; now consolidated under `quartermaster_up`).
   - Consolidation should reduce maintenance overhead and simplify balancing under major/minor pacing.
   - Files expected to change: `assets/data/upgrades.json`, `src/data.rs`, `src/upgrades.rs`, UI metadata mapping.
 - Implementation:
@@ -2016,7 +2016,7 @@
 - Goal: Enforce hard deprecation of audited legacy upgrade IDs and prevent reintroduction.
 - Context:
   - Post-consolidation, legacy duplicate IDs must become invalid inputs to avoid drift and accidental regressions.
-  - Deprecated IDs from audit: `fast_learner_up_10`, `fast_learner_up_15`, `mob_fury_shielded_host`, `mob_justice_frontline_bias`, `mob_mercy_support_ceiling`.
+  - Deprecated IDs from audit: `fast_learner_up`, `fast_learner_up_10`, `fast_learner_up_15`, `mob_fury_shielded_host`, `mob_justice_frontline_bias`, `mob_mercy_support_ceiling`.
   - Files expected to change: `src/data.rs`, `src/upgrades.rs`, upgrade validators/tests, docs.
 - Implementation:
   1. Add explicit validator blacklist for deprecated upgrade IDs and fail-fast load errors.

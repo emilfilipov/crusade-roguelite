@@ -153,6 +153,7 @@ impl Plugin for FormationPlugin {
         app.init_resource::<ActiveFormation>()
             .init_resource::<FormationModifiers>()
             .init_resource::<FormationSkillBar>()
+            .init_resource::<FormationLaneSummary>()
             .add_systems(Update, reset_formation_state_on_run_start)
             .add_systems(
                 OnEnter(GameState::MainMenu),
@@ -176,10 +177,12 @@ fn reset_formation_state_on_main_menu(
     mut formation: ResMut<ActiveFormation>,
     mut modifiers: ResMut<FormationModifiers>,
     mut skillbar: ResMut<FormationSkillBar>,
+    mut lane_summary: ResMut<FormationLaneSummary>,
     data: Res<GameData>,
 ) {
     *formation = ActiveFormation::Square;
     skillbar.reset_to_default();
+    *lane_summary = FormationLaneSummary::default();
     sync_modifiers_for_active(&mut modifiers, &data, *formation);
 }
 
@@ -188,6 +191,7 @@ fn reset_formation_state_on_run_start(
     mut formation: ResMut<ActiveFormation>,
     mut modifiers: ResMut<FormationModifiers>,
     mut skillbar: ResMut<FormationSkillBar>,
+    mut lane_summary: ResMut<FormationLaneSummary>,
     data: Res<GameData>,
 ) {
     if start_events.is_empty() {
@@ -197,6 +201,7 @@ fn reset_formation_state_on_run_start(
 
     *formation = ActiveFormation::Square;
     skillbar.reset_to_default();
+    *lane_summary = FormationLaneSummary::default();
     sync_modifiers_for_active(&mut modifiers, &data, *formation);
 }
 
@@ -285,10 +290,30 @@ pub fn skill_for_formation(formation: ActiveFormation) -> SkillBarSkill {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
-enum FormationLane {
+pub enum FormationLane {
     Outer,
     Middle,
     Inner,
+}
+
+impl FormationLane {
+    pub const fn short_label(self) -> &'static str {
+        match self {
+            Self::Outer => "O",
+            Self::Middle => "M",
+            Self::Inner => "I",
+        }
+    }
+}
+
+#[derive(Component, Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AssignedFormationLane(pub FormationLane);
+
+#[derive(Resource, Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct FormationLaneSummary {
+    pub outer: usize,
+    pub middle: usize,
+    pub inner: usize,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -512,14 +537,22 @@ impl LaneOffsetBuckets {
 }
 
 #[allow(clippy::type_complexity)]
+#[allow(clippy::too_many_arguments)]
 fn apply_active_formation(
+    mut commands: Commands,
     time: Res<Time>,
     data: Res<GameData>,
     formation: Res<ActiveFormation>,
+    mut lane_summary: ResMut<FormationLaneSummary>,
     banner_penalty: Option<Res<BannerMovementPenalty>>,
     commanders: Query<&Transform, With<CommanderUnit>>,
     mut friendlies: Query<
-        (Entity, &Unit, &mut Transform),
+        (
+            Entity,
+            &Unit,
+            &mut Transform,
+            Option<&mut AssignedFormationLane>,
+        ),
         (
             With<FriendlyUnit>,
             Without<CommanderUnit>,
@@ -535,35 +568,59 @@ fn apply_active_formation(
         ),
     >,
 ) {
+    *lane_summary = FormationLaneSummary::default();
     let Ok(commander_transform) = commanders.get_single() else {
         return;
     };
 
     let config = active_formation_config(&data, *formation);
     let spacing = config.slot_spacing;
-    let mut members: Vec<(Entity, UnitKind, Mut<Transform>)> = friendlies
+    let mut members: Vec<(
+        Entity,
+        UnitKind,
+        Mut<Transform>,
+        Option<Mut<AssignedFormationLane>>,
+    )> = friendlies
         .iter_mut()
-        .map(|(entity, unit, transform)| (entity, unit.kind, transform))
+        .map(|(entity, unit, transform, assigned_lane)| {
+            (entity, unit.kind, transform, assigned_lane)
+        })
         .collect();
     let total_recruits = members.len() + out_of_formation.iter().count();
     let offsets = offsets_for_formation(*formation, total_recruits, spacing);
-    let slot_lookup = assign_member_offsets(
+    let assignments = resolve_lane_assignments(
         members
             .iter()
-            .map(|(entity, kind, _)| (*entity, *kind))
+            .map(|(entity, kind, _, _)| (*entity, *kind))
             .collect(),
         *formation,
         offsets,
     );
+    let mut slot_lookup: HashMap<Entity, (FormationLane, Vec2)> =
+        HashMap::with_capacity(assignments.len());
+    for (entity, lane, offset) in assignments {
+        match lane {
+            FormationLane::Outer => lane_summary.outer = lane_summary.outer.saturating_add(1),
+            FormationLane::Middle => lane_summary.middle = lane_summary.middle.saturating_add(1),
+            FormationLane::Inner => lane_summary.inner = lane_summary.inner.saturating_add(1),
+        }
+        slot_lookup.insert(entity, (lane, offset));
+    }
     let speed_multiplier = banner_penalty
         .as_ref()
         .map(|penalty| penalty.friendly_speed_multiplier)
         .unwrap_or(1.0);
 
-    for (entity, _, mut transform) in members.drain(..) {
-        let Some(offset) = slot_lookup.get(&entity).copied() else {
+    for (entity, _, mut transform, assigned_lane_component) in members.drain(..) {
+        let Some((lane, offset)) = slot_lookup.get(&entity).copied() else {
+            commands.entity(entity).remove::<AssignedFormationLane>();
             continue;
         };
+        if let Some(mut assigned_lane) = assigned_lane_component {
+            assigned_lane.0 = lane;
+        } else {
+            commands.entity(entity).insert(AssignedFormationLane(lane));
+        }
         let target = commander_transform.translation.truncate() + offset;
         let current = transform.translation.truncate();
         let smooth =
@@ -572,6 +629,9 @@ fn apply_active_formation(
         let next = current.lerp(target, smooth);
         transform.translation.x = next.x;
         transform.translation.y = next.y;
+    }
+    for entity in out_of_formation.iter() {
+        commands.entity(entity).remove::<AssignedFormationLane>();
     }
 }
 
@@ -772,17 +832,6 @@ fn resolve_lane_assignments(
     }
 
     assigned
-}
-
-fn assign_member_offsets(
-    members: Vec<(Entity, UnitKind)>,
-    formation: ActiveFormation,
-    offsets: Vec<Vec2>,
-) -> HashMap<Entity, Vec2> {
-    resolve_lane_assignments(members, formation, offsets)
-        .into_iter()
-        .map(|(entity, _, offset)| (entity, offset))
-        .collect()
 }
 
 fn offsets_for_formation(
@@ -1043,10 +1092,12 @@ mod tests {
     use std::collections::HashSet;
     use std::path::Path;
 
-    use bevy::prelude::{ButtonInput, Entity, KeyCode, Vec2};
+    use bevy::prelude::{
+        App, ButtonInput, Entity, KeyCode, MinimalPlugins, Transform, Update, Vec2,
+    };
 
     use crate::data::GameData;
-    use crate::model::{PlayerFaction, UnitKind};
+    use crate::model::{CommanderUnit, FriendlyUnit, PlayerFaction, Unit, UnitKind};
 
     use crate::formation::{
         ActiveFormation, FormationSkillBar, SKILL_BAR_CAPACITY, depth_z_for_world_y,
@@ -1247,6 +1298,65 @@ mod tests {
 
         let no_key = ButtonInput::<KeyCode>::default();
         assert_eq!(super::slot_index_from_hotkey(&no_key), None);
+    }
+
+    #[test]
+    fn lane_summary_totals_match_assigned_friendlies() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.insert_resource(
+            GameData::load_from_dir(std::path::Path::new("assets/data")).expect("load data"),
+        );
+        app.insert_resource(ActiveFormation::Square);
+        app.init_resource::<super::FormationLaneSummary>();
+        app.add_systems(Update, super::apply_active_formation);
+
+        app.world_mut().spawn((
+            CommanderUnit,
+            Unit {
+                team: crate::model::Team::Friendly,
+                kind: UnitKind::Commander,
+                level: 1,
+            },
+            Transform::from_xyz(0.0, 0.0, 0.0),
+        ));
+        for (index, unit_id) in [
+            "peasant_infantry",
+            "peasant_infantry",
+            "peasant_archer",
+            "peasant_archer",
+            "peasant_priest",
+            "tracker",
+        ]
+        .iter()
+        .enumerate()
+        {
+            let kind = UnitKind::from_faction_and_unit_id(PlayerFaction::Christian, unit_id, false)
+                .expect("unit kind should resolve");
+            app.world_mut().spawn((
+                FriendlyUnit,
+                Unit {
+                    team: crate::model::Team::Friendly,
+                    kind,
+                    level: 1,
+                },
+                Transform::from_xyz(index as f32 * 8.0, 0.0, 0.0),
+            ));
+        }
+
+        app.update();
+
+        let summary = *app.world().resource::<super::FormationLaneSummary>();
+        let assigned_count = {
+            let world = app.world_mut();
+            let mut query = world.query::<&super::AssignedFormationLane>();
+            query.iter(world).count()
+        };
+        assert_eq!(
+            summary.outer + summary.middle + summary.inner,
+            assigned_count
+        );
+        assert_eq!(assigned_count, 6);
     }
 
     #[test]
@@ -1517,6 +1627,118 @@ mod tests {
         assert!(
             support_on_outer <= outer_support_cap,
             "support units should not exceed configured outer-lane cap when alternatives exist"
+        );
+    }
+
+    #[test]
+    fn support_heavy_fixture_keeps_support_majority_off_outer_lane() {
+        let mut members: Vec<(Entity, UnitKind)> = Vec::new();
+        let mut support_entities: std::collections::HashSet<Entity> =
+            std::collections::HashSet::new();
+        let mut next_entity = 1u32;
+        for _ in 0..4 {
+            members.push((
+                Entity::from_raw(next_entity),
+                UnitKind::from_faction_and_unit_id(
+                    PlayerFaction::Christian,
+                    "peasant_infantry",
+                    false,
+                )
+                .expect("frontline should resolve"),
+            ));
+            next_entity += 1;
+        }
+        for _ in 0..2 {
+            members.push((
+                Entity::from_raw(next_entity),
+                UnitKind::from_faction_and_unit_id(PlayerFaction::Christian, "tracker", false)
+                    .expect("tracker should resolve"),
+            ));
+            next_entity += 1;
+        }
+        for _ in 0..8 {
+            let entity = Entity::from_raw(next_entity);
+            members.push((
+                entity,
+                UnitKind::from_faction_and_unit_id(
+                    PlayerFaction::Christian,
+                    "peasant_priest",
+                    false,
+                )
+                .expect("support should resolve"),
+            ));
+            support_entities.insert(entity);
+            next_entity += 1;
+        }
+
+        let offsets = super::square_offsets_excluding_commander_slot(14, 20.0);
+        let assignments =
+            super::resolve_lane_assignments(members, ActiveFormation::Square, offsets.clone());
+        let support_on_outer = assignments
+            .iter()
+            .filter(|(_, lane, _)| *lane == super::FormationLane::Outer)
+            .filter(|(entity, _, _)| support_entities.contains(entity))
+            .count();
+        let support_on_non_outer = assignments
+            .iter()
+            .filter(|(_, lane, _)| *lane != super::FormationLane::Outer)
+            .filter(|(entity, _, _)| support_entities.contains(entity))
+            .count();
+        assert!(
+            support_on_non_outer > support_on_outer,
+            "support-heavy fixture should place most supports away from outer lane"
+        );
+    }
+
+    #[test]
+    fn cavalry_heavy_fixture_pushes_more_skirmishers_outer_in_diamond_than_square() {
+        let mut members: Vec<(Entity, UnitKind)> = Vec::new();
+        let mut scout_entities: std::collections::HashSet<Entity> =
+            std::collections::HashSet::new();
+        let mut next_entity = 1u32;
+        for _ in 0..10 {
+            let entity = Entity::from_raw(next_entity);
+            members.push((
+                entity,
+                UnitKind::from_faction_and_unit_id(PlayerFaction::Christian, "scout", false)
+                    .expect("scout should resolve"),
+            ));
+            scout_entities.insert(entity);
+            next_entity += 1;
+        }
+        for _ in 0..2 {
+            members.push((
+                Entity::from_raw(next_entity),
+                UnitKind::from_faction_and_unit_id(
+                    PlayerFaction::Christian,
+                    "peasant_priest",
+                    false,
+                )
+                .expect("support should resolve"),
+            ));
+            next_entity += 1;
+        }
+
+        let offsets = super::square_offsets_excluding_commander_slot(12, 20.0);
+        let square = super::resolve_lane_assignments(
+            members.clone(),
+            ActiveFormation::Square,
+            offsets.clone(),
+        );
+        let diamond = super::resolve_lane_assignments(members, ActiveFormation::Diamond, offsets);
+        let square_outer_scouts = square
+            .iter()
+            .filter(|(_, lane, _)| *lane == super::FormationLane::Outer)
+            .filter(|(entity, _, _)| scout_entities.contains(entity))
+            .count();
+        let diamond_outer_scouts = diamond
+            .iter()
+            .filter(|(_, lane, _)| *lane == super::FormationLane::Outer)
+            .filter(|(entity, _, _)| scout_entities.contains(entity))
+            .count();
+        assert!(
+            diamond_outer_scouts > square_outer_scouts,
+            "diamond should allocate more skirmisher/scout units to the outer shell in cavalry-heavy fixtures"
         );
     }
 

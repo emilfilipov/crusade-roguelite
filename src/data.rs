@@ -34,9 +34,10 @@ const REQUIRED_HERO_SUBTYPE_IDS: [&str; 9] = [
     HERO_SUBTYPE_SUPER_KNIGHT,
 ];
 const HERO_ENTRIES_PER_SUBTYPE_PER_FACTION: usize = 10;
-const DEPRECATED_UPGRADE_ID_REPLACEMENTS: [(&str, &str); 5] = [
-    ("fast_learner_up_10", "fast_learner_up"),
-    ("fast_learner_up_15", "fast_learner_up"),
+const DEPRECATED_UPGRADE_ID_REPLACEMENTS: [(&str, &str); 6] = [
+    ("fast_learner_up", "quartermaster_up"),
+    ("fast_learner_up_10", "quartermaster_up"),
+    ("fast_learner_up_15", "quartermaster_up"),
     ("mob_fury_shielded_host", "mob_fury"),
     ("mob_justice_frontline_bias", "mob_justice"),
     ("mob_mercy_support_ceiling", "mob_mercy"),
@@ -686,11 +687,25 @@ pub struct WavesConfigFile {
 }
 
 #[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct UpgradeConfig {
     pub id: String,
     pub kind: String,
     #[serde(default)]
     pub value: f32,
+    #[serde(default)]
+    pub reward_lane: Option<String>,
+    #[serde(default)]
+    pub doctrine_tags: Vec<String>,
+    #[serde(default)]
+    pub stack_cap: Option<u32>,
+    #[serde(default)]
+    pub diminishing_factor: Option<f32>,
+    #[serde(default)]
+    pub downside: Option<String>,
+    #[serde(default)]
+    pub major_unlock_hint: Option<String>,
+    // Legacy roll fields are parsed only so validation can fail with an actionable error.
     #[serde(default)]
     pub min_value: Option<f32>,
     #[serde(default)]
@@ -1662,6 +1677,14 @@ fn validate_upgrades(config: &UpgradesConfigFile) -> Result<()> {
                 upgrade.kind
             );
         }
+        let Some(reward_lane) = upgrade.reward_lane.as_deref().map(str::trim) else {
+            bail!("upgrade[{idx}] reward_lane is required and must be 'minor' or 'major'");
+        };
+        if !is_supported_upgrade_reward_lane(reward_lane) {
+            bail!(
+                "upgrade[{idx}] unknown reward_lane '{reward_lane}', expected one of: minor, major"
+            );
+        }
         let is_formation_unlock = upgrade.kind == "unlock_formation";
         if is_formation_unlock {
             let Some(formation_id) = upgrade.formation_id.as_deref() else {
@@ -1679,25 +1702,37 @@ fn validate_upgrades(config: &UpgradesConfigFile) -> Result<()> {
                 bail!("upgrade[{idx}] unlock_formation must set adds_to_skillbar=true");
             }
         }
-        if let (Some(min_value), Some(max_value)) = (upgrade.min_value, upgrade.max_value) {
-            if min_value <= 0.0 || max_value <= 0.0 {
-                bail!("upgrade[{idx}] min_value and max_value must be > 0");
-            }
-            if max_value < min_value {
-                bail!("upgrade[{idx}] max_value must be >= min_value");
-            }
-        } else if upgrade.value <= 0.0 {
-            bail!("upgrade[{idx}] value must be > 0 when min/max are omitted");
+        if upgrade.value <= 0.0 {
+            bail!("upgrade[{idx}] value must be > 0");
         }
-        if let Some(step) = upgrade.value_step
-            && step <= 0.0
+        if upgrade.min_value.is_some()
+            || upgrade.max_value.is_some()
+            || upgrade.value_step.is_some()
+            || upgrade.weight_exponent.is_some()
         {
-            bail!("upgrade[{idx}] value_step must be > 0");
+            bail!(
+                "upgrade[{idx}] legacy roll fields are no longer supported: min_value/max_value/value_step/weight_exponent"
+            );
         }
-        if let Some(exponent) = upgrade.weight_exponent
-            && exponent <= 0.0
+        if let Some(stack_cap) = upgrade.stack_cap
+            && stack_cap == 0
         {
-            bail!("upgrade[{idx}] weight_exponent must be > 0");
+            bail!("upgrade[{idx}] stack_cap must be > 0 when provided");
+        }
+        if let Some(diminishing_factor) = upgrade.diminishing_factor
+            && !(0.0..1.0).contains(&diminishing_factor)
+        {
+            bail!("upgrade[{idx}] diminishing_factor must be in the range (0, 1)");
+        }
+        if reward_lane == "major"
+            && upgrade
+                .downside
+                .as_deref()
+                .map(str::trim)
+                .unwrap_or_default()
+                .is_empty()
+        {
+            bail!("upgrade[{idx}] major upgrades must provide a non-empty downside");
         }
         validate_upgrade_requirement(idx, upgrade)?;
     }
@@ -1763,7 +1798,7 @@ fn validate_upgrade_requirement(idx: usize, upgrade: &UpgradeConfig) -> Result<(
             };
             if !is_supported_upgrade_requirement_band_stat(stat_id) {
                 bail!(
-                    "upgrade[{idx}] unknown requirement_band_stat '{stat_id}', expected one of: tier0_share, shielded_share, frontline_share, support_share, cavalry_share, archer_share, anti_armor_share"
+                    "upgrade[{idx}] unknown requirement_band_stat '{stat_id}', expected one of: tier0_share, shielded_share, frontline_share, anti_cavalry_share, support_share, cavalry_share, archer_share, anti_armor_share"
                 );
             }
             let bound = if requirement_kind == "band_at_least" {
@@ -1815,6 +1850,10 @@ fn is_supported_upgrade_requirement_trait(trait_id: &str) -> bool {
     )
 }
 
+fn is_supported_upgrade_reward_lane(lane: &str) -> bool {
+    matches!(lane, "minor" | "major")
+}
+
 fn deprecated_upgrade_replacement(id: &str) -> Option<&'static str> {
     DEPRECATED_UPGRADE_ID_REPLACEMENTS
         .iter()
@@ -1834,6 +1873,7 @@ fn is_supported_upgrade_requirement_band_stat(stat_id: &str) -> bool {
         "tier0_share"
             | "shielded_share"
             | "frontline_share"
+            | "anti_cavalry_share"
             | "support_share"
             | "cavalry_share"
             | "archer_share"
@@ -2243,7 +2283,7 @@ mod tests {
         write_config(
             dir,
             "upgrades.json",
-            r#"{"upgrades":[{"id":"u","kind":"damage","value":1.0}]}"#,
+            r#"{"upgrades":[{"id":"u","kind":"damage","value":1.0,"reward_lane":"minor"}]}"#,
         );
         write_config(
             dir,
@@ -2878,6 +2918,7 @@ mod tests {
                   "id":"mob_custom",
                   "kind":"mob_fury",
                   "value":1.0,
+                  "reward_lane":"minor",
                   "requirement_type":"unknown_gate"
                 }
               ]
@@ -2903,6 +2944,7 @@ mod tests {
                   "id":"trait_gate",
                   "kind":"mob_fury",
                   "value":1.0,
+                  "reward_lane":"minor",
                   "requirement_type":"has_trait",
                   "requirement_trait":"shielded"
                 },
@@ -2910,6 +2952,7 @@ mod tests {
                   "id":"band_gate",
                   "kind":"mob_justice",
                   "value":1.0,
+                  "reward_lane":"minor",
                   "requirement_type":"band_at_least",
                   "requirement_band_stat":"frontline_share",
                   "requirement_band_at_least":"moderate"
@@ -2934,6 +2977,7 @@ mod tests {
                   "id":"bad_band",
                   "kind":"mob_fury",
                   "value":1.0,
+                  "reward_lane":"minor",
                   "requirement_type":"band_at_most",
                   "requirement_band_stat":"support_share",
                   "requirement_band_at_most":"legendary"
@@ -2958,6 +3002,7 @@ mod tests {
                   "id":"formation_gate",
                   "kind":"mob_fury",
                   "value":1.0,
+                  "reward_lane":"minor",
                   "requirement_type":"formation_active",
                   "requirement_active_formation":"wedge"
                 }
@@ -2984,7 +3029,8 @@ mod tests {
                 {
                   "id":"mystery_up",
                   "kind":"totally_new_kind",
-                  "value":1.0
+                  "value":1.0,
+                  "reward_lane":"minor"
                 }
               ]
             }"#,
@@ -2996,8 +3042,9 @@ mod tests {
     #[test]
     fn rejects_deprecated_upgrade_ids_with_replacement_hint() {
         let legacy_ids = [
-            ("fast_learner_up_10", "fast_learner_up"),
-            ("fast_learner_up_15", "fast_learner_up"),
+            ("fast_learner_up", "quartermaster_up"),
+            ("fast_learner_up_10", "quartermaster_up"),
+            ("fast_learner_up_15", "quartermaster_up"),
             ("mob_fury_shielded_host", "mob_fury"),
             ("mob_justice_frontline_bias", "mob_justice"),
             ("mob_mercy_support_ceiling", "mob_mercy"),
@@ -3015,7 +3062,8 @@ mod tests {
                         {{
                           "id":"{legacy_id}",
                           "kind":"mob_fury",
-                          "value":1.0
+                          "value":1.0,
+                          "reward_lane":"minor"
                         }}
                       ]
                     }}"#
@@ -3041,13 +3089,94 @@ mod tests {
             "upgrades.json",
             r#"{
               "upgrades":[
-                {"id":"dup","kind":"damage","value":1.0},
-                {"id":"dup","kind":"armor","value":1.0}
+                {"id":"dup","kind":"damage","value":1.0,"reward_lane":"minor"},
+                {"id":"dup","kind":"armor","value":1.0,"reward_lane":"minor"}
               ]
             }"#,
         );
         let err = GameData::load_from_dir(tmp.path()).expect_err("expected duplicate id failure");
         assert!(err.to_string().contains("duplicate id"));
+    }
+
+    #[test]
+    fn rejects_legacy_upgrade_roll_fields() {
+        let tmp = TempDir::new().expect("tmp");
+        write_valid_set(tmp.path());
+        write_config(
+            tmp.path(),
+            "upgrades.json",
+            r#"{
+              "upgrades":[
+                {
+                  "id":"legacy_roll",
+                  "kind":"damage",
+                  "value":1.0,
+                  "reward_lane":"minor",
+                  "min_value":1.0
+                }
+              ]
+            }"#,
+        );
+        let err =
+            GameData::load_from_dir(tmp.path()).expect_err("expected legacy roll field failure");
+        assert!(
+            err.to_string()
+                .contains("legacy roll fields are no longer supported")
+        );
+    }
+
+    #[test]
+    fn rejects_upgrade_with_invalid_diminishing_factor() {
+        let tmp = TempDir::new().expect("tmp");
+        write_valid_set(tmp.path());
+        write_config(
+            tmp.path(),
+            "upgrades.json",
+            r#"{
+              "upgrades":[
+                {
+                  "id":"bad_diminishing",
+                  "kind":"damage",
+                  "value":1.0,
+                  "reward_lane":"minor",
+                  "diminishing_factor":1.2
+                }
+              ]
+            }"#,
+        );
+        let err = GameData::load_from_dir(tmp.path())
+            .expect_err("expected diminishing factor validation failure");
+        assert!(
+            err.to_string()
+                .contains("diminishing_factor must be in the range (0, 1)")
+        );
+    }
+
+    #[test]
+    fn rejects_major_upgrade_without_downside() {
+        let tmp = TempDir::new().expect("tmp");
+        write_valid_set(tmp.path());
+        write_config(
+            tmp.path(),
+            "upgrades.json",
+            r#"{
+              "upgrades":[
+                {
+                  "id":"major_missing_downside",
+                  "kind":"doctrine_command_net",
+                  "value":20.0,
+                  "reward_lane":"major",
+                  "one_time":true
+                }
+              ]
+            }"#,
+        );
+        let err = GameData::load_from_dir(tmp.path())
+            .expect_err("expected major downside validation failure");
+        assert!(
+            err.to_string()
+                .contains("major upgrades must provide a non-empty downside")
+        );
     }
 
     #[test]

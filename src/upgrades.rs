@@ -1,4 +1,4 @@
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use bevy::prelude::*;
 
@@ -15,10 +15,6 @@ use crate::squad::RosterEconomy;
 
 const LEVEL_UP_OPTION_COUNT: usize = 5;
 const MAJOR_REWARD_LEVEL_INTERVAL: u32 = 5;
-const DEFAULT_UPGRADE_WEIGHT_EXPONENT: f32 = 2.0;
-const UPGRADE_VALUE_TIER_COUNT: u32 = 5;
-const UPGRADE_HIGH_TIER_DROP_OFF_MULTIPLIER: f32 = 1.55;
-const UPGRADE_RARITY_BONUS_EFFECTIVENESS: f32 = 0.5;
 const ONE_TIME_OPTION_WEIGHT: f32 = 0.22;
 const NORMAL_OPTION_WEIGHT: f32 = 1.0;
 const MAX_UNIQUE_UPGRADES: usize = 5;
@@ -32,6 +28,15 @@ const MOB_FURY_MOVE_SPEED_BONUS: f32 = 24.0;
 const MOB_FURY_LOSS_MITIGATION: f32 = 0.25;
 const MOB_JUSTICE_EXECUTE_THRESHOLD: f32 = 0.10;
 const MOB_MERCY_RESCUE_TIME_MULTIPLIER: f32 = 0.5;
+const DOCTRINE_EXECUTION_RITES_DAMAGE_BONUS: f32 = 0.14;
+const DOCTRINE_EXECUTION_RITES_EXECUTE_THRESHOLD: f32 = 0.18;
+const DOCTRINE_EXECUTION_RITES_RESCUE_PENALTY: f32 = 1.25;
+const DOCTRINE_COUNTERVOLLEY_DAMAGE_BONUS: f32 = 0.18;
+const DOCTRINE_COUNTERVOLLEY_ATTACK_SPEED_BONUS: f32 = 0.12;
+const DOCTRINE_COUNTERVOLLEY_MORALE_LOSS_MULTIPLIER: f32 = 1.12;
+const DOCTRINE_PIKE_HEDGEHOG_DAMAGE_BONUS: f32 = 0.16;
+const DOCTRINE_PIKE_HEDGEHOG_MOVE_SPEED_PENALTY: f32 = 14.0;
+const DOCTRINE_PIKE_HEDGEHOG_MORALE_LOSS_MULTIPLIER: f32 = 0.88;
 const UNIQUE_SLOT_TRADEOFF_KIND: &str = "unique_slot_tradeoff";
 const MAX_SKILL_COOLDOWN_REDUCTION: f32 = 0.75;
 const LUCK_TO_CRIT_CHANCE_MULTIPLIER: f32 = 0.5;
@@ -46,7 +51,7 @@ pub fn is_supported_upgrade_kind(kind: &str) -> bool {
         kind,
         "damage"
             | "attack_speed"
-            | "fast_learner"
+            | "quartermaster"
             | "luck"
             | "crit_chance"
             | "crit_damage"
@@ -65,6 +70,12 @@ pub fn is_supported_upgrade_kind(kind: &str) -> bool {
             | "mob_fury"
             | "mob_justice"
             | "mob_mercy"
+            | "doctrine_command_net"
+            | "doctrine_stalwart_oath"
+            | "doctrine_forced_march"
+            | "doctrine_execution_rites"
+            | "doctrine_countervolley"
+            | "doctrine_pike_hedgehog"
             | UNIQUE_SLOT_TRADEOFF_KIND
     )
 }
@@ -124,11 +135,42 @@ pub enum UpgradeRewardKind {
     Major,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum UpgradeDraftLane {
+    Minor,
+    Major,
+}
+
+impl UpgradeRewardKind {
+    const fn lane(self) -> UpgradeDraftLane {
+        match self {
+            UpgradeRewardKind::Minor => UpgradeDraftLane::Minor,
+            UpgradeRewardKind::Major => UpgradeDraftLane::Major,
+        }
+    }
+}
+
 #[derive(Resource, Clone, Debug, Default)]
 pub struct OneTimeUpgradeTracker {
     pub acquired_ids: HashSet<String>,
     pub extra_slots: usize,
     pub mythical_rolls_locked: bool,
+}
+
+#[derive(Resource, Clone, Debug, Default)]
+pub struct UpgradeStackTracker {
+    stacks_by_id: HashMap<String, u32>,
+}
+
+impl UpgradeStackTracker {
+    fn count_for(&self, id: &str) -> u32 {
+        self.stacks_by_id.get(id).copied().unwrap_or(0)
+    }
+
+    fn increment(&mut self, id: &str) {
+        let next = self.count_for(id).saturating_add(1);
+        self.stacks_by_id.insert(id.to_string(), next);
+    }
 }
 
 #[derive(Resource, Clone, Copy, Debug, Default)]
@@ -239,6 +281,7 @@ pub enum RequirementBandStat {
     Tier0Share,
     ShieldedShare,
     FrontlineShare,
+    AntiCavalryShare,
     SupportShare,
     CavalryShare,
     ArcherShare,
@@ -251,6 +294,7 @@ impl RequirementBandStat {
             "tier0_share" => Some(Self::Tier0Share),
             "shielded_share" => Some(Self::ShieldedShare),
             "frontline_share" => Some(Self::FrontlineShare),
+            "anti_cavalry_share" => Some(Self::AntiCavalryShare),
             "support_share" => Some(Self::SupportShare),
             "cavalry_share" => Some(Self::CavalryShare),
             "archer_share" => Some(Self::ArcherShare),
@@ -264,6 +308,7 @@ impl RequirementBandStat {
             Self::Tier0Share => "Tier-0 share",
             Self::ShieldedShare => "Shielded share",
             Self::FrontlineShare => "Frontline share",
+            Self::AntiCavalryShare => "Anti-cavalry share",
             Self::SupportShare => "Support share",
             Self::CavalryShare => "Cavalry share",
             Self::ArcherShare => "Archer share",
@@ -393,18 +438,6 @@ pub enum UpgradeValueTier {
     Unique,
 }
 
-impl UpgradeValueTier {
-    const fn from_weighted_index(index: u32) -> Self {
-        match index {
-            0 => Self::Common,
-            1 => Self::Uncommon,
-            2 => Self::Rare,
-            3 => Self::Epic,
-            _ => Self::Mythical,
-        }
-    }
-}
-
 #[derive(Resource, Clone, Copy, Debug)]
 struct LevelPassiveRuntime {
     applied_level: u32,
@@ -457,6 +490,7 @@ impl Plugin for UpgradePlugin {
             .init_resource::<ProgressionLockFeedback>()
             .init_resource::<UpgradeDraft>()
             .init_resource::<OneTimeUpgradeTracker>()
+            .init_resource::<UpgradeStackTracker>()
             .init_resource::<UpgradeRarityRollBonus>()
             .init_resource::<SkillTimingBuffs>()
             .init_resource::<SkillBookLog>()
@@ -471,6 +505,7 @@ impl Plugin for UpgradePlugin {
                 Update,
                 (
                     reset_progress_on_run_start,
+                    reset_upgrade_stack_tracker_on_run_start,
                     reset_pending_reward_queue_on_run_start,
                     reset_progress_lock_feedback_on_run_start,
                 )
@@ -558,6 +593,17 @@ fn reset_progress_on_run_start(
     rng.reseed_from_time();
 }
 
+fn reset_upgrade_stack_tracker_on_run_start(
+    mut start_events: EventReader<StartRunEvent>,
+    mut stack_tracker: ResMut<UpgradeStackTracker>,
+) {
+    if start_events.is_empty() {
+        return;
+    }
+    for _ in start_events.read() {}
+    *stack_tracker = UpgradeStackTracker::default();
+}
+
 fn reset_pending_reward_queue_on_run_start(
     mut start_events: EventReader<StartRunEvent>,
     mut pending_rewards: ResMut<PendingRewardQueue>,
@@ -625,6 +671,7 @@ fn open_draft_on_pending_levels(
     mut lock_feedback: ResMut<ProgressionLockFeedback>,
     mut draft: ResMut<UpgradeDraft>,
     one_time_tracker: Res<OneTimeUpgradeTracker>,
+    stack_tracker: Res<UpgradeStackTracker>,
     upgrade_rarity_bonus: Res<UpgradeRarityRollBonus>,
     skillbar: Res<FormationSkillBar>,
     roster_economy: Option<Res<RosterEconomy>>,
@@ -678,6 +725,7 @@ fn open_draft_on_pending_levels(
         draft.reward_kind,
         upgrade_rarity_bonus.percent,
         &one_time_tracker,
+        &stack_tracker,
         &skillbar,
     );
     draft.active = !draft.options.is_empty();
@@ -808,6 +856,7 @@ fn resolve_upgrade_selection(
     mut skill_book: ResMut<SkillBookLog>,
     mut conditional_ownership: ResMut<ConditionalUpgradeOwnership>,
     mut one_time_tracker: ResMut<OneTimeUpgradeTracker>,
+    mut stack_tracker: ResMut<UpgradeStackTracker>,
     mut item_rarity_bonus: ResMut<ItemRarityRollBonus>,
     mut upgrade_rarity_bonus: ResMut<UpgradeRarityRollBonus>,
     mut skill_timing: ResMut<SkillTimingBuffs>,
@@ -823,8 +872,19 @@ fn resolve_upgrade_selection(
     };
     let index = selection.option_index.min(draft.options.len() - 1);
     let picked = draft.options[index].clone();
+    let current_stacks = stack_tracker.count_for(picked.id.as_str());
+    if let Some(cap) = picked.stack_cap
+        && current_stacks >= cap
+    {
+        draft.active = false;
+        draft.options.clear();
+        next_state.set(GameState::InRun);
+        return;
+    }
+    let mut applied = picked.clone();
+    applied.value = effective_upgrade_value(&picked, current_stacks);
     apply_upgrade(
-        &picked,
+        &applied,
         &mut buffs,
         &mut item_rarity_bonus,
         &mut upgrade_rarity_bonus,
@@ -832,10 +892,11 @@ fn resolve_upgrade_selection(
         &mut conditional_ownership,
         &mut skillbar,
     );
-    apply_one_time_tracker_effects(&picked, &mut one_time_tracker);
-    record_skill_book_entry(&mut skill_book, &picked);
-    if picked.one_time {
-        one_time_tracker.acquired_ids.insert(picked.id.clone());
+    apply_one_time_tracker_effects(&applied, &mut one_time_tracker);
+    record_skill_book_entry(&mut skill_book, &applied);
+    stack_tracker.increment(applied.id.as_str());
+    if applied.one_time {
+        one_time_tracker.acquired_ids.insert(applied.id.clone());
     }
     draft.active = false;
     draft.options.clear();
@@ -886,7 +947,7 @@ pub fn skill_book_entry_cumulative_description(entry: &SkillBookEntry) -> String
             "Total army attack speed bonus: +{:.0}%.",
             (entry.total_value.max(0.0) * 100.0)
         ),
-        "fast_learner" => format!(
+        "quartermaster" => format!(
             "Total gold gain bonus from pickups: +{:.0}%.",
             entry.total_value.max(0.0) * 100.0
         ),
@@ -949,14 +1010,24 @@ pub fn skill_book_entry_cumulative_description(entry: &SkillBookEntry) -> String
             entry.total_value.max(0.0)
         ),
         "unique_slot_tradeoff" => {
-            "Gain +2 unique upgrade slots. Mythical value rolls are disabled for the run."
+            "Gain +2 unique upgrade slots. Downside: narrows late-run doctrine flexibility."
                 .to_string()
         }
-        "mob_fury" | "mob_justice" | "mob_mercy" | "unlock_formation" => entry.description.clone(),
+        "mob_fury"
+        | "mob_justice"
+        | "mob_mercy"
+        | "doctrine_command_net"
+        | "doctrine_stalwart_oath"
+        | "doctrine_forced_march"
+        | "doctrine_execution_rites"
+        | "doctrine_countervolley"
+        | "doctrine_pike_hedgehog"
+        | "unlock_formation" => entry.description.clone(),
         _ => entry.description.clone(),
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn roll_upgrade_options(
     pool: &[UpgradeConfig],
     rng: &mut UpgradeRngState,
@@ -964,24 +1035,31 @@ fn roll_upgrade_options(
     reward_kind: UpgradeRewardKind,
     upgrade_rarity_bonus_percent: f32,
     one_time_tracker: &OneTimeUpgradeTracker,
+    stack_tracker: &UpgradeStackTracker,
     skillbar: &FormationSkillBar,
 ) -> Vec<UpgradeConfig> {
     if pool.is_empty() || count == 0 {
         return Vec::new();
     }
+    let required_lane = reward_kind.lane();
     let unique_cap_reached =
         one_time_tracker.acquired_ids.len() >= effective_max_unique_upgrades(one_time_tracker);
     let candidate_indices: Vec<usize> = pool
         .iter()
         .enumerate()
         .filter(|(_, upgrade)| {
-            if reward_kind == UpgradeRewardKind::Minor && upgrade.kind == "unlock_formation" {
+            if upgrade_draft_lane(upgrade) != required_lane {
                 return false;
             }
             if upgrade.one_time && one_time_tracker.acquired_ids.contains(&upgrade.id) {
                 return false;
             }
             if unique_cap_reached && upgrade.one_time {
+                return false;
+            }
+            if let Some(stack_cap) = upgrade.stack_cap
+                && stack_tracker.count_for(upgrade.id.as_str()) >= stack_cap
+            {
                 return false;
             }
             if upgrade.adds_to_skillbar
@@ -1002,15 +1080,29 @@ fn roll_upgrade_options(
         .into_iter()
         .map(|idx| {
             let mut rolled = pool[idx].clone();
-            rolled.value = roll_upgrade_value(
+            let current_stacks = stack_tracker.count_for(rolled.id.as_str());
+            let rolled_value = roll_upgrade_value(
                 &rolled,
                 rng,
                 !one_time_tracker.mythical_rolls_locked,
                 upgrade_rarity_bonus_percent,
             );
+            rolled.value = effective_upgrade_value_with_base(&rolled, current_stacks, rolled_value);
             rolled
         })
         .collect()
+}
+
+fn upgrade_draft_lane(upgrade: &UpgradeConfig) -> UpgradeDraftLane {
+    match upgrade
+        .reward_lane
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or("minor")
+    {
+        "major" => UpgradeDraftLane::Major,
+        _ => UpgradeDraftLane::Minor,
+    }
 }
 
 fn draw_unique_indices(
@@ -1089,83 +1181,51 @@ fn skillbar_contains_upgrade(skillbar: &FormationSkillBar, upgrade: &UpgradeConf
 
 fn roll_upgrade_value(
     config: &UpgradeConfig,
-    rng: &mut UpgradeRngState,
-    mythical_rolls_enabled: bool,
-    upgrade_rarity_bonus_percent: f32,
+    _rng: &mut UpgradeRngState,
+    _mythical_rolls_enabled: bool,
+    _upgrade_rarity_bonus_percent: f32,
 ) -> f32 {
-    let min_value = config.min_value.unwrap_or(config.value);
-    let max_value = config.max_value.unwrap_or(min_value);
-    if (max_value - min_value).abs() <= f32::EPSILON {
-        return min_value.max(0.0);
-    }
-
-    let exponent = config
-        .weight_exponent
-        .unwrap_or(DEFAULT_UPGRADE_WEIGHT_EXPONENT)
-        .max(1.01)
-        * UPGRADE_HIGH_TIER_DROP_OFF_MULTIPLIER;
-    let rarity_bonus =
-        (upgrade_rarity_bonus_percent.max(0.0) * UPGRADE_RARITY_BONUS_EFFECTIVENESS).max(0.0);
-    let exponent = (exponent / (1.0 + rarity_bonus)).max(1.01);
-    let available_tier_count = if mythical_rolls_enabled {
-        UPGRADE_VALUE_TIER_COUNT
-    } else {
-        UPGRADE_VALUE_TIER_COUNT.saturating_sub(1)
-    };
-    let tier_index = weighted_roll_tier_index(exponent, rng, available_tier_count);
-    let value = tier_value(min_value, max_value, tier_index);
-    quantize_to_step(value, min_value, max_value, config.value_step)
+    config.value.max(0.0)
 }
 
-fn weighted_roll_tier_index(exponent: f32, rng: &mut UpgradeRngState, tier_count: u32) -> u32 {
-    let bucket_count_u32 = tier_count.max(1);
-    let roll = rng.next_f32().powf(exponent);
-    let bucket_count = bucket_count_u32 as f32;
-    ((roll * bucket_count).floor() as u32).min(bucket_count_u32.saturating_sub(1))
+fn effective_upgrade_value(upgrade: &UpgradeConfig, current_stacks: u32) -> f32 {
+    effective_upgrade_value_with_base(upgrade, current_stacks, upgrade.value.max(0.0))
 }
 
-fn tier_value(min_value: f32, max_value: f32, tier_index: u32) -> f32 {
-    if UPGRADE_VALUE_TIER_COUNT <= 1 {
-        return min_value;
-    }
-    let clamped_index = tier_index.min(UPGRADE_VALUE_TIER_COUNT - 1);
-    let normalized = clamped_index as f32 / (UPGRADE_VALUE_TIER_COUNT - 1) as f32;
-    min_value + (max_value - min_value) * normalized
+fn effective_upgrade_value_with_base(
+    upgrade: &UpgradeConfig,
+    current_stacks: u32,
+    base_value: f32,
+) -> f32 {
+    let diminishing_factor = upgrade.diminishing_factor.unwrap_or(1.0).clamp(0.01, 1.0);
+    let exponent = current_stacks as i32;
+    let diminishing_multiplier = diminishing_factor.powi(exponent);
+    (base_value.max(0.0) * diminishing_multiplier).max(0.0)
 }
 
 pub fn upgrade_value_tier(upgrade: &UpgradeConfig) -> UpgradeValueTier {
     if upgrade.one_time {
         return UpgradeValueTier::Unique;
     }
-
-    let min_value = upgrade.min_value.unwrap_or(upgrade.value);
-    let max_value = upgrade.max_value.unwrap_or(min_value);
-    if (max_value - min_value).abs() <= f32::EPSILON {
-        return UpgradeValueTier::Common;
+    match upgrade_draft_lane(upgrade) {
+        UpgradeDraftLane::Major => UpgradeValueTier::Epic,
+        UpgradeDraftLane::Minor => {
+            if upgrade.value >= 10.0 {
+                UpgradeValueTier::Rare
+            } else if upgrade.value >= 5.0 {
+                UpgradeValueTier::Uncommon
+            } else {
+                UpgradeValueTier::Common
+            }
+        }
     }
-
-    let normalized = ((upgrade.value - min_value) / (max_value - min_value)).clamp(0.0, 1.0);
-    let weighted_index =
-        (normalized * (UPGRADE_VALUE_TIER_COUNT.saturating_sub(1)) as f32).round() as u32;
-    UpgradeValueTier::from_weighted_index(weighted_index)
-}
-
-fn quantize_to_step(value: f32, min_value: f32, max_value: f32, step: Option<f32>) -> f32 {
-    let Some(step) = step else {
-        return value.clamp(min_value, max_value);
-    };
-    if step <= 0.0 {
-        return value.clamp(min_value, max_value);
-    }
-    let steps = ((value - min_value) / step).round();
-    (min_value + steps * step).clamp(min_value, max_value)
 }
 
 pub fn upgrade_card_icon(upgrade: &UpgradeConfig) -> UpgradeCardIcon {
     match upgrade.kind.as_str() {
         "damage" => UpgradeCardIcon::Damage,
         "attack_speed" => UpgradeCardIcon::AttackSpeed,
-        "fast_learner" => UpgradeCardIcon::FastLearner,
+        "quartermaster" => UpgradeCardIcon::FastLearner,
         "luck" => UpgradeCardIcon::Luck,
         "crit_chance" => UpgradeCardIcon::CritChance,
         "crit_damage" => UpgradeCardIcon::CritDamage,
@@ -1179,6 +1239,12 @@ pub fn upgrade_card_icon(upgrade: &UpgradeConfig) -> UpgradeCardIcon {
         "upgrade_rarity" => UpgradeCardIcon::UpgradeRarity,
         "skill_duration" => UpgradeCardIcon::SkillDuration,
         "cooldown_reduction" => UpgradeCardIcon::CooldownReduction,
+        "doctrine_command_net" => UpgradeCardIcon::AuthorityAura,
+        "doctrine_stalwart_oath" => UpgradeCardIcon::HospitalierAura,
+        "doctrine_forced_march" => UpgradeCardIcon::MoveSpeed,
+        "doctrine_execution_rites" => UpgradeCardIcon::MobJustice,
+        "doctrine_countervolley" => UpgradeCardIcon::AttackSpeed,
+        "doctrine_pike_hedgehog" => UpgradeCardIcon::Armor,
         "unique_slot_tradeoff" => UpgradeCardIcon::AuthorityAura,
         "formation_breach" => UpgradeCardIcon::FormationSquare,
         "mob_fury" => UpgradeCardIcon::MobFury,
@@ -1196,7 +1262,7 @@ pub fn upgrade_display_title(upgrade: &UpgradeConfig) -> &'static str {
     match upgrade.kind.as_str() {
         "damage" => "Sharpened Steel",
         "attack_speed" => "Rapid Drill",
-        "fast_learner" => "Fast Learner",
+        "quartermaster" => "Quartermaster",
         "luck" => "Fortune's Favor",
         "crit_chance" => "Killer Instinct",
         "crit_damage" => "Deadly Precision",
@@ -1210,6 +1276,12 @@ pub fn upgrade_display_title(upgrade: &UpgradeConfig) -> &'static str {
         "upgrade_rarity" => "Tactical Insight",
         "skill_duration" => "Enduring Cadence",
         "cooldown_reduction" => "Swift Drills",
+        "doctrine_command_net" => "Command Net",
+        "doctrine_stalwart_oath" => "Stalwart Oath",
+        "doctrine_forced_march" => "Forced March Doctrine",
+        "doctrine_execution_rites" => "Execution Rites",
+        "doctrine_countervolley" => "Countervolley Doctrine",
+        "doctrine_pike_hedgehog" => "Pike Hedgehog",
         "unique_slot_tradeoff" => "War Council Edict",
         "formation_breach" => "Into the Wolf's Dev",
         "mob_fury" => "Mob's Fury",
@@ -1235,7 +1307,7 @@ pub fn upgrade_display_description(upgrade: &UpgradeConfig) -> String {
             "Increase army attack speed by +{:.0}%.",
             upgrade.value * 100.0
         ),
-        "fast_learner" => format!(
+        "quartermaster" => format!(
             "Increase gold gained from all gold pickups by +{:.0}%.",
             upgrade.value * 100.0
         ),
@@ -1281,17 +1353,32 @@ pub fn upgrade_display_description(upgrade: &UpgradeConfig) -> String {
             upgrade.value,
             upgrade.value * HOSPITALIER_MORALE_REGEN_SCALE
         ),
+        "doctrine_command_net" => format!(
+            "Major doctrine: commander aura radius +{:.0}, stronger enemy morale pressure in aura. Downside: -8% global damage.",
+            upgrade.value
+        ),
+        "doctrine_stalwart_oath" => format!(
+            "Major doctrine: +{:.1} armor and stronger sustain aura regen. Downside: -10 movement speed.",
+            upgrade.value
+        ),
+        "doctrine_forced_march" => format!(
+            "Major doctrine: +{:.0} movement speed and faster attacks. Downside: armor is reduced.",
+            upgrade.value
+        ),
+        "doctrine_execution_rites" => "Major doctrine: conditional execute threshold increases and damage rises. Downside: rescue channels are slower while active.".to_string(),
+        "doctrine_countervolley" => "Major doctrine: archer-heavy rosters gain burst damage and attack cadence. Downside: morale loss under pressure increases.".to_string(),
+        "doctrine_pike_hedgehog" => "Major doctrine: anti-cavalry lines gain damage and steadier morale under pressure. Downside: formation movement slows.".to_string(),
         "unique_slot_tradeoff" => format!(
-            "Gain +{:.0} Unique upgrade slots, but Mythical value rolls are disabled for the run.",
+            "Gain +{:.0} Unique upgrade slots, but narrows late-run doctrine flexibility.",
             upgrade.value.max(0.0)
         ),
         "formation_breach" => format!(
             "Enemies inside your active formation footprint take +{:.0}% damage.",
             upgrade.value
         ),
-        "mob_fury" => "If tier-0 share requirement is met, friendlies gain +25% morale loss mitigation and bonus damage, attack speed, and movement speed.".to_string(),
-        "mob_justice" => "If tier-0 share requirement is met, hits execute enemies below 10% HP.".to_string(),
-        "mob_mercy" => "If tier-0 share requirement is met, rescue channel time is reduced by 50%.".to_string(),
+        "mob_fury" => "If frontline share is High or above, friendlies gain +25% morale loss mitigation and bonus damage, attack speed, and movement speed.".to_string(),
+        "mob_justice" => "If anti-armor share is Moderate or above, hits execute enemies below 10% HP.".to_string(),
+        "mob_mercy" => "If support share is High or above, rescue channel time is reduced by 50%.".to_string(),
         "unlock_formation" => match upgrade.formation_id.as_deref() {
             Some("circle") => "Major reward only: unlock Circle formation on the skill bar (higher defense, lower mobility and offense).".to_string(),
             Some("skean") => "Major reward only: unlock Skean formation on the skill bar (faster movement and stronger moving offense, lower defense).".to_string(),
@@ -1321,7 +1408,7 @@ fn apply_upgrade(
         "attack_speed" => {
             buffs.attack_speed_multiplier += upgrade.value;
         }
-        "fast_learner" => {
+        "quartermaster" => {
             buffs.gold_gain_multiplier += upgrade.value;
         }
         "luck" => {
@@ -1384,6 +1471,22 @@ fn apply_upgrade(
                 .inside_formation_damage_multiplier
                 .max(1.0 + upgrade.value * 0.01);
         }
+        "doctrine_command_net" => {
+            buffs.commander_aura_radius_bonus += upgrade.value;
+            buffs.authority_enemy_morale_drain_per_sec += upgrade.value * 0.05;
+            buffs.damage_multiplier = (buffs.damage_multiplier - 0.08).max(0.6);
+        }
+        "doctrine_stalwart_oath" => {
+            buffs.armor_bonus += upgrade.value;
+            buffs.hospitalier_hp_regen_per_sec += 0.35;
+            buffs.hospitalier_morale_regen_per_sec += 0.035;
+            buffs.move_speed_bonus -= 10.0;
+        }
+        "doctrine_forced_march" => {
+            buffs.move_speed_bonus += upgrade.value;
+            buffs.attack_speed_multiplier += 0.12;
+            buffs.armor_bonus = (buffs.armor_bonus - 1.5).max(-8.0);
+        }
         "unlock_formation" => {
             if let Some(formation) = upgrade
                 .formation_id
@@ -1393,7 +1496,12 @@ fn apply_upgrade(
                 skillbar.try_add_formation(formation);
             }
         }
-        "mob_fury" | "mob_justice" | "mob_mercy" => {
+        "mob_fury"
+        | "mob_justice"
+        | "mob_mercy"
+        | "doctrine_execution_rites"
+        | "doctrine_countervolley"
+        | "doctrine_pike_hedgehog" => {
             register_conditional_upgrade(conditional_owned, upgrade);
         }
         _ => {}
@@ -1408,9 +1516,10 @@ fn register_conditional_upgrade(
     if let Some(existing) = conditional_owned
         .entries
         .iter_mut()
-        .find(|entry| entry.id == upgrade.id)
+        .find(|entry| entry.kind == upgrade.kind)
     {
         existing.stacks = existing.stacks.saturating_add(1);
+        existing.id = upgrade.id.clone();
         existing.requirement = requirement;
         return;
     }
@@ -1515,7 +1624,7 @@ fn conditional_effects_from_owned(
 ) {
     let mut effects = ConditionalUpgradeEffects::default();
     let mut status_entries = Vec::with_capacity(entries.len());
-    let mut applied_ids = HashSet::new();
+    let mut applied_kinds = HashSet::new();
 
     for entry in entries {
         let (active, detail) =
@@ -1529,7 +1638,7 @@ fn conditional_effects_from_owned(
         if !active {
             continue;
         }
-        if !applied_ids.insert(entry.id.clone()) {
+        if !applied_kinds.insert(entry.kind.clone()) {
             continue;
         }
         match entry.kind.as_str() {
@@ -1549,6 +1658,26 @@ fn conditional_effects_from_owned(
                 effects.rescue_time_multiplier = effects
                     .rescue_time_multiplier
                     .min(MOB_MERCY_RESCUE_TIME_MULTIPLIER);
+            }
+            "doctrine_execution_rites" => {
+                effects.friendly_damage_multiplier *= 1.0 + DOCTRINE_EXECUTION_RITES_DAMAGE_BONUS;
+                effects.execute_below_health_ratio = effects
+                    .execute_below_health_ratio
+                    .max(DOCTRINE_EXECUTION_RITES_EXECUTE_THRESHOLD);
+                effects.rescue_time_multiplier *= DOCTRINE_EXECUTION_RITES_RESCUE_PENALTY;
+            }
+            "doctrine_countervolley" => {
+                effects.friendly_damage_multiplier *= 1.0 + DOCTRINE_COUNTERVOLLEY_DAMAGE_BONUS;
+                effects.friendly_attack_speed_multiplier *=
+                    1.0 + DOCTRINE_COUNTERVOLLEY_ATTACK_SPEED_BONUS;
+                effects.friendly_morale_loss_multiplier *=
+                    DOCTRINE_COUNTERVOLLEY_MORALE_LOSS_MULTIPLIER;
+            }
+            "doctrine_pike_hedgehog" => {
+                effects.friendly_damage_multiplier *= 1.0 + DOCTRINE_PIKE_HEDGEHOG_DAMAGE_BONUS;
+                effects.friendly_move_speed_bonus -= DOCTRINE_PIKE_HEDGEHOG_MOVE_SPEED_PENALTY;
+                effects.friendly_morale_loss_multiplier *=
+                    DOCTRINE_PIKE_HEDGEHOG_MORALE_LOSS_MULTIPLIER;
             }
             _ => {}
         }
@@ -1660,6 +1789,7 @@ pub struct RequirementEvalContext {
     tier0_share: f32,
     shielded_share: f32,
     frontline_share: f32,
+    anti_cavalry_share: f32,
     support_share: f32,
     cavalry_share: f32,
     archer_share: f32,
@@ -1691,6 +1821,7 @@ impl RequirementEvalContext {
             RequirementBandStat::Tier0Share => self.tier0_share,
             RequirementBandStat::ShieldedShare => self.shielded_share,
             RequirementBandStat::FrontlineShare => self.frontline_share,
+            RequirementBandStat::AntiCavalryShare => self.anti_cavalry_share,
             RequirementBandStat::SupportShare => self.support_share,
             RequirementBandStat::CavalryShare => self.cavalry_share,
             RequirementBandStat::ArcherShare => self.archer_share,
@@ -1750,6 +1881,7 @@ fn requirement_eval_context(roster: Option<&RosterEconomy>) -> RequirementEvalCo
         tier0_share: roster_tier0_share(roster).clamp(0.0, 1.0),
         shielded_share: to_share(shielded),
         frontline_share: to_share(frontline),
+        anti_cavalry_share: to_share(anti_cavalry),
         support_share: to_share(support),
         cavalry_share: to_share(cavalry),
         archer_share: to_share(archer),
@@ -1791,10 +1923,10 @@ mod tests {
     use crate::model::GlobalBuffs;
     use crate::upgrades::{
         OneTimeUpgradeTracker, SkillBookLog, SkillTimingBuffs, UpgradeCardIcon,
-        UpgradeRarityRollBonus, UpgradeRngState, UpgradeValueTier, commander_level_hp_bonus,
-        consume_hear_the_call_for_hero_recruit, progression_lock_reason, roll_upgrade_options,
-        roll_upgrade_value, upgrade_card_icon, upgrade_display_description, upgrade_display_title,
-        upgrade_value_tier,
+        UpgradeRarityRollBonus, UpgradeRngState, UpgradeStackTracker, UpgradeValueTier,
+        commander_level_hp_bonus, consume_hear_the_call_for_hero_recruit, progression_lock_reason,
+        roll_upgrade_options, roll_upgrade_value, upgrade_card_icon, upgrade_display_description,
+        upgrade_display_title, upgrade_value_tier,
     };
 
     fn upgrade(kind: &str, id: &str) -> UpgradeConfig {
@@ -1802,10 +1934,16 @@ mod tests {
             id: id.to_string(),
             kind: kind.to_string(),
             value: 1.0,
-            min_value: Some(1.0),
-            max_value: Some(4.0),
-            value_step: Some(0.5),
-            weight_exponent: Some(2.0),
+            reward_lane: Some("minor".to_string()),
+            doctrine_tags: Vec::new(),
+            stack_cap: None,
+            diminishing_factor: None,
+            downside: None,
+            major_unlock_hint: None,
+            min_value: None,
+            max_value: None,
+            value_step: None,
+            weight_exponent: None,
             one_time: false,
             adds_to_skillbar: false,
             formation_id: None,
@@ -1873,6 +2011,7 @@ mod tests {
             super::UpgradeRewardKind::Minor,
             0.0,
             &OneTimeUpgradeTracker::default(),
+            &UpgradeStackTracker::default(),
             &FormationSkillBar::default(),
         );
         assert_eq!(picks.len(), 3);
@@ -1907,85 +2046,27 @@ mod tests {
                 super::UpgradeRewardKind::Minor,
                 0.0,
                 &OneTimeUpgradeTracker::default(),
+                &UpgradeStackTracker::default(),
                 &FormationSkillBar::default(),
             );
             total_seen += picks.len() as u32;
             one_time_seen += picks.iter().filter(|entry| entry.one_time).count() as u32;
         }
         let ratio = one_time_seen as f32 / total_seen as f32;
-        assert!(ratio < 0.22, "one-time ratio too high: {ratio}");
+        assert!(ratio < 0.24, "one-time ratio too high: {ratio}");
     }
 
     #[test]
-    fn weighted_roll_stays_in_min_max_bounds() {
-        let upgrade = upgrade("damage", "damage");
+    fn deterministic_roll_always_returns_authored_value() {
+        let mut authored = upgrade("damage", "authored");
+        authored.value = 7.5;
         let mut rng = UpgradeRngState {
             state: 0xCAFE_BABE_0123_4567,
         };
-        for _ in 0..50 {
-            let value = roll_upgrade_value(&upgrade, &mut rng, true, 0.0);
-            assert!((1.0..=4.0).contains(&value));
+        for _ in 0..64 {
+            let value = roll_upgrade_value(&authored, &mut rng, true, 0.8);
+            assert!((value - 7.5).abs() < 0.0001);
         }
-    }
-
-    #[test]
-    fn weighted_roll_uses_fixed_five_value_buckets() {
-        let mut upgrade = upgrade("damage", "bucketed");
-        upgrade.min_value = Some(10.0);
-        upgrade.max_value = Some(30.0);
-        upgrade.value_step = None;
-        let mut rng = UpgradeRngState {
-            state: 0x1234_ABCD_9876_EF01,
-        };
-
-        let mut distinct_scaled = HashSet::new();
-        for _ in 0..300 {
-            let value = roll_upgrade_value(&upgrade, &mut rng, true, 0.0);
-            distinct_scaled.insert((value * 1000.0).round() as i32);
-        }
-        assert!(distinct_scaled.len() <= super::UPGRADE_VALUE_TIER_COUNT as usize);
-
-        let expected = [10.0, 15.0, 20.0, 25.0, 30.0];
-        for scaled in distinct_scaled {
-            let value = scaled as f32 / 1000.0;
-            assert!(
-                expected
-                    .iter()
-                    .any(|candidate| (value - *candidate).abs() < 0.001)
-            );
-        }
-    }
-
-    #[test]
-    fn weighted_roll_distribution_descends_by_tier_rarity() {
-        let mut upgrade = upgrade("damage", "rarity_distribution");
-        upgrade.min_value = Some(10.0);
-        upgrade.max_value = Some(30.0);
-        upgrade.value_step = None;
-        upgrade.weight_exponent = Some(2.0);
-
-        let mut counts = [0u32; 5];
-        let mut rng = UpgradeRngState {
-            state: 0x9ABC_DEF0_1234_5678,
-        };
-
-        for _ in 0..20_000 {
-            let value = roll_upgrade_value(&upgrade, &mut rng, true, 0.0);
-            upgrade.value = value;
-            match upgrade_value_tier(&upgrade) {
-                UpgradeValueTier::Common => counts[0] += 1,
-                UpgradeValueTier::Uncommon => counts[1] += 1,
-                UpgradeValueTier::Rare => counts[2] += 1,
-                UpgradeValueTier::Epic => counts[3] += 1,
-                UpgradeValueTier::Mythical => counts[4] += 1,
-                UpgradeValueTier::Unique => unreachable!("weighted non-one-time roll"),
-            }
-        }
-
-        assert!(counts[0] > counts[1]);
-        assert!(counts[1] > counts[2]);
-        assert!(counts[2] > counts[3]);
-        assert!(counts[3] > counts[4]);
     }
 
     #[test]
@@ -1999,21 +2080,24 @@ mod tests {
     }
 
     #[test]
-    fn weighted_upgrade_values_map_to_named_tiers() {
-        let mut weighted = upgrade("damage", "damage_tiered");
-        weighted.min_value = Some(10.0);
-        weighted.max_value = Some(30.0);
+    fn upgrade_value_tier_maps_lane_and_one_time_contract() {
+        let mut minor = upgrade("damage", "minor_common");
+        minor.value = 2.0;
+        assert_eq!(upgrade_value_tier(&minor), UpgradeValueTier::Common);
 
-        weighted.value = 10.0;
-        assert_eq!(upgrade_value_tier(&weighted), UpgradeValueTier::Common);
-        weighted.value = 15.0;
-        assert_eq!(upgrade_value_tier(&weighted), UpgradeValueTier::Uncommon);
-        weighted.value = 20.0;
-        assert_eq!(upgrade_value_tier(&weighted), UpgradeValueTier::Rare);
-        weighted.value = 25.0;
-        assert_eq!(upgrade_value_tier(&weighted), UpgradeValueTier::Epic);
-        weighted.value = 30.0;
-        assert_eq!(upgrade_value_tier(&weighted), UpgradeValueTier::Mythical);
+        minor.value = 6.0;
+        assert_eq!(upgrade_value_tier(&minor), UpgradeValueTier::Uncommon);
+
+        minor.value = 12.0;
+        assert_eq!(upgrade_value_tier(&minor), UpgradeValueTier::Rare);
+
+        let mut major = upgrade("mob_fury", "major_lane");
+        major.reward_lane = Some("major".to_string());
+        major.one_time = false;
+        assert_eq!(upgrade_value_tier(&major), UpgradeValueTier::Epic);
+
+        major.one_time = true;
+        assert_eq!(upgrade_value_tier(&major), UpgradeValueTier::Unique);
     }
 
     #[test]
@@ -2022,6 +2106,12 @@ mod tests {
             id: "unlock_diamond".to_string(),
             kind: "unlock_formation".to_string(),
             value: 1.0,
+            reward_lane: Some("major".to_string()),
+            doctrine_tags: Vec::new(),
+            stack_cap: None,
+            diminishing_factor: None,
+            downside: Some("Consumes a major doctrine pick.".to_string()),
+            major_unlock_hint: None,
             min_value: None,
             max_value: None,
             value_step: None,
@@ -2051,6 +2141,7 @@ mod tests {
             super::UpgradeRewardKind::Minor,
             0.0,
             &tracker,
+            &UpgradeStackTracker::default(),
             &FormationSkillBar::default(),
         );
         assert!(picks.is_empty());
@@ -2086,6 +2177,7 @@ mod tests {
             super::UpgradeRewardKind::Minor,
             0.0,
             &tracker,
+            &UpgradeStackTracker::default(),
             &FormationSkillBar::default(),
         );
 
@@ -2094,12 +2186,18 @@ mod tests {
     }
 
     #[test]
-    fn unique_slot_tradeoff_extends_unique_cap_and_blocks_mythical_rolls() {
+    fn unique_slot_tradeoff_extends_unique_cap_and_marks_tradeoff_state() {
         let mut tracker = OneTimeUpgradeTracker::default();
         let tradeoff = UpgradeConfig {
             id: "war_council_edict".to_string(),
             kind: "unique_slot_tradeoff".to_string(),
             value: 2.0,
+            reward_lane: Some("major".to_string()),
+            doctrine_tags: Vec::new(),
+            stack_cap: None,
+            diminishing_factor: None,
+            downside: Some("Reduced doctrine flexibility.".to_string()),
+            major_unlock_hint: None,
             min_value: None,
             max_value: None,
             value_step: None,
@@ -2142,22 +2240,10 @@ mod tests {
             super::UpgradeRewardKind::Minor,
             0.0,
             &tracker,
+            &UpgradeStackTracker::default(),
             &FormationSkillBar::default(),
         );
         assert!(picks.iter().any(|upgrade| upgrade.one_time));
-
-        let mut weighted = upgrade("damage", "weighted");
-        weighted.min_value = Some(10.0);
-        weighted.max_value = Some(30.0);
-        weighted.value_step = None;
-        let mut weighted_rng = UpgradeRngState {
-            state: 0xFEDC_BA98_7654_3210,
-        };
-        for _ in 0..1_000 {
-            let value = roll_upgrade_value(&weighted, &mut weighted_rng, false, 0.0);
-            weighted.value = value;
-            assert_ne!(upgrade_value_tier(&weighted), UpgradeValueTier::Mythical);
-        }
     }
 
     #[test]
@@ -2166,6 +2252,12 @@ mod tests {
             id: "unlock_diamond".to_string(),
             kind: "unlock_formation".to_string(),
             value: 1.0,
+            reward_lane: Some("major".to_string()),
+            doctrine_tags: Vec::new(),
+            stack_cap: None,
+            diminishing_factor: None,
+            downside: Some("Consumes a major doctrine pick.".to_string()),
+            major_unlock_hint: None,
             min_value: None,
             max_value: None,
             value_step: None,
@@ -2208,6 +2300,7 @@ mod tests {
             super::UpgradeRewardKind::Minor,
             0.0,
             &OneTimeUpgradeTracker::default(),
+            &UpgradeStackTracker::default(),
             &full_skillbar,
         );
         assert_eq!(picks.len(), 1);
@@ -2220,6 +2313,12 @@ mod tests {
             id: "unlock_diamond".to_string(),
             kind: "unlock_formation".to_string(),
             value: 1.0,
+            reward_lane: Some("major".to_string()),
+            doctrine_tags: Vec::new(),
+            stack_cap: None,
+            diminishing_factor: None,
+            downside: Some("Consumes a major doctrine pick.".to_string()),
+            major_unlock_hint: None,
             min_value: None,
             max_value: None,
             value_step: None,
@@ -2248,6 +2347,7 @@ mod tests {
             super::UpgradeRewardKind::Minor,
             0.0,
             &OneTimeUpgradeTracker::default(),
+            &UpgradeStackTracker::default(),
             &FormationSkillBar::default(),
         );
         assert!(minor_picks.is_empty());
@@ -2259,10 +2359,52 @@ mod tests {
             super::UpgradeRewardKind::Major,
             0.0,
             &OneTimeUpgradeTracker::default(),
+            &UpgradeStackTracker::default(),
             &FormationSkillBar::default(),
         );
         assert_eq!(major_picks.len(), 1);
         assert_eq!(major_picks[0].kind, "unlock_formation");
+    }
+
+    #[test]
+    fn reward_lane_routing_keeps_major_and_minor_pools_separate() {
+        let mut minor = upgrade("damage", "minor_damage");
+        minor.reward_lane = Some("minor".to_string());
+
+        let mut major = upgrade("mob_fury", "major_doctrine");
+        major.reward_lane = Some("major".to_string());
+        major.one_time = true;
+        major.downside = Some("Doctrine lock-in.".to_string());
+
+        let pool = vec![minor, major];
+        let mut rng = UpgradeRngState {
+            state: 0x0A0B_0C0D_0E0F_1011,
+        };
+        let minor_picks = roll_upgrade_options(
+            &pool,
+            &mut rng,
+            3,
+            super::UpgradeRewardKind::Minor,
+            0.0,
+            &OneTimeUpgradeTracker::default(),
+            &UpgradeStackTracker::default(),
+            &FormationSkillBar::default(),
+        );
+        assert_eq!(minor_picks.len(), 1);
+        assert_eq!(minor_picks[0].id, "minor_damage");
+
+        let major_picks = roll_upgrade_options(
+            &pool,
+            &mut rng,
+            3,
+            super::UpgradeRewardKind::Major,
+            0.0,
+            &OneTimeUpgradeTracker::default(),
+            &UpgradeStackTracker::default(),
+            &FormationSkillBar::default(),
+        );
+        assert_eq!(major_picks.len(), 1);
+        assert_eq!(major_picks[0].id, "major_doctrine");
     }
 
     #[test]
@@ -2278,6 +2420,40 @@ mod tests {
     }
 
     #[test]
+    fn stack_cap_blocks_additional_draft_appearance() {
+        let mut capped = upgrade("damage", "damage_capped");
+        capped.stack_cap = Some(2);
+        let mut tracker = UpgradeStackTracker::default();
+        tracker.increment("damage_capped");
+        tracker.increment("damage_capped");
+
+        let mut rng = UpgradeRngState {
+            state: 0xA5A5_5A5A_1234_9876,
+        };
+        let picks = roll_upgrade_options(
+            &[capped],
+            &mut rng,
+            3,
+            super::UpgradeRewardKind::Minor,
+            0.0,
+            &OneTimeUpgradeTracker::default(),
+            &tracker,
+            &FormationSkillBar::default(),
+        );
+        assert!(picks.is_empty());
+    }
+
+    #[test]
+    fn diminishing_factor_reduces_value_per_stack() {
+        let mut config = upgrade("armor", "armor_diminishing");
+        config.value = 4.0;
+        config.diminishing_factor = Some(0.75);
+        assert!((super::effective_upgrade_value(&config, 0) - 4.0).abs() < 0.001);
+        assert!((super::effective_upgrade_value(&config, 1) - 3.0).abs() < 0.001);
+        assert!((super::effective_upgrade_value(&config, 2) - 2.25).abs() < 0.001);
+    }
+
+    #[test]
     fn formation_breach_upgrade_enables_inside_formation_damage_bonus() {
         let mut buffs = GlobalBuffs::default();
         let (mut item_rarity, mut upgrade_rarity, mut skill_timing) = empty_upgrade_bonus_state();
@@ -2287,6 +2463,12 @@ mod tests {
             id: "encirclement_doctrine".to_string(),
             kind: "formation_breach".to_string(),
             value: 20.0,
+            reward_lane: Some("major".to_string()),
+            doctrine_tags: Vec::new(),
+            stack_cap: None,
+            diminishing_factor: None,
+            downside: Some("Only applies when enemies breach formation.".to_string()),
+            major_unlock_hint: None,
             min_value: None,
             max_value: None,
             value_step: None,
@@ -2317,19 +2499,53 @@ mod tests {
     }
 
     #[test]
-    fn fast_learner_upgrade_stacks_gold_gain_multiplier() {
+    fn command_net_doctrine_applies_upside_and_downside() {
+        let mut buffs = GlobalBuffs::default();
+        let (mut item_rarity, mut upgrade_rarity, mut skill_timing) = empty_upgrade_bonus_state();
+        let mut conditional = super::ConditionalUpgradeOwnership::default();
+        let mut skillbar = FormationSkillBar::default();
+
+        let mut doctrine = upgrade("doctrine_command_net", "doctrine_command_net");
+        doctrine.reward_lane = Some("major".to_string());
+        doctrine.one_time = true;
+        doctrine.value = 26.0;
+        doctrine.downside = Some("Lower base damage while active.".to_string());
+
+        super::apply_upgrade(
+            &doctrine,
+            &mut buffs,
+            &mut item_rarity,
+            &mut upgrade_rarity,
+            &mut skill_timing,
+            &mut conditional,
+            &mut skillbar,
+        );
+
+        assert!(buffs.commander_aura_radius_bonus >= 26.0);
+        assert!(buffs.authority_enemy_morale_drain_per_sec > 0.0);
+        assert!(buffs.damage_multiplier < 1.0);
+    }
+
+    #[test]
+    fn quartermaster_upgrade_stacks_gold_gain_multiplier() {
         let mut buffs = GlobalBuffs::default();
         let (mut item_rarity, mut upgrade_rarity, mut skill_timing) = empty_upgrade_bonus_state();
         let mut conditional = super::ConditionalUpgradeOwnership::default();
         let mut skillbar = FormationSkillBar::default();
         let upgrade = UpgradeConfig {
-            id: "fast_learner_up".to_string(),
-            kind: "fast_learner".to_string(),
+            id: "quartermaster_up".to_string(),
+            kind: "quartermaster".to_string(),
             value: 0.08,
-            min_value: Some(0.04),
-            max_value: Some(0.16),
-            value_step: Some(0.02),
-            weight_exponent: Some(2.0),
+            reward_lane: Some("minor".to_string()),
+            doctrine_tags: Vec::new(),
+            stack_cap: None,
+            diminishing_factor: None,
+            downside: None,
+            major_unlock_hint: None,
+            min_value: None,
+            max_value: None,
+            value_step: None,
+            weight_exponent: None,
             one_time: false,
             adds_to_skillbar: false,
             formation_id: None,
@@ -2361,6 +2577,51 @@ mod tests {
             &mut skillbar,
         );
         assert!((buffs.gold_gain_multiplier - 1.16).abs() < 0.001);
+    }
+
+    #[test]
+    fn countervolley_doctrine_applies_conditional_upside_and_downside() {
+        let mut buffs = GlobalBuffs::default();
+        let (mut item_rarity, mut upgrade_rarity, mut skill_timing) = empty_upgrade_bonus_state();
+        let mut conditional = super::ConditionalUpgradeOwnership::default();
+        let mut skillbar = FormationSkillBar::default();
+
+        let mut doctrine = upgrade("doctrine_countervolley", "doctrine_countervolley");
+        doctrine.reward_lane = Some("major".to_string());
+        doctrine.one_time = true;
+        doctrine.requirement_type = Some("band_at_least".to_string());
+        doctrine.requirement_band_stat = Some("archer_share".to_string());
+        doctrine.requirement_band_at_least = Some("moderate".to_string());
+        doctrine.downside = Some("Higher morale loss while pressured.".to_string());
+
+        super::apply_upgrade(
+            &doctrine,
+            &mut buffs,
+            &mut item_rarity,
+            &mut upgrade_rarity,
+            &mut skill_timing,
+            &mut conditional,
+            &mut skillbar,
+        );
+
+        let eval_context = super::RequirementEvalContext {
+            archer_share: 0.45,
+            ..Default::default()
+        };
+        let (effects, status) = super::conditional_effects_from_owned(
+            &conditional.entries,
+            &eval_context,
+            ActiveFormation::Square,
+        );
+
+        assert!(
+            status
+                .iter()
+                .any(|entry| entry.id == "doctrine_countervolley" && entry.active)
+        );
+        assert!(effects.friendly_damage_multiplier > 1.0);
+        assert!(effects.friendly_attack_speed_multiplier > 1.0);
+        assert!(effects.friendly_morale_loss_multiplier > 1.0);
     }
 
     #[test]
@@ -2424,13 +2685,9 @@ mod tests {
     }
 
     #[test]
-    fn upgrade_rarity_bonus_shifts_weighted_roll_upward() {
+    fn upgrade_rarity_bonus_does_not_change_authored_value() {
         let mut cfg = upgrade("damage", "rarity_shift");
-        cfg.min_value = Some(10.0);
-        cfg.max_value = Some(30.0);
-        cfg.value_step = None;
-        cfg.weight_exponent = Some(2.2);
-
+        cfg.value = 12.0;
         let mut baseline_rng = UpgradeRngState {
             state: 0x89AB_CDEF_0123_4567,
         };
@@ -2439,11 +2696,11 @@ mod tests {
         };
         let mut baseline_sum = 0.0;
         let mut boosted_sum = 0.0;
-        for _ in 0..10_000 {
+        for _ in 0..1024 {
             baseline_sum += roll_upgrade_value(&cfg, &mut baseline_rng, true, 0.0);
             boosted_sum += roll_upgrade_value(&cfg, &mut boosted_rng, true, 0.20);
         }
-        assert!(boosted_sum > baseline_sum);
+        assert!((baseline_sum - boosted_sum).abs() < 0.001);
     }
 
     #[test]
@@ -2825,15 +3082,18 @@ mod tests {
         );
         assert!(upgrade_display_description(&crit_damage_upgrade).contains("critical hit damage"));
 
-        let mut fast_learner_upgrade = upgrade("fast_learner", "fast_learner_up");
-        fast_learner_upgrade.value = 0.08;
+        let mut quartermaster_upgrade = upgrade("quartermaster", "quartermaster_up");
+        quartermaster_upgrade.value = 0.08;
         assert_eq!(
-            upgrade_card_icon(&fast_learner_upgrade),
+            upgrade_card_icon(&quartermaster_upgrade),
             UpgradeCardIcon::FastLearner
         );
-        assert_eq!(upgrade_display_title(&fast_learner_upgrade), "Fast Learner");
+        assert_eq!(
+            upgrade_display_title(&quartermaster_upgrade),
+            "Quartermaster"
+        );
         assert!(
-            upgrade_display_description(&fast_learner_upgrade)
+            upgrade_display_description(&quartermaster_upgrade)
                 .to_lowercase()
                 .contains("gold")
         );
@@ -2842,6 +3102,12 @@ mod tests {
             id: "war_council_edict".to_string(),
             kind: "unique_slot_tradeoff".to_string(),
             value: 2.0,
+            reward_lane: Some("major".to_string()),
+            doctrine_tags: Vec::new(),
+            stack_cap: None,
+            diminishing_factor: None,
+            downside: Some("Limits doctrine flexibility later in run.".to_string()),
+            major_unlock_hint: None,
             min_value: None,
             max_value: None,
             value_step: None,
@@ -2862,12 +3128,18 @@ mod tests {
             upgrade_display_title(&unique_slots_upgrade),
             "War Council Edict"
         );
-        assert!(upgrade_display_description(&unique_slots_upgrade).contains("Mythical"));
+        assert!(upgrade_display_description(&unique_slots_upgrade).contains("flexibility"));
 
         let formation_upgrade = UpgradeConfig {
             id: "unlock_diamond".to_string(),
             kind: "unlock_formation".to_string(),
             value: 1.0,
+            reward_lane: Some("major".to_string()),
+            doctrine_tags: Vec::new(),
+            stack_cap: None,
+            diminishing_factor: None,
+            downside: Some("Consumes a major doctrine pick.".to_string()),
+            major_unlock_hint: None,
             min_value: None,
             max_value: None,
             value_step: None,

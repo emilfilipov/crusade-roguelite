@@ -13,7 +13,6 @@ pub const BACKPACK_COLS: usize = 6;
 pub const BACKPACK_SLOT_CAPACITY: usize = BACKPACK_ROWS * BACKPACK_COLS;
 pub const CHEST_SLOT_CAPACITY: usize = 3;
 
-const ITEM_ROLL_BUDGET: u8 = 6;
 const DRUM_EFFECT_DURATION_SECS: f32 = 5.0;
 const DRUM_BASE_COOLDOWN_SECS: f32 = 20.0;
 const CHANT_EFFECT_DURATION_SECS: f32 = 5.0;
@@ -60,8 +59,9 @@ impl EquipmentUnitType {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub enum GearRarity {
+    #[default]
     Common,
     Uncommon,
     Rare,
@@ -126,6 +126,22 @@ pub enum GearItemType {
     MeleeWeapon,
     RangedWeapon,
     Armor,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize, Default)]
+pub enum ItemNature {
+    #[default]
+    Minor,
+    Major,
+}
+
+impl ItemNature {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Minor => "Minor",
+            Self::Major => "Major",
+        }
+    }
 }
 
 pub const fn default_icon_key_for_item_type(item_type: GearItemType) -> &'static str {
@@ -232,6 +248,12 @@ pub struct GearItemEntry {
     pub faction: Option<PlayerFaction>,
     pub stats: Vec<GearRolledStat>,
     pub special_effect: Option<GearSpecialEffectKind>,
+    #[serde(default)]
+    pub downside: Option<String>,
+    #[serde(default)]
+    pub doctrine_tags: Vec<String>,
+    #[serde(default)]
+    pub nature: ItemNature,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
@@ -464,13 +486,27 @@ pub struct GearTemplateConfig {
     pub description: String,
     pub icon_key: String,
     pub item_type: GearItemType,
-    pub stats: [GearStatKind; 2],
+    pub stats: Vec<GearTemplateStatConfig>,
     #[serde(default)]
     pub special_effect: Option<GearSpecialEffectKind>,
     #[serde(default)]
     pub faction: Option<PlayerFaction>,
+    #[serde(default)]
+    pub downside: Option<String>,
+    #[serde(default)]
+    pub doctrine_tags: Vec<String>,
+    #[serde(default)]
+    pub nature: ItemNature,
     #[serde(default = "default_template_weight")]
     pub drop_weight: f32,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct GearTemplateStatConfig {
+    pub kind: GearStatKind,
+    pub value: f32,
+    #[serde(default)]
+    pub rarity: GearRarity,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -491,14 +527,13 @@ impl Default for ItemTemplateCatalog {
     }
 }
 
-const BASE_RARITY_WEIGHTS: [(GearRarity, f32); 6] = [
-    (GearRarity::Common, 0.45),
-    (GearRarity::Uncommon, 0.28),
-    (GearRarity::Rare, 0.16),
-    (GearRarity::Epic, 0.07),
-    (GearRarity::Mythical, 0.03),
-    (GearRarity::Unique, 0.01),
-];
+fn template_stat(kind: GearStatKind, value: f32, rarity: GearRarity) -> GearTemplateStatConfig {
+    GearTemplateStatConfig {
+        kind,
+        value,
+        rarity,
+    }
+}
 
 fn default_item_templates() -> Vec<GearTemplateConfig> {
     vec![
@@ -508,9 +543,15 @@ fn default_item_templates() -> Vec<GearTemplateConfig> {
             description: "Army banner boosting pace and command reach.".to_string(),
             icon_key: "item_banner".to_string(),
             item_type: GearItemType::Banner,
-            stats: [GearStatKind::MoveSpeedFlat, GearStatKind::AuraRangeFlat],
+            stats: vec![
+                template_stat(GearStatKind::MoveSpeedFlat, 9.0, GearRarity::Rare),
+                template_stat(GearStatKind::AuraRangeFlat, 20.0, GearRarity::Rare),
+            ],
             special_effect: None,
             faction: None,
+            downside: Some("Commander defense is reduced by 1 armor.".to_string()),
+            doctrine_tags: vec!["tempo".to_string(), "aura".to_string()],
+            nature: ItemNature::Major,
             drop_weight: 1.0,
         },
         GearTemplateConfig {
@@ -519,12 +560,15 @@ fn default_item_templates() -> Vec<GearTemplateConfig> {
             description: "Triggers a periodic armor pulse for the army.".to_string(),
             icon_key: "item_instrument".to_string(),
             item_type: GearItemType::Instrument,
-            stats: [
-                GearStatKind::ArmorPulseFlat,
-                GearStatKind::CommanderMaxHealthFlat,
+            stats: vec![
+                template_stat(GearStatKind::ArmorPulseFlat, 4.0, GearRarity::Epic),
+                template_stat(GearStatKind::CommanderMaxHealthFlat, 10.0, GearRarity::Rare),
             ],
             special_effect: Some(GearSpecialEffectKind::DrumArmorPulse),
             faction: None,
+            downside: Some("Army move speed is reduced by 6 while equipped.".to_string()),
+            doctrine_tags: vec!["sustain".to_string(), "frontline".to_string()],
+            nature: ItemNature::Major,
             drop_weight: 1.0,
         },
         GearTemplateConfig {
@@ -533,12 +577,15 @@ fn default_item_templates() -> Vec<GearTemplateConfig> {
             description: "Periodically grants temporary morale-loss immunity.".to_string(),
             icon_key: "item_chant".to_string(),
             item_type: GearItemType::Chant,
-            stats: [
-                GearStatKind::CooldownReductionSecs,
-                GearStatKind::CommanderMaxHealthFlat,
+            stats: vec![
+                template_stat(GearStatKind::CooldownReductionSecs, 1.2, GearRarity::Epic),
+                template_stat(GearStatKind::CommanderMaxHealthFlat, 8.0, GearRarity::Rare),
             ],
             special_effect: Some(GearSpecialEffectKind::BattleChantMoraleImmunity),
             faction: None,
+            downside: Some("Armor pulse effects are disabled while chant is active.".to_string()),
+            doctrine_tags: vec!["morale".to_string(), "support".to_string()],
+            nature: ItemNature::Major,
             drop_weight: 1.0,
         },
         GearTemplateConfig {
@@ -547,9 +594,17 @@ fn default_item_templates() -> Vec<GearTemplateConfig> {
             description: "Role-based support stats for the assigned setup.".to_string(),
             icon_key: "item_squire".to_string(),
             item_type: GearItemType::Squire,
-            stats: [GearStatKind::SquirePrimary, GearStatKind::SquireSecondary],
+            stats: vec![
+                template_stat(GearStatKind::SquirePrimary, 0.08, GearRarity::Rare),
+                template_stat(GearStatKind::SquireSecondary, 0.06, GearRarity::Uncommon),
+            ],
             special_effect: None,
             faction: None,
+            downside: Some(
+                "Non-squire utility item slots provide no bonus while equipped.".to_string(),
+            ),
+            doctrine_tags: vec!["support".to_string()],
+            nature: ItemNature::Minor,
             drop_weight: 1.0,
         },
         GearTemplateConfig {
@@ -559,12 +614,15 @@ fn default_item_templates() -> Vec<GearTemplateConfig> {
                 .to_string(),
             icon_key: "item_symbol_faction".to_string(),
             item_type: GearItemType::Symbol,
-            stats: [
-                GearStatKind::AuraEnemyEffectPercent,
-                GearStatKind::AuraRangeFlat,
+            stats: vec![
+                template_stat(GearStatKind::AuraEnemyEffectPercent, 0.12, GearRarity::Epic),
+                template_stat(GearStatKind::AuraRangeFlat, 18.0, GearRarity::Rare),
             ],
             special_effect: None,
             faction: Some(PlayerFaction::Christian),
+            downside: Some("Reduces pickup radius by 8.".to_string()),
+            doctrine_tags: vec!["aura".to_string(), "faction".to_string()],
+            nature: ItemNature::Major,
             drop_weight: 1.0,
         },
         GearTemplateConfig {
@@ -574,48 +632,66 @@ fn default_item_templates() -> Vec<GearTemplateConfig> {
                 .to_string(),
             icon_key: "item_symbol_faction".to_string(),
             item_type: GearItemType::Symbol,
-            stats: [
-                GearStatKind::AuraEnemyEffectPercent,
-                GearStatKind::AuraRangeFlat,
+            stats: vec![
+                template_stat(GearStatKind::AuraEnemyEffectPercent, 0.12, GearRarity::Epic),
+                template_stat(GearStatKind::AuraRangeFlat, 18.0, GearRarity::Rare),
             ],
             special_effect: None,
             faction: Some(PlayerFaction::Muslim),
+            downside: Some("Reduces pickup radius by 8.".to_string()),
+            doctrine_tags: vec!["aura".to_string(), "faction".to_string()],
+            nature: ItemNature::Major,
             drop_weight: 1.0,
         },
         GearTemplateConfig {
             id: "sword_simple".to_string(),
             name: "Simple Sword".to_string(),
-            description: "Tradeoff roll between damage and attack speed.".to_string(),
+            description: "Deterministic melee tradeoff package.".to_string(),
             icon_key: "item_sword".to_string(),
             item_type: GearItemType::MeleeWeapon,
-            stats: [
-                GearStatKind::DamagePercent,
-                GearStatKind::AttackSpeedPercent,
+            stats: vec![
+                template_stat(GearStatKind::DamagePercent, 0.14, GearRarity::Rare),
+                template_stat(GearStatKind::AttackSpeedPercent, 0.06, GearRarity::Uncommon),
             ],
             special_effect: None,
             faction: None,
+            downside: Some("Ranged units lose 8 range while this weapon is equipped.".to_string()),
+            doctrine_tags: vec!["melee".to_string(), "tempo".to_string()],
+            nature: ItemNature::Minor,
             drop_weight: 1.0,
         },
         GearTemplateConfig {
             id: "bow_simple".to_string(),
             name: "Simple Bow".to_string(),
-            description: "Tradeoff roll between ranged damage and range.".to_string(),
+            description: "Deterministic ranged tradeoff package.".to_string(),
             icon_key: "item_bow".to_string(),
             item_type: GearItemType::RangedWeapon,
-            stats: [GearStatKind::DamagePercent, GearStatKind::RangedRangeFlat],
+            stats: vec![
+                template_stat(GearStatKind::DamagePercent, 0.12, GearRarity::Rare),
+                template_stat(GearStatKind::RangedRangeFlat, 26.0, GearRarity::Rare),
+            ],
             special_effect: None,
             faction: None,
+            downside: Some("Armor is reduced by 1 while this weapon is equipped.".to_string()),
+            doctrine_tags: vec!["ranged".to_string(), "anti_armor".to_string()],
+            nature: ItemNature::Minor,
             drop_weight: 1.0,
         },
         GearTemplateConfig {
             id: "armor_simple".to_string(),
             name: "Simple Chestpiece".to_string(),
-            description: "Tradeoff roll between armor and movement speed.".to_string(),
+            description: "Deterministic armor tradeoff package.".to_string(),
             icon_key: "item_armor".to_string(),
             item_type: GearItemType::Armor,
-            stats: [GearStatKind::ArmorFlat, GearStatKind::MoveSpeedFlat],
+            stats: vec![
+                template_stat(GearStatKind::ArmorFlat, 3.0, GearRarity::Rare),
+                template_stat(GearStatKind::MoveSpeedFlat, 5.0, GearRarity::Uncommon),
+            ],
             special_effect: None,
             faction: None,
+            downside: Some("Attack speed is reduced by 4% while equipped.".to_string()),
+            doctrine_tags: vec!["defense".to_string(), "frontline".to_string()],
+            nature: ItemNature::Minor,
             drop_weight: 1.0,
         },
     ]
@@ -651,11 +727,27 @@ fn load_item_template_catalog_from_disk(path: &Path) -> Option<ItemTemplateCatal
         if template.icon_key.trim().is_empty() {
             template.icon_key = default_icon_key_for_item_type(template.item_type).to_string();
         }
+        template.stats.retain(|stat| stat.value.is_finite());
+        if template.stats.is_empty() {
+            continue;
+        }
         if !template.drop_weight.is_finite() {
             template.drop_weight = 0.0;
         } else {
             template.drop_weight = template.drop_weight.max(0.0);
         }
+        template.downside = template
+            .downside
+            .as_deref()
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .map(ToOwned::to_owned);
+        template.doctrine_tags = template
+            .doctrine_tags
+            .into_iter()
+            .map(|tag| tag.trim().to_ascii_lowercase())
+            .filter(|tag| !tag.is_empty())
+            .collect();
         filtered.push(template);
     }
     if filtered.is_empty() {
@@ -908,12 +1000,16 @@ pub fn item_scrap_gold_value(item: &GearItemEntry) -> f32 {
         .iter()
         .map(|stat| stat.rarity.points() as f32)
         .sum();
+    let nature_bonus = match item.nature {
+        ItemNature::Major => 18.0,
+        ItemNature::Minor => 8.0,
+    };
     let special_bonus = if item.special_effect.is_some() {
         12.0
     } else {
         0.0
     };
-    let raw = overall_tier_points * 14.0 + stat_tier_points * 5.5 + special_bonus;
+    let raw = nature_bonus + overall_tier_points * 10.0 + stat_tier_points * 4.0 + special_bonus;
     raw.max(1.0).round()
 }
 
@@ -945,9 +1041,10 @@ pub fn gear_item_type_label(item_type: GearItemType) -> &'static str {
 pub fn gear_item_tooltip(item: &GearItemEntry) -> String {
     let mut lines = vec![
         format!(
-            "{} [{}]",
+            "{} [{} | {}]",
             item.name,
-            item_rarity_tier_for_display(item).label()
+            item_rarity_tier_for_display(item).label(),
+            item.nature.label()
         ),
         format!("Type: {}", gear_item_type_label(item.item_type)),
         item.description.clone(),
@@ -962,6 +1059,15 @@ pub fn gear_item_tooltip(item: &GearItemEntry) -> String {
     }
     if let Some(effect) = item.special_effect {
         lines.push(format!("- Effect: {}", effect.label()));
+    }
+    if !item.doctrine_tags.is_empty() {
+        lines.push(format!(
+            "- Doctrine Tags: {}",
+            item.doctrine_tags.join(", ")
+        ));
+    }
+    if let Some(downside) = item.downside.as_deref() {
+        lines.push(format!("- Downside: {downside}"));
     }
     lines.join("\n")
 }
@@ -1045,94 +1151,19 @@ pub fn place_item_into_slot(
     }
 }
 
-fn rarity_weight_for(rarity: GearRarity, rarity_roll_bonus_pct: f32) -> f32 {
-    let base = BASE_RARITY_WEIGHTS
-        .iter()
-        .find_map(|(tier, weight)| (*tier == rarity).then_some(*weight))
-        .unwrap_or(0.0);
-    let bonus = rarity_roll_bonus_pct.max(0.0);
-    if bonus <= 0.0 {
-        return base;
-    }
-    match rarity {
-        GearRarity::Common | GearRarity::Uncommon => (base / (1.0 + bonus)).max(0.0001),
-        _ => base * (1.0 + bonus),
-    }
-}
-
-fn roll_rarity_from_pool(
-    rng: &mut InventoryRngState,
-    pool: &[GearRarity],
-    rarity_roll_bonus_pct: f32,
-) -> GearRarity {
-    let mut total = 0.0;
-    let mut weighted = Vec::with_capacity(pool.len());
-    for rarity in pool {
-        let weight = rarity_weight_for(*rarity, rarity_roll_bonus_pct);
-        total += weight;
-        weighted.push((*rarity, weight));
-    }
-    if total <= 0.0 {
-        return pool.first().copied().unwrap_or(GearRarity::Common);
-    }
-    let mut roll = rng.next_f32() * total;
-    for (rarity, weight) in weighted {
-        if roll <= weight {
-            return rarity;
-        }
-        roll -= weight;
-    }
-    pool.last().copied().unwrap_or(GearRarity::Common)
-}
-
 fn roll_item_from_template(
     rng: &mut InventoryRngState,
     template: &GearTemplateConfig,
-    rarity_roll_bonus_pct: f32,
+    _rarity_roll_bonus_pct: f32,
 ) -> GearItemEntry {
-    let (stat_a_kind, stat_b_kind) = if rng.next_f32() < 0.5 {
-        (template.stats[0], template.stats[1])
-    } else {
-        (template.stats[1], template.stats[0])
-    };
-
-    let first_pool = [
-        GearRarity::Common,
-        GearRarity::Uncommon,
-        GearRarity::Rare,
-        GearRarity::Epic,
-        GearRarity::Mythical,
-        GearRarity::Unique,
-    ];
-    let first_roll = roll_rarity_from_pool(rng, &first_pool, rarity_roll_bonus_pct);
-    let second_roll = if first_roll == GearRarity::Unique {
-        let second_pool = [
-            GearRarity::Rare,
-            GearRarity::Epic,
-            GearRarity::Mythical,
-            GearRarity::Unique,
-        ];
-        roll_rarity_from_pool(rng, &second_pool, rarity_roll_bonus_pct)
-    } else {
-        let remaining_budget = ITEM_ROLL_BUDGET.saturating_sub(first_roll.points()).max(1);
-        let max_points = remaining_budget.min(5);
-        let mut second_pool = Vec::new();
-        for points in 1..=max_points {
-            second_pool.push(GearRarity::from_points(points));
-        }
-        roll_rarity_from_pool(rng, &second_pool, rarity_roll_bonus_pct)
-    };
-
-    let stat_a = GearRolledStat {
-        kind: stat_a_kind,
-        rarity: first_roll,
-        value: stat_a_kind.base_magnitude() * first_roll.scalar(),
-    };
-    let stat_b = GearRolledStat {
-        kind: stat_b_kind,
-        rarity: second_roll,
-        value: stat_b_kind.base_magnitude() * second_roll.scalar(),
-    };
+    let mut stats = Vec::with_capacity(template.stats.len());
+    for stat in &template.stats {
+        stats.push(GearRolledStat {
+            kind: stat.kind,
+            rarity: stat.rarity,
+            value: stat.value,
+        });
+    }
 
     GearItemEntry {
         instance_id: rng.next_item_instance_id(template.id.as_str()),
@@ -1142,8 +1173,11 @@ fn roll_item_from_template(
         icon_key: template.icon_key.clone(),
         item_type: template.item_type,
         faction: template.faction,
-        stats: vec![stat_a, stat_b],
+        stats,
         special_effect: template.special_effect,
+        downside: template.downside.clone(),
+        doctrine_tags: template.doctrine_tags.clone(),
+        nature: template.nature,
     }
 }
 
@@ -1503,10 +1537,11 @@ mod tests {
     use super::{
         BACKPACK_SLOT_CAPACITY, CHEST_SLOT_CAPACITY, EquipmentChestState, EquipmentUnitType,
         GearItemEntry, GearItemType, GearRarity, GearRolledStat, GearStatKind, GearTemplateConfig,
-        InventoryPlaceError, InventoryRngState, InventorySlotRef, InventoryState,
-        ItemTemplateCatalog, commander_armywide_bonuses, gear_bonuses_for_unit,
-        gear_bonuses_for_unit_with_banner_state, load_item_template_catalog_from_disk,
-        place_item_into_slot, roll_chest_items, roll_chest_items_with_catalog, take_item_from_slot,
+        GearTemplateStatConfig, InventoryPlaceError, InventoryRngState, InventorySlotRef,
+        InventoryState, ItemNature, ItemTemplateCatalog, commander_armywide_bonuses,
+        gear_bonuses_for_unit, gear_bonuses_for_unit_with_banner_state, gear_item_tooltip,
+        load_item_template_catalog_from_disk, place_item_into_slot, roll_chest_items_from_seed,
+        roll_chest_items_with_catalog, take_item_from_slot,
     };
     use crate::inventory::UnitCombatRole;
     use crate::model::{PlayerFaction, UnitKind};
@@ -1526,6 +1561,9 @@ mod tests {
                 value,
             }],
             special_effect: None,
+            downside: None,
+            doctrine_tags: Vec::new(),
+            nature: ItemNature::Minor,
         }
     }
 
@@ -1597,25 +1635,44 @@ mod tests {
     }
 
     #[test]
-    fn chest_roll_budget_rule_is_applied() {
-        let mut rng = InventoryRngState {
-            state: 0x1234_5678_9ABC_DEF0,
-            next_item_serial: 1,
-        };
-        let items = roll_chest_items(&mut rng, PlayerFaction::Christian, 64, 0.0);
-        assert!(!items.is_empty());
-        for item in items {
-            if item.stats.len() != 2 {
-                continue;
-            }
-            let first = item.stats[0].rarity;
-            let second = item.stats[1].rarity;
-            if first != GearRarity::Unique {
-                assert!(second.points() <= (6 - first.points()).clamp(1, 5));
-            } else {
-                assert!(second.points() >= 3);
-            }
+    fn chest_item_generation_is_deterministic_and_ignores_rarity_bonus() {
+        let seed = 0x1234_5678_9ABC_DEF0_u64;
+        let baseline = roll_chest_items_from_seed(seed, PlayerFaction::Christian, 24, 0.0);
+        let boosted = roll_chest_items_from_seed(seed, PlayerFaction::Christian, 24, 0.8);
+        assert_eq!(baseline.len(), boosted.len());
+        for (left, right) in baseline.iter().zip(boosted.iter()) {
+            assert_eq!(left.template_id, right.template_id);
+            assert_eq!(left.stats, right.stats);
+            assert_eq!(left.downside, right.downside);
+            assert_eq!(left.doctrine_tags, right.doctrine_tags);
+            assert_eq!(left.nature, right.nature);
         }
+    }
+
+    #[test]
+    fn item_tooltip_includes_tradeoff_metadata() {
+        let item = GearItemEntry {
+            instance_id: "tip_001".to_string(),
+            template_id: "tip_template".to_string(),
+            name: "Field Banner".to_string(),
+            description: "Deterministic banner package.".to_string(),
+            icon_key: "item_banner".to_string(),
+            item_type: GearItemType::Banner,
+            faction: None,
+            stats: vec![GearRolledStat {
+                kind: GearStatKind::MoveSpeedFlat,
+                rarity: GearRarity::Rare,
+                value: 9.0,
+            }],
+            special_effect: None,
+            downside: Some("Armor reduced by 1.".to_string()),
+            doctrine_tags: vec!["tempo".to_string(), "aura".to_string()],
+            nature: ItemNature::Major,
+        };
+        let tooltip = gear_item_tooltip(&item);
+        assert!(tooltip.contains("[Rare | Major]"));
+        assert!(tooltip.contains("Doctrine Tags: tempo, aura"));
+        assert!(tooltip.contains("Downside: Armor reduced by 1."));
     }
 
     #[test]
@@ -1628,12 +1685,23 @@ mod tests {
                     description: "Faction symbol item.".to_string(),
                     icon_key: "item_symbol_faction".to_string(),
                     item_type: GearItemType::Symbol,
-                    stats: [
-                        GearStatKind::AuraEnemyEffectPercent,
-                        GearStatKind::AuraRangeFlat,
+                    stats: vec![
+                        GearTemplateStatConfig {
+                            kind: GearStatKind::AuraEnemyEffectPercent,
+                            value: 0.12,
+                            rarity: GearRarity::Rare,
+                        },
+                        GearTemplateStatConfig {
+                            kind: GearStatKind::AuraRangeFlat,
+                            value: 18.0,
+                            rarity: GearRarity::Rare,
+                        },
                     ],
                     special_effect: None,
                     faction: Some(PlayerFaction::Christian),
+                    downside: None,
+                    doctrine_tags: vec!["aura".to_string()],
+                    nature: ItemNature::Minor,
                     drop_weight: 1.0,
                 },
                 GearTemplateConfig {
@@ -1642,12 +1710,23 @@ mod tests {
                     description: "Faction symbol item.".to_string(),
                     icon_key: "item_symbol_faction".to_string(),
                     item_type: GearItemType::Symbol,
-                    stats: [
-                        GearStatKind::AuraEnemyEffectPercent,
-                        GearStatKind::AuraRangeFlat,
+                    stats: vec![
+                        GearTemplateStatConfig {
+                            kind: GearStatKind::AuraEnemyEffectPercent,
+                            value: 0.12,
+                            rarity: GearRarity::Rare,
+                        },
+                        GearTemplateStatConfig {
+                            kind: GearStatKind::AuraRangeFlat,
+                            value: 18.0,
+                            rarity: GearRarity::Rare,
+                        },
                     ],
                     special_effect: None,
                     faction: Some(PlayerFaction::Muslim),
+                    downside: None,
+                    doctrine_tags: vec!["aura".to_string()],
+                    nature: ItemNature::Minor,
                     drop_weight: 1.0,
                 },
             ],
@@ -1699,7 +1778,10 @@ mod tests {
       "description": "test",
       "icon_key": "item_symbol_faction",
       "item_type": "Symbol",
-      "stats": ["AuraEnemyEffectPercent", "AuraRangeFlat"],
+      "stats": [
+        {"kind":"AuraEnemyEffectPercent","value":0.12,"rarity":"Rare"},
+        {"kind":"AuraRangeFlat","value":18.0,"rarity":"Rare"}
+      ],
       "faction": "Christian",
       "drop_weight": 1.0
     },
@@ -1709,7 +1791,10 @@ mod tests {
       "description": "test",
       "icon_key": "item_symbol_faction",
       "item_type": "Symbol",
-      "stats": ["AuraEnemyEffectPercent", "AuraRangeFlat"],
+      "stats": [
+        {"kind":"AuraEnemyEffectPercent","value":0.12,"rarity":"Rare"},
+        {"kind":"AuraRangeFlat","value":18.0,"rarity":"Rare"}
+      ],
       "faction": "Muslim",
       "drop_weight": 1.0
     }

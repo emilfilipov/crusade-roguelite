@@ -6,7 +6,13 @@
       "description": "Army banner boosting pace and command reach.",
       "icon_key": "item_banner",
       "item_type": "Banner",
-      "stats": ["MoveSpeedFlat", "AuraRangeFlat"],
+      "stats": [
+        { "kind": "MoveSpeedFlat", "value": 9.0, "rarity": "Rare" },
+        { "kind": "AuraRangeFlat", "value": 20.0, "rarity": "Rare" }
+      ],
+      "downside": "Commander defense is reduced by 1 armor.",
+      "doctrine_tags": ["tempo", "aura"],
+      "nature": "Major",
       "drop_weight": 1.0
     },
     {
@@ -15,8 +21,14 @@
       "description": "Triggers a periodic armor pulse for the army.",
       "icon_key": "item_instrument",
       "item_type": "Instrument",
-      "stats": ["ArmorPulseFlat", "CommanderMaxHealthFlat"],
+      "stats": [
+        { "kind": "ArmorPulseFlat", "value": 4.0, "rarity": "Epic" },
+        { "kind": "CommanderMaxHealthFlat", "value": 10.0, "rarity": "Rare" }
+      ],
       "special_effect": "DrumArmorPulse",
+      "downside": "Army move speed is reduced by 6 while equipped.",
+      "doctrine_tags": ["sustain", "frontline"],
+      "nature": "Major",
       "drop_weight": 1.0
     },
     {
@@ -25,8 +37,14 @@
       "description": "Periodically grants temporary morale-loss immunity.",
       "icon_key": "item_chant",
       "item_type": "Chant",
-      "stats": ["CooldownReductionSecs", "CommanderMaxHealthFlat"],
+      "stats": [
+        { "kind": "CooldownReductionSecs", "value": 1.2, "rarity": "Epic" },
+        { "kind": "CommanderMaxHealthFlat", "value": 8.0, "rarity": "Rare" }
+      ],
       "special_effect": "BattleChantMoraleImmunity",
+      "downside": "Armor pulse effects are disabled while chant is active.",
+      "doctrine_tags": ["morale", "support"],
+      "nature": "Major",
       "drop_weight": 1.0
     },
     {
@@ -35,7 +53,13 @@
       "description": "Role-based support stats for the assigned setup.",
       "icon_key": "item_squire",
       "item_type": "Squire",
-      "stats": ["SquirePrimary", "SquireSecondary"],
+      "stats": [
+        { "kind": "SquirePrimary", "value": 0.08, "rarity": "Rare" },
+        { "kind": "SquireSecondary", "value": 0.06, "rarity": "Uncommon" }
+      ],
+      "downside": "Non-squire utility item slots provide no bonus while equipped.",
+      "doctrine_tags": ["support"],
+      "nature": "Minor",
       "drop_weight": 1.0
     },
     {
@@ -44,8 +68,14 @@
       "description": "Empowers aura effects against enemies and extends aura reach.",
       "icon_key": "item_symbol_faction",
       "item_type": "Symbol",
-      "stats": ["AuraEnemyEffectPercent", "AuraRangeFlat"],
+      "stats": [
+        { "kind": "AuraEnemyEffectPercent", "value": 0.12, "rarity": "Epic" },
+        { "kind": "AuraRangeFlat", "value": 18.0, "rarity": "Rare" }
+      ],
       "faction": "Christian",
+      "downside": "Reduces pickup radius by 8.",
+      "doctrine_tags": ["aura", "faction"],
+      "nature": "Major",
       "drop_weight": 1.0
     },
     {
@@ -54,35 +84,59 @@
       "description": "Empowers aura effects against enemies and extends aura reach.",
       "icon_key": "item_symbol_faction",
       "item_type": "Symbol",
-      "stats": ["AuraEnemyEffectPercent", "AuraRangeFlat"],
+      "stats": [
+        { "kind": "AuraEnemyEffectPercent", "value": 0.12, "rarity": "Epic" },
+        { "kind": "AuraRangeFlat", "value": 18.0, "rarity": "Rare" }
+      ],
       "faction": "Muslim",
+      "downside": "Reduces pickup radius by 8.",
+      "doctrine_tags": ["aura", "faction"],
+      "nature": "Major",
       "drop_weight": 1.0
     },
     {
       "id": "sword_simple",
       "name": "Simple Sword",
-      "description": "Tradeoff roll between damage and attack speed.",
+      "description": "Deterministic melee tradeoff package.",
       "icon_key": "item_sword",
       "item_type": "MeleeWeapon",
-      "stats": ["DamagePercent", "AttackSpeedPercent"],
+      "stats": [
+        { "kind": "DamagePercent", "value": 0.14, "rarity": "Rare" },
+        { "kind": "AttackSpeedPercent", "value": 0.06, "rarity": "Uncommon" }
+      ],
+      "downside": "Ranged units lose 8 range while this weapon is equipped.",
+      "doctrine_tags": ["melee", "tempo"],
+      "nature": "Minor",
       "drop_weight": 1.0
     },
     {
       "id": "bow_simple",
       "name": "Simple Bow",
-      "description": "Tradeoff roll between ranged damage and range.",
+      "description": "Deterministic ranged tradeoff package.",
       "icon_key": "item_bow",
       "item_type": "RangedWeapon",
-      "stats": ["DamagePercent", "RangedRangeFlat"],
+      "stats": [
+        { "kind": "DamagePercent", "value": 0.12, "rarity": "Rare" },
+        { "kind": "RangedRangeFlat", "value": 26.0, "rarity": "Rare" }
+      ],
+      "downside": "Armor is reduced by 1 while this weapon is equipped.",
+      "doctrine_tags": ["ranged", "anti_armor"],
+      "nature": "Minor",
       "drop_weight": 1.0
     },
     {
       "id": "armor_simple",
       "name": "Simple Chestpiece",
-      "description": "Tradeoff roll between armor and movement speed.",
+      "description": "Deterministic armor tradeoff package.",
       "icon_key": "item_armor",
       "item_type": "Armor",
-      "stats": ["ArmorFlat", "MoveSpeedFlat"],
+      "stats": [
+        { "kind": "ArmorFlat", "value": 3.0, "rarity": "Rare" },
+        { "kind": "MoveSpeedFlat", "value": 5.0, "rarity": "Uncommon" }
+      ],
+      "downside": "Attack speed is reduced by 4% while equipped.",
+      "doctrine_tags": ["defense", "frontline"],
+      "nature": "Minor",
       "drop_weight": 1.0
     }
   ]

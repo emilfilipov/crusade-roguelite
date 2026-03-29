@@ -13,7 +13,10 @@ use crate::drops::{
     hear_the_call_pickup_progress_ratio,
 };
 use crate::enemies::WaveRuntime;
-use crate::formation::{ActiveFormation, FormationModifiers, FormationSkillBar, SkillBarSkillKind};
+use crate::formation::{
+    ActiveFormation, AssignedFormationLane, FormationLane, FormationLaneSummary,
+    FormationModifiers, FormationSkillBar, SkillBarSkillKind,
+};
 use crate::inventory::{
     BACKPACK_SLOT_CAPACITY, CHEST_SLOT_CAPACITY, EquipmentChestState, EquipmentUnitType,
     GearItemEntry, GearRarity, InventoryPlaceError, InventorySlotRef, InventoryState,
@@ -250,6 +253,19 @@ struct CommanderLevelHudText;
 
 #[derive(Component, Clone, Copy, Debug)]
 struct TreasuryHudText;
+
+#[derive(Component, Clone, Copy, Debug)]
+struct LaneDebugHudText;
+
+#[derive(Component, Clone, Copy, Debug)]
+struct LaneDebugUnitLabel {
+    unit: Entity,
+}
+
+#[derive(Resource, Clone, Copy, Debug, Default)]
+struct LaneDebugOverlayState {
+    enabled: bool,
+}
 
 #[derive(Component, Clone, Copy, Debug)]
 struct RescueProgressBarsRoot;
@@ -664,6 +680,7 @@ impl Plugin for UiPlugin {
             .init_resource::<MoraleToastRuntime>()
             .init_resource::<StatBandFeedbackRuntime>()
             .init_resource::<MinimapRefreshRuntime>()
+            .init_resource::<LaneDebugOverlayState>()
             .init_resource::<UnitUpgradeUiState>()
             .init_resource::<InventorySlotSelection>()
             .init_resource::<InventoryDoubleClickState>()
@@ -693,7 +710,11 @@ impl Plugin for UiPlugin {
             .add_systems(OnEnter(GameState::InRun), spawn_in_run_hud)
             .add_systems(
                 OnExit(GameState::InRun),
-                (despawn_run_modal_overlay, despawn_floating_damage_text),
+                (
+                    despawn_run_modal_overlay,
+                    despawn_floating_damage_text,
+                    despawn_lane_debug_unit_labels,
+                ),
             )
             .add_systems(
                 Update,
@@ -752,6 +773,10 @@ impl Plugin for UiPlugin {
                 Update,
                 refresh_hud_snapshot.run_if(in_state(GameState::InRun)),
             )
+            .add_systems(
+                Update,
+                toggle_lane_debug_overlay.run_if(in_state(GameState::InRun)),
+            )
             .add_systems(Update, reset_stat_band_feedback_on_run_start)
             .add_systems(
                 Update,
@@ -784,6 +809,8 @@ impl Plugin for UiPlugin {
                     update_morale_threshold_toast,
                     update_rescue_progress_hud,
                     update_skill_bar_hud,
+                    update_lane_debug_hud_text,
+                    sync_lane_debug_unit_labels,
                 )
                     .chain()
                     .run_if(in_state(GameState::InRun)),
@@ -2293,6 +2320,17 @@ fn spawn_in_run_hud(
                                 TextStyle {
                                     font_size: 18.0,
                                     color: HUD_TEXT_COLOR,
+                                    ..default()
+                                },
+                            ),
+                        ));
+                        left.spawn((
+                            LaneDebugHudText,
+                            TextBundle::from_section(
+                                "Lane Debug [F8]: OFF",
+                                TextStyle {
+                                    font_size: 16.0,
+                                    color: Color::srgb(0.62, 0.76, 0.89),
                                     ..default()
                                 },
                             ),
@@ -4045,7 +4083,7 @@ fn formation_tradeoff_text(
 fn skill_book_category(kind: &str) -> &'static str {
     match kind {
         "authority_aura" | "hospitalier_aura" => "Auras",
-        "pickup_radius" | "aura_radius" | "move_speed" | "mob_mercy" | "fast_learner" => "Utility",
+        "pickup_radius" | "aura_radius" | "move_speed" | "mob_mercy" | "quartermaster" => "Utility",
         _ => "Combat",
     }
 }
@@ -8930,6 +8968,127 @@ fn update_in_run_hud(
     }
 }
 
+fn toggle_lane_debug_overlay(
+    keyboard: Option<Res<ButtonInput<KeyCode>>>,
+    mut overlay: ResMut<LaneDebugOverlayState>,
+) {
+    let Some(keys) = keyboard else {
+        return;
+    };
+    if keys.just_pressed(KeyCode::F8) {
+        overlay.enabled = !overlay.enabled;
+    }
+}
+
+fn lane_color(lane: FormationLane) -> Color {
+    match lane {
+        FormationLane::Outer => Color::srgb(0.93, 0.48, 0.42),
+        FormationLane::Middle => Color::srgb(0.95, 0.83, 0.36),
+        FormationLane::Inner => Color::srgb(0.48, 0.85, 0.58),
+    }
+}
+
+fn update_lane_debug_hud_text(
+    overlay: Res<LaneDebugOverlayState>,
+    lane_summary: Res<FormationLaneSummary>,
+    mut texts: Query<&mut Text, With<LaneDebugHudText>>,
+) {
+    let Ok(mut text) = texts.get_single_mut() else {
+        return;
+    };
+    if overlay.enabled {
+        text.sections[0].value = format!(
+            "Lane Debug [F8]: ON  |  O:{}  M:{}  I:{}",
+            lane_summary.outer, lane_summary.middle, lane_summary.inner
+        );
+        text.sections[0].style.color = Color::srgb(0.68, 0.90, 0.97);
+    } else {
+        text.sections[0].value = "Lane Debug [F8]: OFF".to_string();
+        text.sections[0].style.color = Color::srgb(0.62, 0.76, 0.89);
+    }
+}
+
+#[allow(clippy::type_complexity)]
+fn sync_lane_debug_unit_labels(
+    mut commands: Commands,
+    overlay: Res<LaneDebugOverlayState>,
+    mut labels: Query<
+        (Entity, &LaneDebugUnitLabel, &mut Text, &mut Transform),
+        (With<LaneDebugUnitLabel>, Without<FriendlyUnit>),
+    >,
+    friendlies: Query<
+        (Entity, &Transform, &AssignedFormationLane),
+        (With<FriendlyUnit>, Without<LaneDebugUnitLabel>),
+    >,
+) {
+    if !overlay.enabled {
+        for (entity, _, _, _) in &mut labels {
+            if let Some(entity_commands) = commands.get_entity(entity) {
+                entity_commands.despawn_recursive();
+            }
+        }
+        return;
+    }
+
+    let mut existing: HashMap<Entity, Entity> = HashMap::new();
+    for (label_entity, label, _, _) in &mut labels {
+        existing.insert(label.unit, label_entity);
+    }
+
+    for (unit_entity, unit_transform, lane_assignment) in &friendlies {
+        if let Some(label_entity) = existing.remove(&unit_entity) {
+            if let Ok((_, _, mut text, mut transform)) = labels.get_mut(label_entity) {
+                text.sections[0].value = lane_assignment.0.short_label().to_string();
+                text.sections[0].style.color = lane_color(lane_assignment.0);
+                transform.translation = Vec3::new(
+                    unit_transform.translation.x,
+                    unit_transform.translation.y + 20.0,
+                    120.0,
+                );
+            }
+            continue;
+        }
+        commands.spawn((
+            LaneDebugUnitLabel { unit: unit_entity },
+            Text2dBundle {
+                text: Text::from_section(
+                    lane_assignment.0.short_label(),
+                    TextStyle {
+                        font_size: 14.0,
+                        color: lane_color(lane_assignment.0),
+                        ..default()
+                    },
+                ),
+                transform: Transform::from_xyz(
+                    unit_transform.translation.x,
+                    unit_transform.translation.y + 20.0,
+                    120.0,
+                ),
+                ..default()
+            },
+        ));
+    }
+
+    for (_, stale_label_entity) in existing {
+        if let Some(entity_commands) = commands.get_entity(stale_label_entity) {
+            entity_commands.despawn_recursive();
+        }
+    }
+}
+
+fn despawn_lane_debug_unit_labels(
+    mut commands: Commands,
+    labels: Query<Entity, With<LaneDebugUnitLabel>>,
+    mut overlay: ResMut<LaneDebugOverlayState>,
+) {
+    overlay.enabled = false;
+    for entity in &labels {
+        if let Some(entity_commands) = commands.get_entity(entity) {
+            entity_commands.despawn_recursive();
+        }
+    }
+}
+
 fn reset_stat_band_feedback_on_run_start(
     mut start_events: EventReader<StartRunEvent>,
     mut runtime: ResMut<StatBandFeedbackRuntime>,
@@ -9530,31 +9689,36 @@ pub fn conditional_upgrade_hud_status_text(
     max_priest_blessing_secs: f32,
 ) -> String {
     let mut entries = Vec::new();
-    if let Some(active) = conditional_upgrade_active_state(status, "mob_fury") {
-        entries.push(if active {
-            "Mob's Fury: ACTIVE".to_string()
+    for entry in status.entries.iter().rev().take(4) {
+        let title = conditional_upgrade_hud_title(entry.kind.as_str());
+        if entry.active {
+            entries.push(format!("{title}: ACTIVE"));
+        } else if let Some(detail) = entry.detail.as_deref() {
+            entries.push(format!("{title}: INACTIVE ({detail})"));
         } else {
-            "Mob's Fury: INACTIVE".to_string()
-        });
+            entries.push(format!("{title}: INACTIVE"));
+        }
     }
-    if let Some(active) = conditional_upgrade_active_state(status, "mob_justice") {
-        entries.push(if active {
-            "Mob's Justice: EXECUTE <10% HP".to_string()
-        } else {
-            "Mob's Justice: INACTIVE".to_string()
-        });
-    }
-    if let Some(active) = conditional_upgrade_active_state(status, "mob_mercy") {
-        entries.push(if active {
-            "Mob's Mercy: RESCUE x0.5".to_string()
-        } else {
-            "Mob's Mercy: INACTIVE".to_string()
-        });
+    entries.reverse();
+    if entries.len() > 4 {
+        entries.truncate(4);
     }
     if max_priest_blessing_secs > 0.0 {
         entries.push(format!("Priest Blessing: {:.1}s", max_priest_blessing_secs));
     }
     entries.join("\n")
+}
+
+fn conditional_upgrade_hud_title(kind: &str) -> &'static str {
+    match kind {
+        "mob_fury" => "Mob's Fury",
+        "mob_justice" => "Mob's Justice",
+        "mob_mercy" => "Mob's Mercy",
+        "doctrine_execution_rites" => "Execution Rites",
+        "doctrine_countervolley" => "Countervolley",
+        "doctrine_pike_hedgehog" => "Pike Hedgehog",
+        _ => "Conditional Upgrade",
+    }
 }
 
 fn conditional_upgrade_active_state(status: &ConditionalUpgradeStatus, kind: &str) -> Option<bool> {
@@ -9785,14 +9949,18 @@ fn health_bar_segment_fill_ratio(current: f32, max: f32, segment_count: u32) -> 
 mod tests {
     use std::path::Path;
 
-    use bevy::prelude::{App, Events, MinimalPlugins, Update};
+    use bevy::prelude::{
+        App, ButtonInput, Events, KeyCode, MinimalPlugins, Text, TextBundle, TextStyle, Update,
+    };
 
     use super::HeroRecruitSubtype;
     use crate::archive::{ArchiveCategory, ArchiveDataset, ArchiveEntry};
     use crate::core::hotkey_to_run_modal_screen;
     use crate::data::GameData;
     use crate::enemies::WaveRuntime;
-    use crate::formation::{ActiveFormation, FormationModifiers, FormationSkillBar};
+    use crate::formation::{
+        ActiveFormation, FormationLaneSummary, FormationModifiers, FormationSkillBar,
+    };
     use crate::inventory::{
         EquipmentChestState, EquipmentUnitType, GearItemEntry, GearItemType, InventorySlotRef,
         InventoryState,
@@ -10232,6 +10400,74 @@ mod tests {
     }
 
     #[test]
+    fn lane_debug_overlay_toggle_hotkey_flips_state() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.init_resource::<super::LaneDebugOverlayState>();
+        app.insert_resource(ButtonInput::<KeyCode>::default());
+        app.add_systems(Update, super::toggle_lane_debug_overlay);
+
+        assert!(
+            !app.world()
+                .resource::<super::LaneDebugOverlayState>()
+                .enabled
+        );
+
+        {
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.reset(KeyCode::F8);
+            keys.press(KeyCode::F8);
+        }
+        app.update();
+        assert!(
+            app.world()
+                .resource::<super::LaneDebugOverlayState>()
+                .enabled
+        );
+
+        {
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.reset(KeyCode::F8);
+            keys.press(KeyCode::F8);
+        }
+        app.update();
+        assert!(
+            !app.world()
+                .resource::<super::LaneDebugOverlayState>()
+                .enabled
+        );
+    }
+
+    #[test]
+    fn lane_debug_summary_text_reflects_lane_counts() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.insert_resource(FormationLaneSummary {
+            outer: 4,
+            middle: 3,
+            inner: 2,
+        });
+        app.insert_resource(super::LaneDebugOverlayState { enabled: true });
+        app.add_systems(Update, super::update_lane_debug_hud_text);
+        app.world_mut().spawn((
+            super::LaneDebugHudText,
+            TextBundle::from_section("", TextStyle::default()),
+        ));
+
+        app.update();
+        let text_value = {
+            let world = app.world_mut();
+            let mut query = world.query::<&Text>();
+            query.iter(world).next().expect("lane debug text").sections[0]
+                .value
+                .clone()
+        };
+        assert!(text_value.contains("O:4"));
+        assert!(text_value.contains("M:3"));
+        assert!(text_value.contains("I:2"));
+    }
+
+    #[test]
     fn unit_box_tooltip_contains_required_sections_for_infantry() {
         let data = GameData::load_from_dir(Path::new("assets/data")).expect("load data");
         let tooltip = unit_box_tooltip(UnitKind::ChristianPeasantInfantry, &data, Some(12.0));
@@ -10573,7 +10809,7 @@ mod tests {
         let mut one_time_tracker = OneTimeUpgradeTracker::default();
         one_time_tracker
             .acquired_ids
-            .insert("fast_learner_up".to_string());
+            .insert("quartermaster_up".to_string());
         one_time_tracker.acquired_ids.insert("mob_fury".to_string());
         let modifiers = FormationModifiers::default();
         let conditional_status = ConditionalUpgradeStatus::default();
@@ -10591,7 +10827,7 @@ mod tests {
 
         assert_eq!(panel.unique_slots_max, 5);
         assert_eq!(panel.unique_slots_used, 2);
-        assert!(panel.unique_upgrades.contains(&"Fast Learner".to_string()));
+        assert!(panel.unique_upgrades.contains(&"Quartermaster".to_string()));
         assert!(panel.unique_upgrades.contains(&"Mob's Fury".to_string()));
     }
 
@@ -10811,8 +11047,8 @@ mod tests {
         };
         let text = conditional_upgrade_hud_status_text(&status, 6.25);
         assert!(text.contains("Mob's Fury: ACTIVE"));
-        assert!(text.contains("Mob's Justice: INACTIVE"));
-        assert!(text.contains("Mob's Mercy: RESCUE x0.5"));
+        assert!(text.contains("Mob's Justice: INACTIVE (requires tier-0 share)"));
+        assert!(text.contains("Mob's Mercy: ACTIVE"));
         assert!(text.contains("Priest Blessing: 6.2s"));
     }
 
@@ -10853,6 +11089,9 @@ mod tests {
             faction: None,
             stats: Vec::new(),
             special_effect: None,
+            downside: None,
+            doctrine_tags: Vec::new(),
+            nature: crate::inventory::ItemNature::Minor,
         }
     }
 

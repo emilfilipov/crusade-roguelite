@@ -4,173 +4,277 @@
       "id": "unlock_formation_circle",
       "kind": "unlock_formation",
       "value": 1.0,
+      "reward_lane": "major",
       "one_time": true,
       "adds_to_skillbar": true,
-      "formation_id": "circle"
+      "formation_id": "circle",
+      "downside": "Consumes a major doctrine pick for utility."
     },
     {
       "id": "unlock_formation_skean",
       "kind": "unlock_formation",
       "value": 1.0,
+      "reward_lane": "major",
       "one_time": true,
       "adds_to_skillbar": true,
-      "formation_id": "skean"
+      "formation_id": "skean",
+      "downside": "Consumes a major doctrine pick for utility."
     },
     {
       "id": "unlock_formation_diamond",
       "kind": "unlock_formation",
       "value": 1.0,
+      "reward_lane": "major",
       "one_time": true,
       "adds_to_skillbar": true,
-      "formation_id": "diamond"
+      "formation_id": "diamond",
+      "downside": "Consumes a major doctrine pick for utility."
     },
     {
       "id": "unlock_formation_shield_wall",
       "kind": "unlock_formation",
       "value": 1.0,
+      "reward_lane": "major",
       "one_time": true,
       "adds_to_skillbar": true,
-      "formation_id": "shield_wall"
+      "formation_id": "shield_wall",
+      "downside": "Consumes a major doctrine pick for utility."
     },
     {
       "id": "unlock_formation_loose",
       "kind": "unlock_formation",
       "value": 1.0,
+      "reward_lane": "major",
       "one_time": true,
       "adds_to_skillbar": true,
-      "formation_id": "loose"
+      "formation_id": "loose",
+      "downside": "Consumes a major doctrine pick for utility."
     },
     {
       "id": "damage_up",
       "kind": "damage",
-      "min_value": 2.0,
-      "max_value": 8.0,
-      "value_step": 1.0,
-      "weight_exponent": 2.2
+      "value": 7.0,
+      "reward_lane": "minor",
+      "stack_cap": 6,
+      "diminishing_factor": 0.88,
+      "doctrine_tags": ["combat", "universal"]
     },
     {
       "id": "attack_speed_up",
       "kind": "attack_speed",
-      "min_value": 0.0256,
-      "max_value": 0.1024,
-      "value_step": 0.0128,
-      "weight_exponent": 2.0
+      "value": 0.08,
+      "reward_lane": "minor",
+      "stack_cap": 5,
+      "diminishing_factor": 0.86,
+      "doctrine_tags": ["combat", "tempo"]
     },
     {
-      "id": "fast_learner_up",
-      "kind": "fast_learner",
-      "min_value": 0.05,
-      "max_value": 0.15,
-      "value_step": 0.05,
-      "weight_exponent": 2.0
+      "id": "quartermaster_up",
+      "kind": "quartermaster",
+      "value": 0.12,
+      "reward_lane": "minor",
+      "stack_cap": 4,
+      "diminishing_factor": 0.9,
+      "doctrine_tags": ["economy", "utility"]
     },
     {
       "id": "luck_up",
       "kind": "luck",
-      "min_value": 0.02,
-      "max_value": 0.10,
-      "value_step": 0.02,
-      "weight_exponent": 2.15
+      "value": 0.05,
+      "reward_lane": "minor",
+      "stack_cap": 4,
+      "diminishing_factor": 0.85,
+      "doctrine_tags": ["economy", "crit", "drops"]
     },
     {
       "id": "skill_duration_up",
       "kind": "skill_duration",
-      "min_value": 0.05,
-      "max_value": 0.10,
-      "value_step": 0.01,
-      "weight_exponent": 2.1
+      "value": 0.10,
+      "reward_lane": "minor",
+      "stack_cap": 3,
+      "diminishing_factor": 0.82,
+      "doctrine_tags": ["utility", "support"]
     },
     {
       "id": "cooldown_reduction_up",
       "kind": "cooldown_reduction",
-      "min_value": 0.05,
-      "max_value": 0.10,
-      "value_step": 0.01,
-      "weight_exponent": 2.1
+      "value": 0.09,
+      "reward_lane": "minor",
+      "stack_cap": 4,
+      "diminishing_factor": 0.82,
+      "doctrine_tags": ["tempo", "support"]
     },
     {
       "id": "war_council_edict",
       "kind": "unique_slot_tradeoff",
       "value": 2.0,
-      "one_time": true
+      "reward_lane": "major",
+      "one_time": true,
+      "downside": "Narrows late-run doctrine flexibility."
+    },
+    {
+      "id": "doctrine_command_net",
+      "kind": "doctrine_command_net",
+      "value": 26.0,
+      "reward_lane": "major",
+      "one_time": true,
+      "doctrine_tags": ["control", "commander", "aura"],
+      "major_unlock_hint": "Best with aura-centric commander plans.",
+      "downside": "Global damage is reduced while this doctrine is active."
+    },
+    {
+      "id": "doctrine_stalwart_oath",
+      "kind": "doctrine_stalwart_oath",
+      "value": 2.5,
+      "reward_lane": "major",
+      "one_time": true,
+      "doctrine_tags": ["sustain", "commander", "frontline"],
+      "major_unlock_hint": "Best when planning long attrition fights.",
+      "downside": "Army movement speed is reduced."
+    },
+    {
+      "id": "doctrine_forced_march",
+      "kind": "doctrine_forced_march",
+      "value": 24.0,
+      "reward_lane": "major",
+      "one_time": true,
+      "doctrine_tags": ["tempo", "commander", "mobility"],
+      "major_unlock_hint": "Best for pressure and reposition-heavy runs.",
+      "downside": "Armor is reduced to pay for speed."
+    },
+    {
+      "id": "doctrine_execution_rites",
+      "kind": "doctrine_execution_rites",
+      "value": 1.0,
+      "reward_lane": "major",
+      "one_time": true,
+      "doctrine_tags": ["execute", "frontline"],
+      "requirement_type": "band_at_least",
+      "requirement_band_stat": "frontline_share",
+      "requirement_band_at_least": "high",
+      "major_unlock_hint": "Best for melee-heavy doctrine paths.",
+      "downside": "Rescue channels become slower while this doctrine is active."
+    },
+    {
+      "id": "doctrine_countervolley",
+      "kind": "doctrine_countervolley",
+      "value": 1.0,
+      "reward_lane": "major",
+      "one_time": true,
+      "doctrine_tags": ["anti_ranged", "archer", "tempo"],
+      "requirement_type": "band_at_least",
+      "requirement_band_stat": "archer_share",
+      "requirement_band_at_least": "high",
+      "major_unlock_hint": "Best with archer-focused compositions.",
+      "downside": "Morale loss under pressure increases."
+    },
+    {
+      "id": "doctrine_pike_hedgehog",
+      "kind": "doctrine_pike_hedgehog",
+      "value": 1.0,
+      "reward_lane": "major",
+      "one_time": true,
+      "doctrine_tags": ["cavalry_pressure", "anti_cavalry", "control"],
+      "requirement_type": "band_at_least",
+      "requirement_band_stat": "anti_cavalry_share",
+      "requirement_band_at_least": "moderate",
+      "major_unlock_hint": "Best against cavalry-dominant enemy waves.",
+      "downside": "Formation movement speed is reduced."
     },
     {
       "id": "armor_up",
       "kind": "armor",
-      "min_value": 0.5,
-      "max_value": 2.5,
-      "value_step": 0.5,
-      "weight_exponent": 2.0
+      "value": 2.0,
+      "reward_lane": "minor",
+      "stack_cap": 6,
+      "diminishing_factor": 0.86,
+      "doctrine_tags": ["defense", "frontline"]
     },
     {
       "id": "pickup_radius_up",
       "kind": "pickup_radius",
-      "min_value": 2.0,
-      "max_value": 12.0,
-      "value_step": 1.0,
-      "weight_exponent": 2.1
+      "value": 10.0,
+      "reward_lane": "minor",
+      "stack_cap": 3,
+      "diminishing_factor": 0.8,
+      "doctrine_tags": ["economy", "utility"]
     },
     {
       "id": "commander_aura_radius_up",
       "kind": "aura_radius",
-      "min_value": 8.0,
-      "max_value": 30.0,
-      "value_step": 2.0,
-      "weight_exponent": 2.1
+      "value": 22.0,
+      "reward_lane": "minor",
+      "stack_cap": 4,
+      "diminishing_factor": 0.85,
+      "doctrine_tags": ["aura", "support"]
     },
     {
       "id": "authority_aura_up",
       "kind": "authority_aura",
-      "min_value": 0.02,
-      "max_value": 0.10,
-      "value_step": 0.01,
-      "weight_exponent": 2.0
+      "value": 0.06,
+      "reward_lane": "minor",
+      "stack_cap": 4,
+      "diminishing_factor": 0.82,
+      "doctrine_tags": ["aura", "morale"]
     },
     {
       "id": "move_speed_up",
       "kind": "move_speed",
-      "min_value": 2.4,
-      "max_value": 12.0,
-      "value_step": 0.8,
-      "weight_exponent": 2.15
+      "value": 8.0,
+      "reward_lane": "minor",
+      "stack_cap": 5,
+      "diminishing_factor": 0.84,
+      "doctrine_tags": ["tempo", "mobility"]
     },
     {
       "id": "hospitalier_aura_up",
       "kind": "hospitalier_aura",
-      "min_value": 0.2,
-      "max_value": 0.8,
-      "value_step": 0.1,
-      "weight_exponent": 2.1
+      "value": 0.55,
+      "reward_lane": "minor",
+      "stack_cap": 4,
+      "diminishing_factor": 0.82,
+      "doctrine_tags": ["support", "sustain"]
     },
     {
       "id": "encirclement_doctrine",
       "kind": "formation_breach",
       "value": 20.0,
-      "one_time": true
+      "reward_lane": "major",
+      "one_time": true,
+      "downside": "Only applies while enemies breach the formation footprint."
     },
     {
       "id": "mob_fury",
       "kind": "mob_fury",
       "value": 1.0,
+      "reward_lane": "major",
       "one_time": true,
-      "requirement_type": "tier0_share",
-      "requirement_min_tier0_share": 1.0
+      "requirement_type": "band_at_least",
+      "requirement_band_stat": "frontline_share",
+      "requirement_band_at_least": "high",
+      "downside": "Locks doctrine around frontline-heavy compositions."
     },
     {
       "id": "mob_justice",
       "kind": "mob_justice",
       "value": 1.0,
+      "reward_lane": "major",
       "one_time": true,
-      "requirement_type": "tier0_share",
-      "requirement_min_tier0_share": 1.0
+      "requirement_type": "band_at_least",
+      "requirement_band_stat": "anti_armor_share",
+      "requirement_band_at_least": "moderate",
+      "downside": "Locks doctrine around anti-armor compositions."
     },
     {
       "id": "mob_mercy",
       "kind": "mob_mercy",
       "value": 1.0,
+      "reward_lane": "major",
       "one_time": true,
-      "requirement_type": "tier0_share",
-      "requirement_min_tier0_share": 1.0
+      "requirement_type": "band_at_least",
+      "requirement_band_stat": "support_share",
+      "requirement_band_at_least": "high",
+      "downside": "Locks doctrine around support-heavy compositions."
     }
   ]
 }
