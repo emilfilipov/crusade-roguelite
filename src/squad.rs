@@ -42,10 +42,10 @@ const PRIEST_BLESSING_VFX_ALPHA: f32 = 0.28;
 const PRIEST_BLESSING_VFX_SCALE_X: f32 = 1.75;
 const PRIEST_BLESSING_VFX_SCALE_Y: f32 = 0.92;
 const PRIEST_BLESSING_VFX_MIN_RADIUS: f32 = 8.0;
-const TIER0_CONVERSION_GOLD_COST_PER_UNIT: f32 = 18.0;
-const PROMOTION_GOLD_COST_PER_STEP: f32 = 65.0;
-const PROMOTION_GOLD_COST_PER_TIER: f32 = 24.0;
-const HERO_RECRUIT_GOLD_PREMIUM: f32 = 110.0;
+const TIER0_CONVERSION_GOLD_COST_PER_UNIT: f32 = 24.0;
+const PROMOTION_GOLD_COST_PER_STEP: f32 = 92.0;
+const PROMOTION_GOLD_COST_PER_TIER: f32 = 42.0;
+const HERO_RECRUIT_GOLD_PREMIUM: f32 = 180.0;
 pub const HERO_TIER_UNLOCK_MAJOR_WAVE: u32 = 60;
 
 #[derive(Resource, Clone, Debug, Default)]
@@ -2874,6 +2874,7 @@ mod tests {
 
     use crate::combat::RangedAttackProfile;
     use crate::data::GameData;
+    use crate::drops::scaled_pack_gold;
     use crate::formation::{ActiveFormation, FormationModifiers};
     use crate::model::{
         Armor, AttackProfile, CommanderUnit, DamageEvent, EnemyUnit, FriendlyUnit, GameState,
@@ -4439,7 +4440,29 @@ mod tests {
 
     #[test]
     fn tier0_conversion_cost_has_fixed_gold_price() {
-        assert!((tier0_conversion_gold_cost() - 18.0).abs() < 0.001);
+        assert!((tier0_conversion_gold_cost() - 24.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn economy_affordability_profile_preserves_opportunity_costs() {
+        let data = GameData::load_from_dir(std::path::Path::new("assets/data")).expect("data");
+        let early_pack = scaled_pack_gold(7.0, 1, 1);
+        let mid_pack = scaled_pack_gold(7.0, 40, 40);
+        let late_pack = scaled_pack_gold(7.0, 98, 98);
+
+        let swap_cost = tier0_conversion_gold_cost();
+        let tier3_promotion_cost = super::promotion_gold_cost(1, 3);
+        let hero_cost = super::hero_recruit_gold_cost_for_subtype_with_data(
+            &data,
+            HeroRecruitSubtype::InfantrySwordShield,
+        );
+
+        assert!(early_pack < swap_cost);
+        assert!(swap_cost < tier3_promotion_cost);
+        assert!(tier3_promotion_cost < hero_cost);
+        assert!((late_pack / swap_cost) < 2.0);
+        assert!(mid_pack * 8.0 < hero_cost);
+        assert!(late_pack * 5.0 < hero_cost);
     }
 
     #[test]
@@ -4505,7 +4528,7 @@ mod tests {
         assert_eq!(infantry_count, 0);
 
         let progression = app.world().resource::<Progression>();
-        assert!((progression.gold - 12.0).abs() < 0.001);
+        assert!((progression.gold - 6.0).abs() < 0.001);
     }
 
     #[test]
@@ -4737,6 +4760,36 @@ mod tests {
     }
 
     #[test]
+    fn wave_1_to_98_progression_keeps_unlock_and_reward_contracts_in_sync() {
+        let mut level = 1u32;
+        let mut highest_major_wave_defeated = 0u32;
+        let mut unlocked_tier = 0u8;
+        for wave in 1..=98 {
+            level += crate::upgrades::level_rewards_for_wave_completion(wave);
+            if wave % 10 == 0 {
+                highest_major_wave_defeated = wave;
+                unlocked_tier = unlocked_upgrade_tier_for_major_wave(highest_major_wave_defeated);
+            }
+            let (major, minor) = crate::upgrades::major_minor_reward_counts_for_level(level);
+            assert_eq!(major + minor, level);
+            let expected_tier = if wave < 10 {
+                0
+            } else {
+                (wave / 10).min(5) as u8
+            };
+            assert_eq!(
+                unlocked_tier, expected_tier,
+                "unexpected unlocked tier on wave {wave}"
+            );
+        }
+        assert_eq!(level, 100);
+        assert_eq!(highest_major_wave_defeated, 90);
+        assert_eq!(unlocked_tier, 5);
+        assert!(is_hero_tier_unlocked(60));
+        assert!(!is_hero_tier_unlocked(50));
+    }
+
+    #[test]
     fn hero_tier_unlock_state_stays_locked_before_wave_60_major_defeat() {
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, bevy::state::app::StatesPlugin));
@@ -4811,7 +4864,7 @@ mod tests {
         app.insert_resource(ActiveFormation::Square);
         app.insert_resource(FormationModifiers::default());
         app.insert_resource(Progression {
-            gold: 400.0,
+            gold: 700.0,
             hear_the_call_tokens: 1,
             level: 70,
             pending_level_ups: 0,
@@ -4853,7 +4906,7 @@ mod tests {
         let progression_after_success = app.world().resource::<Progression>();
         assert_eq!(progression_after_success.hear_the_call_tokens, 0);
         let data = app.world().resource::<GameData>();
-        let expected_gold = 400.0
+        let expected_gold = 700.0
             - super::hero_recruit_gold_cost_for_subtype_with_data(
                 data,
                 HeroRecruitSubtype::InfantrySwordShield,

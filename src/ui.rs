@@ -47,10 +47,12 @@ use crate::squad::{
 };
 use crate::upgrades::{
     ConditionalUpgradeEffects, ConditionalUpgradeStatus, OneTimeUpgradeTracker, Progression,
-    ProgressionLockFeedback, SelectUpgradeEvent, SkillBookLog, UpgradeCardIcon, UpgradeDraft,
-    UpgradeValueTier, commander_level_hp_bonus, effective_max_unique_upgrades,
+    ProgressionLockFeedback, RequirementBand, SelectUpgradeEvent, SemanticBandStat, SkillBookLog,
+    UpgradeCardIcon, UpgradeDraft, UpgradeRewardKind, UpgradeSemanticEffect, UpgradeValueTier,
+    apply_semantic_band_floor, apply_semantic_band_shift, commander_level_hp_bonus,
+    effective_max_unique_upgrades, semantic_effects_for_upgrade,
     skill_book_entry_cumulative_description, upgrade_card_icon, upgrade_display_description,
-    upgrade_display_title, upgrade_value_tier,
+    upgrade_display_title,
 };
 use crate::visuals::ArtAssets;
 
@@ -264,6 +266,11 @@ struct LaneDebugUnitLabel {
 
 #[derive(Resource, Clone, Copy, Debug, Default)]
 struct LaneDebugOverlayState {
+    enabled: bool,
+}
+
+#[derive(Resource, Clone, Copy, Debug, Default)]
+struct AdvancedDetailsState {
     enabled: bool,
 }
 
@@ -601,6 +608,7 @@ struct RunModalOverlayDeps<'w, 's> {
     active_formation: Res<'w, ActiveFormation>,
     formation_modifiers: Res<'w, FormationModifiers>,
     setup_selection: Res<'w, MatchSetupSelection>,
+    advanced_details: Res<'w, AdvancedDetailsState>,
     roots: Query<'w, 's, (Entity, &'static RunModalRoot)>,
 }
 
@@ -681,6 +689,7 @@ impl Plugin for UiPlugin {
             .init_resource::<StatBandFeedbackRuntime>()
             .init_resource::<MinimapRefreshRuntime>()
             .init_resource::<LaneDebugOverlayState>()
+            .init_resource::<AdvancedDetailsState>()
             .init_resource::<UnitUpgradeUiState>()
             .init_resource::<InventorySlotSelection>()
             .init_resource::<InventoryDoubleClickState>()
@@ -773,6 +782,7 @@ impl Plugin for UiPlugin {
                 Update,
                 refresh_hud_snapshot.run_if(in_state(GameState::InRun)),
             )
+            .add_systems(Update, toggle_advanced_details)
             .add_systems(
                 Update,
                 toggle_lane_debug_overlay.run_if(in_state(GameState::InRun)),
@@ -1955,7 +1965,15 @@ fn spawn_level_up_menu(
     mut commands: Commands,
     draft: Res<UpgradeDraft>,
     art: Res<crate::visuals::ArtAssets>,
+    buffs: Res<crate::model::GlobalBuffs>,
+    inventory: Res<InventoryState>,
+    banner_state: Option<Res<BannerState>>,
+    advanced_details: Res<AdvancedDetailsState>,
 ) {
+    let banner_item_active = banner_state
+        .as_deref()
+        .map(|state| !state.is_dropped)
+        .unwrap_or(true);
     commands
         .spawn((
             LevelUpMenuRoot,
@@ -1984,7 +2002,7 @@ fn spawn_level_up_menu(
                     ..default()
                 },
             ));
-            spawn_level_up_tier_legend(parent);
+            spawn_level_up_tier_legend(parent, draft.reward_kind);
 
             parent
                 .spawn(NodeBundle {
@@ -2000,27 +2018,69 @@ fn spawn_level_up_menu(
                 })
                 .with_children(|cards| {
                     for (index, upgrade) in draft.options.iter().enumerate() {
+                        let description = upgrade_description_with_runtime_preview(
+                            upgrade,
+                            &buffs,
+                            &inventory,
+                            banner_item_active,
+                            advanced_details.enabled,
+                        );
+                        let doctrine_tags = if upgrade.doctrine_tags.is_empty() {
+                            "none".to_string()
+                        } else {
+                            upgrade.doctrine_tags.join(", ")
+                        };
+                        let notes = upgrade
+                            .major_unlock_hint
+                            .as_deref()
+                            .unwrap_or("No additional notes.");
                         spawn_level_up_card(
                             cards,
                             index,
-                            upgrade_display_title(upgrade),
-                            &upgrade_display_description(upgrade),
-                            upgrade_icon_for(upgrade_card_icon(upgrade), &art),
-                            upgrade_value_tier(upgrade),
+                            LevelUpCardView {
+                                title: upgrade_display_title(upgrade),
+                                reward_kind: draft.reward_kind,
+                                upside: &description,
+                                downside: upgrade
+                                    .downside
+                                    .as_deref()
+                                    .unwrap_or("No explicit downside."),
+                                doctrine_tags: &doctrine_tags,
+                                notes,
+                                icon: upgrade_icon_for(upgrade_card_icon(upgrade), &art),
+                            },
                         );
                     }
                 });
         });
 }
 
-fn spawn_level_up_tier_legend(parent: &mut ChildBuilder) {
+fn upgrade_lane_label(kind: UpgradeRewardKind) -> &'static str {
+    match kind {
+        UpgradeRewardKind::Minor => "MINOR",
+        UpgradeRewardKind::Major => "MAJOR",
+    }
+}
+
+fn upgrade_lane_color(kind: UpgradeRewardKind) -> Color {
+    match kind {
+        UpgradeRewardKind::Minor => Color::srgb(0.46, 0.78, 0.92),
+        UpgradeRewardKind::Major => Color::srgb(0.96, 0.74, 0.28),
+    }
+}
+
+fn spawn_level_up_tier_legend(parent: &mut ChildBuilder, reward_kind: UpgradeRewardKind) {
+    let milestone_text = match reward_kind {
+        UpgradeRewardKind::Major => "Major milestone reward (every 5 levels)",
+        UpgradeRewardKind::Minor => "Minor reward lane",
+    };
     parent
         .spawn(NodeBundle {
             style: Style {
                 flex_direction: FlexDirection::Row,
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
-                column_gap: Val::Px(10.0),
+                column_gap: Val::Px(14.0),
                 flex_wrap: FlexWrap::Wrap,
                 width: Val::Percent(100.0),
                 ..default()
@@ -2029,19 +2089,39 @@ fn spawn_level_up_tier_legend(parent: &mut ChildBuilder) {
             ..default()
         })
         .with_children(|row| {
-            for (tier, label) in LEVEL_UP_TIER_LEGEND {
+            row.spawn(TextBundle::from_section(
+                milestone_text,
+                TextStyle {
+                    font_size: 13.0,
+                    color: MENU_BUTTON_TEXT_HOVERED,
+                    ..default()
+                },
+            ));
+            for lane in [UpgradeRewardKind::Minor, UpgradeRewardKind::Major] {
+                let color = upgrade_lane_color(lane);
+                let active = lane == reward_kind;
                 row.spawn(NodeBundle {
                     style: Style {
                         flex_direction: FlexDirection::Row,
                         align_items: AlignItems::Center,
+                        border: UiRect::all(Val::Px(1.0)),
+                        padding: UiRect::axes(Val::Px(6.0), Val::Px(3.0)),
                         column_gap: Val::Px(6.0),
                         ..default()
                     },
-                    background_color: BackgroundColor(Color::NONE),
+                    background_color: BackgroundColor(if active {
+                        Color::srgba(0.12, 0.1, 0.08, 0.86)
+                    } else {
+                        Color::srgba(0.08, 0.07, 0.06, 0.45)
+                    }),
+                    border_color: BorderColor(if active {
+                        color.with_alpha(0.92)
+                    } else {
+                        color.with_alpha(0.42)
+                    }),
                     ..default()
                 })
                 .with_children(|entry| {
-                    let color = level_up_tier_border_color(tier);
                     entry.spawn(NodeBundle {
                         style: Style {
                             width: Val::Px(14.0),
@@ -2054,7 +2134,7 @@ fn spawn_level_up_tier_legend(parent: &mut ChildBuilder) {
                         ..default()
                     });
                     entry.spawn(TextBundle::from_section(
-                        label,
+                        upgrade_lane_label(lane),
                         TextStyle {
                             font_size: 13.0,
                             color,
@@ -2066,24 +2146,18 @@ fn spawn_level_up_tier_legend(parent: &mut ChildBuilder) {
         });
 }
 
-const LEVEL_UP_TIER_LEGEND: [(UpgradeValueTier, &str); 6] = [
-    (UpgradeValueTier::Common, "Common"),
-    (UpgradeValueTier::Uncommon, "Uncommon"),
-    (UpgradeValueTier::Rare, "Rare"),
-    (UpgradeValueTier::Epic, "Epic"),
-    (UpgradeValueTier::Mythical, "Mythical"),
-    (UpgradeValueTier::Unique, "Unique"),
-];
-
-fn spawn_level_up_card(
-    parent: &mut ChildBuilder,
-    index: usize,
-    title: &str,
-    description: &str,
+struct LevelUpCardView<'a> {
+    title: &'a str,
+    reward_kind: UpgradeRewardKind,
+    upside: &'a str,
+    downside: &'a str,
+    doctrine_tags: &'a str,
+    notes: &'a str,
     icon: Handle<Image>,
-    tier: UpgradeValueTier,
-) {
-    let style = level_up_card_tier_style(tier);
+}
+
+fn spawn_level_up_card(parent: &mut ChildBuilder, index: usize, card_view: LevelUpCardView<'_>) {
+    let style = level_up_card_lane_style(card_view.reward_kind);
     parent
         .spawn((
             ButtonBundle {
@@ -2108,10 +2182,10 @@ fn spawn_level_up_card(
         ))
         .with_children(|card| {
             card.spawn(TextBundle::from_section(
-                tier_label(tier),
+                format!("{} LANE", upgrade_lane_label(card_view.reward_kind)),
                 TextStyle {
                     font_size: 12.0,
-                    color: level_up_tier_border_color(tier),
+                    color: upgrade_lane_color(card_view.reward_kind),
                     ..default()
                 },
             ));
@@ -2121,7 +2195,7 @@ fn spawn_level_up_card(
                     ..default()
                 },
                 text: Text::from_section(
-                    title,
+                    card_view.title,
                     TextStyle {
                         font_size: 22.0,
                         color: MENU_BUTTON_TEXT_HOVERED,
@@ -2137,7 +2211,7 @@ fn spawn_level_up_card(
                     height: Val::Px(96.0),
                     ..default()
                 },
-                image: UiImage::new(icon),
+                image: UiImage::new(card_view.icon),
                 background_color: BackgroundColor(Color::NONE),
                 ..default()
             });
@@ -2147,9 +2221,15 @@ fn spawn_level_up_card(
                     ..default()
                 },
                 text: Text::from_section(
-                    description,
+                    format!(
+                        "Upside:\n{}\n\nDownside:\n{}\n\nDoctrine:\n{}\n\nNotes:\n{}",
+                        card_view.upside,
+                        card_view.downside,
+                        card_view.doctrine_tags,
+                        card_view.notes
+                    ),
                     TextStyle {
-                        font_size: 15.0,
+                        font_size: 13.0,
                         color: HUD_TEXT_COLOR,
                         ..default()
                     },
@@ -2160,8 +2240,8 @@ fn spawn_level_up_card(
         });
 }
 
-fn level_up_card_tier_style(tier: UpgradeValueTier) -> LevelUpCardTierStyle {
-    let base = level_up_tier_border_color(tier);
+fn level_up_card_lane_style(kind: UpgradeRewardKind) -> LevelUpCardTierStyle {
+    let base = upgrade_lane_color(kind);
     LevelUpCardTierStyle {
         base_border: base.with_alpha(0.96),
         hover_border: base.with_alpha(0.98),
@@ -2178,17 +2258,6 @@ fn level_up_tier_border_color(tier: UpgradeValueTier) -> Color {
         UpgradeValueTier::Epic => Color::srgb(0.67, 0.38, 0.91),
         UpgradeValueTier::Mythical => Color::srgb(1.0, 0.56, 0.08),
         UpgradeValueTier::Unique => Color::srgb(0.92, 0.2, 0.2),
-    }
-}
-
-fn tier_label(tier: UpgradeValueTier) -> &'static str {
-    match tier {
-        UpgradeValueTier::Common => "COMMON",
-        UpgradeValueTier::Uncommon => "UNCOMMON",
-        UpgradeValueTier::Rare => "RARE",
-        UpgradeValueTier::Epic => "EPIC",
-        UpgradeValueTier::Mythical => "MYTHICAL",
-        UpgradeValueTier::Unique => "UNIQUE",
     }
 }
 
@@ -2536,6 +2605,7 @@ fn sync_run_modal_overlay(
                 &deps.archive,
                 &deps.data,
                 &deps.art,
+                deps.advanced_details.enabled,
             );
         }
     }
@@ -2574,6 +2644,7 @@ fn spawn_run_modal_overlay(
     archive: &ArchiveDataset,
     data: &GameData,
     art: &crate::visuals::ArtAssets,
+    show_advanced_details: bool,
 ) {
     const INVENTORY_TOOLTIP_WIDTH: f32 = 360.0;
     const INVENTORY_TOOLTIP_MIN_HEIGHT: f32 = 128.0;
@@ -2673,7 +2744,12 @@ fn spawn_run_modal_overlay(
                     spawn_archive_sections(panel, archive, art, 472.0);
                 }
                 if matches!(screen, RunModalScreen::UnitUpgrade) {
-                    spawn_unit_upgrade_modal_sections(panel, unit_upgrade_panel, data);
+                    spawn_unit_upgrade_modal_sections(
+                        panel,
+                        unit_upgrade_panel,
+                        data,
+                        show_advanced_details,
+                    );
                 }
                 panel
                     .spawn(NodeBundle {
@@ -3104,6 +3180,114 @@ fn qualitative_stat_line(label: &str, band: QualitativeBand) -> String {
     format!("{label} {} {}", qualitative_band_meter(band), band.label())
 }
 
+fn requirement_band_from_qualitative(band: QualitativeBand) -> RequirementBand {
+    match band {
+        QualitativeBand::VeryLow => RequirementBand::VeryLow,
+        QualitativeBand::Low => RequirementBand::Low,
+        QualitativeBand::Moderate => RequirementBand::Moderate,
+        QualitativeBand::High => RequirementBand::High,
+        QualitativeBand::VeryHigh => RequirementBand::VeryHigh,
+    }
+}
+
+fn qualitative_band_from_requirement(band: RequirementBand) -> QualitativeBand {
+    match band {
+        RequirementBand::VeryLow => QualitativeBand::VeryLow,
+        RequirementBand::Low => QualitativeBand::Low,
+        RequirementBand::Moderate => QualitativeBand::Moderate,
+        RequirementBand::High => QualitativeBand::High,
+        RequirementBand::VeryHigh => QualitativeBand::VeryHigh,
+    }
+}
+
+fn stat_band_for_semantic_stat(
+    snapshot: StatBandSnapshot,
+    stat: SemanticBandStat,
+) -> QualitativeBand {
+    match stat {
+        SemanticBandStat::Damage => snapshot.damage_bonus,
+        SemanticBandStat::Armor => snapshot.armor_bonus,
+        SemanticBandStat::MoveSpeed => snapshot.move_speed_bonus,
+        SemanticBandStat::Luck => snapshot.luck_bonus,
+    }
+}
+
+fn upgrade_description_with_runtime_preview(
+    upgrade: &crate::data::UpgradeConfig,
+    buffs: &crate::model::GlobalBuffs,
+    inventory: &InventoryState,
+    banner_item_active: bool,
+    show_exact_values: bool,
+) -> String {
+    let mut description = upgrade_display_description(upgrade);
+    let snapshot = current_stat_band_snapshot(buffs, inventory, banner_item_active);
+    let effects = semantic_effects_for_upgrade(upgrade);
+    let mut preview_lines = Vec::new();
+
+    for effect in &effects {
+        if let UpgradeSemanticEffect::BandShift { stat, steps } = effect {
+            let current = stat_band_for_semantic_stat(snapshot, *stat);
+            let current_req = requirement_band_from_qualitative(current);
+            let mut after_req = apply_semantic_band_shift(current_req, *steps);
+            if let Some(floor) = effects.iter().find_map(|inner| match inner {
+                UpgradeSemanticEffect::BandFloor {
+                    stat: floor_stat,
+                    floor,
+                } if floor_stat == stat => Some(*floor),
+                _ => None,
+            }) {
+                after_req = apply_semantic_band_floor(after_req, floor);
+            }
+            let after = qualitative_band_from_requirement(after_req);
+            preview_lines.push(format!(
+                "Preview: {} {} -> {} {}",
+                stat.label(),
+                qualitative_band_meter(current),
+                qualitative_band_meter(after),
+                after.label()
+            ));
+        }
+    }
+
+    for effect in &effects {
+        if let UpgradeSemanticEffect::BandFloor { stat, floor } = effect
+            && !effects.iter().any(|inner| {
+                matches!(
+                    inner,
+                    UpgradeSemanticEffect::BandShift {
+                        stat: shift_stat,
+                        ..
+                    } if shift_stat == stat
+                )
+            })
+        {
+            let current = stat_band_for_semantic_stat(snapshot, *stat);
+            let current_req = requirement_band_from_qualitative(current);
+            let after =
+                qualitative_band_from_requirement(apply_semantic_band_floor(current_req, *floor));
+            preview_lines.push(format!(
+                "Preview: {} floor {} -> {} {}",
+                stat.label(),
+                qualitative_band_meter(current),
+                qualitative_band_meter(after),
+                after.label()
+            ));
+        }
+    }
+
+    if !preview_lines.is_empty() {
+        description.push('\n');
+        description.push_str(preview_lines.join("\n").as_str());
+    }
+    if !show_exact_values {
+        return description;
+    }
+
+    description
+        .push_str("\nAdvanced: exact internal values are enabled (F3 toggles qualitative/exact).");
+    description
+}
+
 fn unit_trait_badges(kind: UnitKind) -> String {
     let mut traits: Vec<&'static str> = Vec::new();
     if kind.has_shielded_trait() {
@@ -3192,7 +3376,12 @@ fn unit_counter_key_matchups(kind: UnitKind) -> String {
     comma_join_or_none(notes.as_slice())
 }
 
-fn unit_box_tooltip(kind: UnitKind, data: &GameData, swap_cost: Option<f32>) -> String {
+fn unit_box_tooltip(
+    kind: UnitKind,
+    data: &GameData,
+    swap_cost: Option<f32>,
+    show_exact_values: bool,
+) -> String {
     let swap_hint = if friendly_tier_for_kind(kind) == Some(0) {
         format!(
             "\nSwap Cost: {:.1} gold\nHint: right-click unit to open swap menu.",
@@ -3237,7 +3426,7 @@ fn unit_box_tooltip(kind: UnitKind, data: &GameData, swap_cost: Option<f32>) -> 
         let strengths = unit_counter_strengths(kind);
         let weaknesses = unit_counter_weaknesses(kind);
         let matchups = unit_counter_key_matchups(kind);
-        format!(
+        let mut tooltip = format!(
             "{}\nType: {}\nDescription: {}\nStats:\n- {}\n- {}\n- {}\n- {}\n- {}\n- {}\n- {}\nTraits: {}\nStrengths: {}\nWeaknesses: {}\nKey Matchups: {}\nAbilities: {}{}",
             unit_kind_label(kind),
             unit_role_label(kind),
@@ -3255,7 +3444,23 @@ fn unit_box_tooltip(kind: UnitKind, data: &GameData, swap_cost: Option<f32>) -> 
             matchups,
             unit_abilities(kind),
             swap_hint
-        )
+        );
+        if show_exact_values {
+            tooltip.push_str(
+                format!(
+                "\nAdvanced Details: HP {:.0}, Armor {:.1}, Damage {:.1}, Attack Cooldown {:.2}s, Range {:.0}, Move Speed {:.0}, Morale {:.0}",
+                stats.max_hp,
+                stats.armor,
+                stats.damage,
+                stats.attack_cooldown_secs,
+                stats.attack_range,
+                stats.move_speed,
+                stats.morale
+            )
+                .as_str(),
+            );
+        }
+        tooltip
     } else {
         let traits = unit_trait_badges(kind);
         let strengths = unit_counter_strengths(kind);
@@ -5049,6 +5254,7 @@ fn spawn_unit_upgrade_modal_sections(
     parent: &mut ChildBuilder,
     panel_data: &UnitUpgradePanelData,
     data: &GameData,
+    show_advanced_details: bool,
 ) {
     let budget_text = format!(
         "Commander Level Budget: {}/{}  |  Locked by Roster: {}  |  Treasury: {:.1} gold  |  Hear the Call: {}  |  Hero Tier: {}",
@@ -5537,6 +5743,7 @@ fn spawn_unit_upgrade_modal_sections(
                                             entry.kind,
                                             data,
                                             Some(panel_data.conversion_gold_cost_per_unit),
+                                            show_advanced_details,
                                         ),
                                     },
                                 ))
@@ -8406,11 +8613,13 @@ fn handle_inventory_context_menu_buttons(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn update_inventory_hover_tooltip(
     modal_state: Res<RunModalState>,
     slot_buttons: Query<(&Interaction, &InventorySlotButton)>,
     inventory: Res<InventoryState>,
     chest: Res<EquipmentChestState>,
+    advanced_details: Res<AdvancedDetailsState>,
     primary_window: Query<&Window, With<PrimaryWindow>>,
     mut tooltip_root: Query<&mut Style, With<InventoryTooltipRoot>>,
     mut tooltip_text: Query<&mut Text, With<InventoryTooltipText>>,
@@ -8432,7 +8641,7 @@ fn update_inventory_hover_tooltip(
     );
     let tooltip = hovered_slot
         .and_then(|slot| get_item_from_slot(&inventory, &chest, slot))
-        .map(gear_item_tooltip);
+        .map(|item| gear_item_tooltip(item, advanced_details.enabled));
     let Ok(window) = primary_window.get_single() else {
         return;
     };
@@ -8451,9 +8660,16 @@ fn update_inventory_hover_tooltip(
         style.top = Val::Px(tooltip_position.y);
     }
     for mut text in &mut tooltip_text {
-        text.sections[0].value = tooltip
-            .clone()
-            .unwrap_or_else(|| "Hover an item to show details.".to_string());
+        text.sections[0].value = tooltip.clone().unwrap_or_else(|| {
+            format!(
+                "Hover an item to show details. Press F3 for {} values.",
+                if advanced_details.enabled {
+                    "qualitative"
+                } else {
+                    "exact"
+                }
+            )
+        });
         text.sections[0].style.color = if tooltip.is_some() {
             HUD_TEXT_COLOR
         } else {
@@ -8927,6 +9143,7 @@ fn refresh_hud_snapshot(
 #[allow(clippy::type_complexity)]
 fn update_in_run_hud(
     hud: Res<HudSnapshot>,
+    advanced_details: Res<AdvancedDetailsState>,
     mut texts: ParamSet<(
         Query<&mut Text, With<WaveHudText>>,
         Query<&mut Text, With<TimeHudText>>,
@@ -8958,9 +9175,14 @@ fn update_in_run_hud(
     }
     if let Ok(mut text) = texts.p5().get_single_mut() {
         text.sections[0].value = format!(
-            "Treasury: {:.1}g  |  Hear the Call: {}",
+            "Treasury: {:.1}g  |  Hear the Call: {}  |  Details [F3]: {}",
             hud.gold.max(0.0),
-            hud.hear_the_call_tokens
+            hud.hear_the_call_tokens,
+            if advanced_details.enabled {
+                "ON"
+            } else {
+                "OFF"
+            }
         );
     }
     if let Ok(mut style) = morale_bar_styles.get_single_mut() {
@@ -8977,6 +9199,18 @@ fn toggle_lane_debug_overlay(
     };
     if keys.just_pressed(KeyCode::F8) {
         overlay.enabled = !overlay.enabled;
+    }
+}
+
+fn toggle_advanced_details(
+    keyboard: Option<Res<ButtonInput<KeyCode>>>,
+    mut advanced_details: ResMut<AdvancedDetailsState>,
+) {
+    let Some(keys) = keyboard else {
+        return;
+    };
+    if keys.just_pressed(KeyCode::F3) {
+        advanced_details.enabled = !advanced_details.enabled;
     }
 }
 
@@ -9972,7 +10206,7 @@ mod tests {
     };
     use crate::ui::{
         FLOATING_DAMAGE_TEXT_CRIT_FONT_SIZE, FLOATING_DAMAGE_TEXT_FONT_SIZE, HudSnapshot,
-        LEVEL_UP_TIER_LEGEND, MainMenuAction, MainMenuDispatch, UnitUpgradeUiState,
+        MainMenuAction, MainMenuDispatch, UnitUpgradeUiState,
         active_inventory_slot_from_interactions, archive_entries_for_category,
         build_skill_book_panel_data, build_stats_panel_data, can_select_match_setup_difficulty,
         can_select_match_setup_faction, conditional_upgrade_hud_status_text,
@@ -9980,15 +10214,15 @@ mod tests {
         floating_damage_text_alpha, floating_damage_text_is_expired,
         floating_damage_text_spawn_data, format_commander_level_text, format_elapsed_mm_ss,
         format_enemy_count, format_retinue_count, frame_cap_label, health_bar_fill_width,
-        inventory_tooltip_screen_position, level_up_tier_border_color, main_menu_dispatch,
-        max_affordable_promotions, max_affordable_tier0_conversions,
-        modal_action_for_utility_button, rescue_progress_ratio, resolve_swap_target_for_source,
-        responsive_ui_scale_for_resolution, scroll_viewport_is_hovered, unit_box_tooltip,
-        unit_upgrade_modal_should_refresh, world_to_minimap_pos,
+        inventory_tooltip_screen_position, main_menu_dispatch, max_affordable_promotions,
+        max_affordable_tier0_conversions, modal_action_for_utility_button, rescue_progress_ratio,
+        resolve_swap_target_for_source, responsive_ui_scale_for_resolution,
+        scroll_viewport_is_hovered, unit_box_tooltip, unit_upgrade_modal_should_refresh,
+        world_to_minimap_pos,
     };
     use crate::upgrades::{
         ConditionalUpgradeStatus, ConditionalUpgradeStatusEntry, OneTimeUpgradeTracker,
-        Progression, SkillBookEntry, SkillBookLog, UpgradeCardIcon,
+        Progression, SkillBookEntry, SkillBookLog, UpgradeCardIcon, UpgradeRewardKind,
     };
 
     #[test]
@@ -10439,6 +10673,45 @@ mod tests {
     }
 
     #[test]
+    fn advanced_details_toggle_hotkey_flips_state() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.init_resource::<super::AdvancedDetailsState>();
+        app.insert_resource(ButtonInput::<KeyCode>::default());
+        app.add_systems(Update, super::toggle_advanced_details);
+
+        assert!(
+            !app.world()
+                .resource::<super::AdvancedDetailsState>()
+                .enabled
+        );
+
+        {
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.reset(KeyCode::F3);
+            keys.press(KeyCode::F3);
+        }
+        app.update();
+        assert!(
+            app.world()
+                .resource::<super::AdvancedDetailsState>()
+                .enabled
+        );
+
+        {
+            let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            keys.reset(KeyCode::F3);
+            keys.press(KeyCode::F3);
+        }
+        app.update();
+        assert!(
+            !app.world()
+                .resource::<super::AdvancedDetailsState>()
+                .enabled
+        );
+    }
+
+    #[test]
     fn lane_debug_summary_text_reflects_lane_counts() {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins);
@@ -10470,7 +10743,8 @@ mod tests {
     #[test]
     fn unit_box_tooltip_contains_required_sections_for_infantry() {
         let data = GameData::load_from_dir(Path::new("assets/data")).expect("load data");
-        let tooltip = unit_box_tooltip(UnitKind::ChristianPeasantInfantry, &data, Some(12.0));
+        let tooltip =
+            unit_box_tooltip(UnitKind::ChristianPeasantInfantry, &data, Some(12.0), false);
         assert!(tooltip.contains("Peasant Infantry"));
         assert!(tooltip.contains("Type:"));
         assert!(tooltip.contains("Description:"));
@@ -10484,6 +10758,18 @@ mod tests {
         assert!(tooltip.contains("Weaknesses:"));
         assert!(tooltip.contains("Key Matchups:"));
         assert!(tooltip.contains("Abilities:"));
+    }
+
+    #[test]
+    fn unit_box_tooltip_exposes_exact_values_only_in_advanced_mode() {
+        let data = GameData::load_from_dir(Path::new("assets/data")).expect("load data");
+        let qualitative =
+            unit_box_tooltip(UnitKind::ChristianPeasantInfantry, &data, Some(12.0), false);
+        assert!(!qualitative.contains("Advanced Details:"));
+
+        let advanced =
+            unit_box_tooltip(UnitKind::ChristianPeasantInfantry, &data, Some(12.0), true);
+        assert!(advanced.contains("Advanced Details:"));
     }
 
     #[test]
@@ -10502,6 +10788,26 @@ mod tests {
         assert!(tooltip.contains("Weaknesses:"));
         assert!(tooltip.contains("Key Matchups:"));
         assert!(tooltip.contains("anti-armor") || tooltip.contains("armored/heavy"));
+    }
+
+    #[test]
+    fn level_up_description_includes_current_to_after_preview_for_band_shift_effects() {
+        let data = GameData::load_from_dir(Path::new("assets/data")).expect("load data");
+        let upgrade = data
+            .upgrades
+            .upgrades
+            .iter()
+            .find(|upgrade| upgrade.id == "damage_up")
+            .expect("damage_up upgrade");
+        let description = super::upgrade_description_with_runtime_preview(
+            upgrade,
+            &crate::model::GlobalBuffs::default(),
+            &InventoryState::default(),
+            true,
+            false,
+        );
+        assert!(description.contains("Preview: Damage"));
+        assert!(description.contains("->"));
     }
 
     #[test]
@@ -10607,7 +10913,7 @@ mod tests {
         assert_eq!(max_affordable_promotions(0, 500.0, 0, 20, 1, 1), 0);
         assert_eq!(max_affordable_promotions(3, 40.0, 0, 20, 1, 1), 0);
         assert_eq!(max_affordable_promotions(3, 300.0, 80, 20, 1, 1), 0);
-        assert_eq!(max_affordable_promotions(3, 300.0, 0, 20, 1, 1), 3);
+        assert_eq!(max_affordable_promotions(3, 300.0, 0, 20, 1, 1), 2);
     }
 
     #[test]
@@ -10639,13 +10945,12 @@ mod tests {
     }
 
     #[test]
-    fn level_up_tier_legend_order_matches_card_rarity_scale() {
-        assert_eq!(LEVEL_UP_TIER_LEGEND.len(), 6);
-        assert_eq!(LEVEL_UP_TIER_LEGEND[0].1, "Common");
-        assert_eq!(LEVEL_UP_TIER_LEGEND[5].1, "Unique");
-        let common = level_up_tier_border_color(LEVEL_UP_TIER_LEGEND[0].0);
-        let unique = level_up_tier_border_color(LEVEL_UP_TIER_LEGEND[5].0);
-        assert_ne!(format!("{common:?}"), format!("{unique:?}"));
+    fn level_up_lane_labels_and_colors_are_distinct() {
+        assert_eq!(super::upgrade_lane_label(UpgradeRewardKind::Minor), "MINOR");
+        assert_eq!(super::upgrade_lane_label(UpgradeRewardKind::Major), "MAJOR");
+        let minor = super::upgrade_lane_color(UpgradeRewardKind::Minor);
+        let major = super::upgrade_lane_color(UpgradeRewardKind::Major);
+        assert_ne!(format!("{minor:?}"), format!("{major:?}"));
     }
 
     #[test]
@@ -11092,6 +11397,7 @@ mod tests {
             downside: None,
             doctrine_tags: Vec::new(),
             nature: crate::inventory::ItemNature::Minor,
+            scrap_gold_value: 18.0,
         }
     }
 

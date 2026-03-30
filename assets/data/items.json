@@ -13,7 +13,8 @@
       "downside": "Commander defense is reduced by 1 armor.",
       "doctrine_tags": ["tempo", "aura"],
       "nature": "Major",
-      "drop_weight": 1.0
+      "drop_weight": 1.0,
+      "scrap_gold_value": 64.0
     },
     {
       "id": "instrument_drum",
@@ -29,7 +30,8 @@
       "downside": "Army move speed is reduced by 6 while equipped.",
       "doctrine_tags": ["sustain", "frontline"],
       "nature": "Major",
-      "drop_weight": 1.0
+      "drop_weight": 1.0,
+      "scrap_gold_value": 72.0
     },
     {
       "id": "chant_battle_song",
@@ -45,7 +47,8 @@
       "downside": "Armor pulse effects are disabled while chant is active.",
       "doctrine_tags": ["morale", "support"],
       "nature": "Major",
-      "drop_weight": 1.0
+      "drop_weight": 1.0,
+      "scrap_gold_value": 74.0
     },
     {
       "id": "squire_young",
@@ -60,7 +63,8 @@
       "downside": "Non-squire utility item slots provide no bonus while equipped.",
       "doctrine_tags": ["support"],
       "nature": "Minor",
-      "drop_weight": 1.0
+      "drop_weight": 1.0,
+      "scrap_gold_value": 34.0
     },
     {
       "id": "symbol_faction",
@@ -76,7 +80,8 @@
       "downside": "Reduces pickup radius by 8.",
       "doctrine_tags": ["aura", "faction"],
       "nature": "Major",
-      "drop_weight": 1.0
+      "drop_weight": 1.0,
+      "scrap_gold_value": 66.0
     },
     {
       "id": "symbol_faction",
@@ -92,7 +97,8 @@
       "downside": "Reduces pickup radius by 8.",
       "doctrine_tags": ["aura", "faction"],
       "nature": "Major",
-      "drop_weight": 1.0
+      "drop_weight": 1.0,
+      "scrap_gold_value": 66.0
     },
     {
       "id": "sword_simple",
@@ -107,7 +113,8 @@
       "downside": "Ranged units lose 8 range while this weapon is equipped.",
       "doctrine_tags": ["melee", "tempo"],
       "nature": "Minor",
-      "drop_weight": 1.0
+      "drop_weight": 1.0,
+      "scrap_gold_value": 30.0
     },
     {
       "id": "bow_simple",
@@ -122,7 +129,8 @@
       "downside": "Armor is reduced by 1 while this weapon is equipped.",
       "doctrine_tags": ["ranged", "anti_armor"],
       "nature": "Minor",
-      "drop_weight": 1.0
+      "drop_weight": 1.0,
+      "scrap_gold_value": 32.0
     },
     {
       "id": "armor_simple",
@@ -137,7 +145,8 @@
       "downside": "Attack speed is reduced by 4% while equipped.",
       "doctrine_tags": ["defense", "frontline"],
       "nature": "Minor",
-      "drop_weight": 1.0
+      "drop_weight": 1.0,
+      "scrap_gold_value": 32.0
     }
   ]
 }

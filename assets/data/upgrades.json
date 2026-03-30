@@ -57,6 +57,8 @@
       "reward_lane": "minor",
       "stack_cap": 6,
       "diminishing_factor": 0.88,
+      "effect_band_shift_stat": "damage",
+      "effect_band_shift_steps": 1,
       "doctrine_tags": ["combat", "universal"]
     },
     {
@@ -84,6 +86,8 @@
       "reward_lane": "minor",
       "stack_cap": 4,
       "diminishing_factor": 0.85,
+      "effect_band_shift_stat": "luck",
+      "effect_band_shift_steps": 1,
       "doctrine_tags": ["economy", "crit", "drops"]
     },
     {
@@ -129,6 +133,8 @@
       "reward_lane": "major",
       "one_time": true,
       "doctrine_tags": ["sustain", "commander", "frontline"],
+      "effect_band_floor_stat": "armor",
+      "effect_band_floor_min": "moderate",
       "major_unlock_hint": "Best when planning long attrition fights.",
       "downside": "Army movement speed is reduced."
     },
@@ -139,6 +145,10 @@
       "reward_lane": "major",
       "one_time": true,
       "doctrine_tags": ["tempo", "commander", "mobility"],
+      "effect_band_shift_stat": "move_speed",
+      "effect_band_shift_steps": 2,
+      "effect_band_floor_stat": "move_speed",
+      "effect_band_floor_min": "high",
       "major_unlock_hint": "Best for pressure and reposition-heavy runs.",
       "downside": "Armor is reduced to pay for speed."
     },
@@ -152,6 +162,9 @@
       "requirement_type": "band_at_least",
       "requirement_band_stat": "frontline_share",
       "requirement_band_at_least": "high",
+      "effect_trait_hook": "frontline",
+      "effect_trait_modifier_kind": "damage_multiplier",
+      "effect_trait_modifier_value": 0.14,
       "major_unlock_hint": "Best for melee-heavy doctrine paths.",
       "downside": "Rescue channels become slower while this doctrine is active."
     },
@@ -188,6 +201,8 @@
       "reward_lane": "minor",
       "stack_cap": 6,
       "diminishing_factor": 0.86,
+      "effect_band_shift_stat": "armor",
+      "effect_band_shift_steps": 1,
       "doctrine_tags": ["defense", "frontline"]
     },
     {
@@ -224,6 +239,8 @@
       "reward_lane": "minor",
       "stack_cap": 5,
       "diminishing_factor": 0.84,
+      "effect_band_shift_stat": "move_speed",
+      "effect_band_shift_steps": 1,
       "doctrine_tags": ["tempo", "mobility"]
     },
     {
@@ -252,6 +269,9 @@
       "requirement_type": "band_at_least",
       "requirement_band_stat": "frontline_share",
       "requirement_band_at_least": "high",
+      "effect_trait_hook": "frontline",
+      "effect_trait_modifier_kind": "damage_multiplier",
+      "effect_trait_modifier_value": 0.18,
       "downside": "Locks doctrine around frontline-heavy compositions."
     },
     {
@@ -263,6 +283,9 @@
       "requirement_type": "band_at_least",
       "requirement_band_stat": "anti_armor_share",
       "requirement_band_at_least": "moderate",
+      "effect_trait_hook": "anti_armor",
+      "effect_trait_modifier_kind": "execute_threshold",
+      "effect_trait_modifier_value": 0.10,
       "downside": "Locks doctrine around anti-armor compositions."
     },
     {
@@ -274,6 +297,9 @@
       "requirement_type": "band_at_least",
       "requirement_band_stat": "support_share",
       "requirement_band_at_least": "high",
+      "effect_trait_hook": "support",
+      "effect_trait_modifier_kind": "rescue_speed_multiplier",
+      "effect_trait_modifier_value": -0.50,
       "downside": "Locks doctrine around support-heavy compositions."
     }
   ]

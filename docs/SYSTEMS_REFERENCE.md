@@ -4,7 +4,25 @@
 Single-file technical reference for current MVP runtime behavior.
 Use this for entity/component/system lookup without scanning all source files.
 
-## Latest Update (2026-03-29)
+## Latest Update (2026-03-30)
+- Completed CRU-212/234/263/264 finalization tranche:
+  - release sign-off artifacts added: `docs/REVAMP_RELEASE_CHECKLIST.md` and `docs/EXPANSION_QA_MATRIX.md`,
+  - combat damage now resolves through integer-point projection before world-space application (low-range point semantics),
+  - critical damage now applies as additive point gain over base point damage (instead of pure multiplier chaining),
+  - friendly offensive/attack-speed stack composition now uses additive multiplier aggregation (reduced multiplicative drift),
+  - semantic trait-effect validation now restricts multiplicative effect kinds to whitelisted doctrine upgrades.
+- Completed CRU-209/210/211/262 stabilization tranche:
+  - level-up draft cards now frame choices by reward lane (`Minor` vs `Major`) and surface explicit `Upside`, `Downside`, `Doctrine`, and `Notes` blocks,
+  - lane visuals now use dedicated lane styling instead of legacy rarity-legend framing,
+  - deterministic draft replay coverage was expanded (same seed + same inputs => same minor/major option sets),
+  - doctrine-path regression coverage now explicitly includes pike-hedgehog tradeoff behavior (damage gain, move-speed penalty, morale-loss mitigation),
+  - release QA matrix and pass/fail thresholds were formalized in `docs/REVAMP_QA_MATRIX.md`.
+- Completed CRU-208/216/217 implementation tranche:
+  - equipment scrap values are now authored per item template (`scrap_gold_value`) and no longer derived from runtime rarity math,
+  - gold economy scaling/costs were rebalanced (drop scaling clamp + updated swap/promotion/hero costs) to preserve opportunity cost across full runs,
+  - upgrade schema now supports semantic effect primitives (`effect_band_shift_*`, `effect_band_floor_*`, `effect_trait_modifier_*`) with strict validation,
+  - level-up cards now show `current -> after` preview lines for supported semantic band-shift effects,
+  - primary item/unit surfaces remain qualitative-first, and exact values are opt-in via `Advanced Details` toggle (`F3`).
 - Completed CRU-205/206/207 revamp tranche:
   - Minor upgrades now support authored stack controls (`stack_cap`) plus diminishing returns (`diminishing_factor`) and are filtered from future drafts once capped.
   - Conditional upgrade requirements were tightened around roster commitment bands/traits (including new `anti_cavalry_share`) and conditional effects now dedupe by upgrade kind.
@@ -111,7 +129,7 @@ Use this for entity/component/system lookup without scanning all source files.
   - no XP thresholds; level rewards are queued from `WaveCompletedEvent`,
   - each completed wave grants `+1` level reward, and wave `98` grants `+2` (reaches level 100 at wave 98 completion),
   - reward queue now stores explicit reward kinds and drains in deterministic FIFO order (`Minor` per level, `Major` when resulting level `% 5 == 0`),
-  - drop gold scaling remains `base * (1 + 0.06*(wave-1)) * (1 + 0.03*(level-1))`,
+  - drop gold scaling now uses `base * clamp((1 + 0.03*(wave-1)) * (1 + 0.012*(level-1)), 1.0, 4.5)`,
   - roster level budget cap uses `MAX_COMMANDER_LEVEL=100` (`100 - locked_levels`, saturating).
 - Reworked in-run `Unit Upgrade (U)` modal into a tier-column graph:
   - columns `Tier 0..Tier 5` with thin borders and row-wise straight connectors from tier-0 to tier-1,
@@ -629,7 +647,7 @@ Runtime conversion to spawn pacing:
 - `initial_spawn_count=8`
 - `spawn_interval_secs=2.5`
 - `pickup_radius=45`
-- `gold_per_pack=6`
+- `gold_per_pack=7`
 - `max_active_packs=5000`
 
 ### `rescue.json`
@@ -671,6 +689,10 @@ Deterministic schema fields:
   - `stack_cap`
   - `downside`
   - `major_unlock_hint`
+- optional semantic-effect metadata (qualitative preview + trait hooks):
+  - `effect_band_shift_stat` + `effect_band_shift_steps`
+  - `effect_band_floor_stat` + `effect_band_floor_min`
+  - `effect_trait_hook` + `effect_trait_modifier_kind` + `effect_trait_modifier_value`
 - requirement fields:
   - `requirement_type`
   - `requirement_min_tier0_share`
@@ -1193,7 +1215,7 @@ Representative specialization mapping:
   - `Unit Upgrade`
 - inventory right-click context menu on backpack items:
   - `Equip` (same target resolution contract as double-click equip path)
-  - `Scrap` (remove item and convert to gold based on deterministic item nature + authored rarity package)
+  - `Scrap` (remove item and convert to gold using authored deterministic `scrap_gold_value` from the item template)
 - inventory modal content:
   - bag drops grid (1 item = 1 slot, with empty placeholders)
   - fixed 5x6 backpack viewport (first 30 slots shown in-grid)

@@ -35,6 +35,10 @@ const DEFAULT_CRIT_DAMAGE_MULTIPLIER: f32 = 1.2;
 const MAX_CRIT_CHANCE: f32 = 0.95;
 const ARMOR_DIMINISHING_SCALE: f32 = 90.0;
 const MAX_ARMOR_REDUCTION_RATIO: f32 = 0.90;
+const COMBAT_DAMAGE_POINT_SCALE: f32 = 4.0;
+const COMBAT_ARMOR_POINT_SCALE: f32 = 3.0;
+const COMBAT_WORLD_UNITS_PER_POINT: f32 = 4.0;
+const COMBAT_MAX_POINT_VALUE: i32 = 500;
 const DEATH_HEALTH_EPSILON: f32 = 0.01;
 const PEASANT_INFANTRY_BLOCK_CHANCE: f32 = 0.15;
 const INFIDELS_BLOCK_CHANCE_BONUS: f32 = 0.08;
@@ -147,19 +151,27 @@ fn tick_attack_timers(
         };
 
         let speed_scale = if unit.team == Team::Friendly {
-            let mut value = level_multiplier;
-            value *= priest_scale;
-            value *= combined_percentage_multiplier(
+            let gear_upgrade_multiplier = combined_percentage_multiplier(
                 upgrade_attack_speed_bonus + gear_attack_speed_bonus,
                 0.1,
             );
-            if let Some(hero) = hero_subtype {
-                value *= hero_subtype_combat_profile(hero.subtype).attack_speed_multiplier;
-            }
-            if let Some(conditional) = &conditional_effects {
-                value *= conditional.friendly_attack_speed_multiplier;
-            }
-            value.max(MIN_FRIENDLY_COMBAT_MULTIPLIER)
+            let hero_multiplier = hero_subtype
+                .map(|hero| hero_subtype_combat_profile(hero.subtype).attack_speed_multiplier)
+                .unwrap_or(1.0);
+            let conditional_multiplier = conditional_effects
+                .as_deref()
+                .map(|conditional| conditional.friendly_attack_speed_multiplier)
+                .unwrap_or(1.0);
+            additive_combined_multiplier(
+                [
+                    level_multiplier,
+                    priest_scale,
+                    gear_upgrade_multiplier,
+                    hero_multiplier,
+                    conditional_multiplier,
+                ],
+                MIN_FRIENDLY_COMBAT_MULTIPLIER,
+            )
         } else {
             priest_scale
         };
@@ -267,19 +279,26 @@ fn emit_ranged_projectile_attacks(
                 attacker_tier.copied().map(|tier| tier.0),
                 banner_item_active,
             );
-            attack_speed *= level_multiplier;
             let upgrade_attack_speed_bonus = global_buffs
                 .as_ref()
                 .map(|buff| buff.attack_speed_multiplier - 1.0)
                 .unwrap_or(0.0);
-            attack_speed *= combined_percentage_multiplier(
+            let gear_upgrade_multiplier = combined_percentage_multiplier(
                 upgrade_attack_speed_bonus + gear.attack_speed_multiplier,
                 0.1,
             );
-            if let Some(hero) = hero_subtype {
-                attack_speed *= hero_subtype_combat_profile(hero.subtype).attack_speed_multiplier;
-            }
-            attack_speed = attack_speed.max(MIN_FRIENDLY_COMBAT_MULTIPLIER);
+            let hero_multiplier = hero_subtype
+                .map(|hero| hero_subtype_combat_profile(hero.subtype).attack_speed_multiplier)
+                .unwrap_or(1.0);
+            attack_speed = additive_combined_multiplier(
+                [
+                    attack_speed,
+                    level_multiplier,
+                    gear_upgrade_multiplier,
+                    hero_multiplier,
+                ],
+                MIN_FRIENDLY_COMBAT_MULTIPLIER,
+            );
         }
 
         ranged_cooldown.0.tick(std::time::Duration::from_secs_f32(
@@ -361,13 +380,19 @@ fn emit_ranged_projectile_attacks(
                 slot_spacing,
                 inside_formation_bonus_multiplier,
             );
-            base_multiplier
-                * formation_multiplier
-                * conditional_effects
-                    .as_deref()
-                    .map(|effects| effects.friendly_damage_multiplier)
-                    .unwrap_or(1.0)
-                * morale_damage_multiplier
+            let conditional_multiplier = conditional_effects
+                .as_deref()
+                .map(|effects| effects.friendly_damage_multiplier)
+                .unwrap_or(1.0);
+            additive_combined_multiplier(
+                [
+                    base_multiplier,
+                    formation_multiplier,
+                    conditional_multiplier,
+                    morale_damage_multiplier,
+                ],
+                MIN_FRIENDLY_COMBAT_MULTIPLIER,
+            )
         } else {
             morale_damage_multiplier
         };
@@ -391,12 +416,18 @@ fn emit_ranged_projectile_attacks(
             ranged_profile.damage,
             0.0,
             upgrade_damage_bonus + ranged_bonus_mult,
-        ) * outgoing_multiplier)
-            .max(1.0);
-        if let Some(hero) = hero_subtype {
-            projectile_damage *=
-                hero_subtype_combat_profile(hero.subtype).outgoing_damage_multiplier;
-        }
+        ) * additive_combined_multiplier(
+            [
+                outgoing_multiplier,
+                hero_subtype
+                    .map(|hero| {
+                        hero_subtype_combat_profile(hero.subtype).outgoing_damage_multiplier
+                    })
+                    .unwrap_or(1.0),
+            ],
+            MIN_FRIENDLY_COMBAT_MULTIPLIER,
+        ))
+        .max(1.0);
         let mut projectile_is_critical = false;
         if attacker_team == Team::Friendly {
             let (crit_chance, crit_multiplier) =
@@ -655,12 +686,19 @@ fn emit_damage_events(
                     active_formation_config(&data, *active_formation).slot_spacing,
                     inside_formation_bonus_multiplier,
                 );
-                base * inside_multiplier
-                    * conditional_effects
-                        .as_deref()
-                        .map(|effects| effects.friendly_damage_multiplier)
-                        .unwrap_or(1.0)
-                    * morale_damage_multiplier
+                let conditional_multiplier = conditional_effects
+                    .as_deref()
+                    .map(|effects| effects.friendly_damage_multiplier)
+                    .unwrap_or(1.0);
+                additive_combined_multiplier(
+                    [
+                        base,
+                        inside_multiplier,
+                        conditional_multiplier,
+                        morale_damage_multiplier,
+                    ],
+                    MIN_FRIENDLY_COMBAT_MULTIPLIER,
+                )
             } else {
                 morale_damage_multiplier
             };
@@ -696,10 +734,15 @@ fn emit_damage_events(
                 attack_profile.damage,
                 0.0,
                 upgrade_damage_bonus + melee_bonus_mult,
-            ) * outgoing_multiplier
-                * counter_multiplier
-                * hero_profile.outgoing_damage_multiplier
-                * hero_matchup_multiplier;
+            ) * additive_combined_multiplier(
+                [
+                    outgoing_multiplier,
+                    counter_multiplier,
+                    hero_profile.outgoing_damage_multiplier,
+                    hero_matchup_multiplier,
+                ],
+                MIN_FRIENDLY_COMBAT_MULTIPLIER,
+            );
             let mut is_critical = false;
             if attacker_unit.team == Team::Friendly {
                 let (crit_chance, crit_multiplier) =
@@ -768,8 +811,14 @@ pub fn friendly_outgoing_multiplier(
     global_damage_multiplier: f32,
     commander_level_multiplier: f32,
 ) -> f32 {
-    (formation_offense * global_damage_multiplier * commander_level_multiplier)
-        .max(MIN_FRIENDLY_COMBAT_MULTIPLIER)
+    additive_combined_multiplier(
+        [
+            formation_offense,
+            global_damage_multiplier,
+            commander_level_multiplier,
+        ],
+        MIN_FRIENDLY_COMBAT_MULTIPLIER,
+    )
 }
 
 pub fn effective_formation_offense_multiplier(
@@ -789,8 +838,14 @@ pub fn effective_formation_offense_multiplier(
 
 pub fn compute_damage(base_damage: f32, armor: f32, outgoing_multiplier: f32) -> f32 {
     let scaled_damage = (base_damage * outgoing_multiplier).max(0.0);
-    let reduction_ratio = armor_reduction_ratio(armor);
-    (scaled_damage * (1.0 - reduction_ratio)).max(1.0)
+    let attack_points = world_value_to_points(scaled_damage, COMBAT_DAMAGE_POINT_SCALE)
+        .clamp(1, COMBAT_MAX_POINT_VALUE);
+    let armor_points = world_value_to_points(armor.max(0.0), COMBAT_ARMOR_POINT_SCALE)
+        .clamp(0, COMBAT_MAX_POINT_VALUE);
+    let max_mitigation_points = ((attack_points as f32) * MAX_ARMOR_REDUCTION_RATIO).floor() as i32;
+    let mitigated_points = armor_points.min(max_mitigation_points);
+    let remaining_points = (attack_points - mitigated_points).max(1);
+    points_to_world_value(remaining_points, COMBAT_WORLD_UNITS_PER_POINT).max(1.0)
 }
 
 pub fn role_counter_damage_multiplier(attacker_kind: UnitKind, defender_kind: UnitKind) -> f32 {
@@ -862,6 +917,28 @@ fn combined_percentage_multiplier(total_percent_bonus: f32, min_multiplier: f32)
     (1.0 + total_percent_bonus).max(min_multiplier)
 }
 
+fn additive_combined_multiplier<const N: usize>(components: [f32; N], min_multiplier: f32) -> f32 {
+    let mut additive_bonus = 0.0;
+    for component in components {
+        additive_bonus += component - 1.0;
+    }
+    (1.0 + additive_bonus).max(min_multiplier)
+}
+
+fn world_value_to_points(value: f32, scale: f32) -> i32 {
+    if !value.is_finite() || value <= 0.0 || scale <= 0.0 {
+        return 0;
+    }
+    ((value / scale).round() as i32).max(0)
+}
+
+fn points_to_world_value(points: i32, scale: f32) -> f32 {
+    if points <= 0 || scale <= 0.0 {
+        return 0.0;
+    }
+    points as f32 * scale
+}
+
 pub fn armor_reduction_ratio(armor: f32) -> f32 {
     let clamped_armor = armor.max(0.0);
     if clamped_armor <= 0.0 {
@@ -884,11 +961,20 @@ fn roll_critical_hit(crit_chance: f32, rng: &mut CombatRngState) -> bool {
 }
 
 fn apply_critical_multiplier(damage: f32, is_critical: bool, crit_multiplier: f32) -> f32 {
-    if is_critical {
-        damage * crit_multiplier.max(1.0)
-    } else {
-        damage
+    if !is_critical {
+        return damage;
     }
+    let clamped_multiplier = crit_multiplier.max(1.0);
+    if clamped_multiplier <= 1.0 {
+        return damage;
+    }
+    let base_points = world_value_to_points(damage.max(0.0), COMBAT_WORLD_UNITS_PER_POINT).max(1);
+    let bonus_points = ((base_points as f32 * (clamped_multiplier - 1.0)).round() as i32).max(1);
+    points_to_world_value(
+        base_points.saturating_add(bonus_points),
+        COMBAT_WORLD_UNITS_PER_POINT,
+    )
+    .max(damage)
 }
 
 fn friendly_critical_parameters(global_buffs: Option<&GlobalBuffs>) -> (f32, f32) {
@@ -1282,7 +1368,7 @@ mod tests {
     #[test]
     fn damage_formula_respects_armor_floor() {
         let damage = compute_damage(3.0, 10_000.0, 1.0);
-        assert_eq!(damage, 1.0);
+        assert!((damage - 4.0).abs() < 0.001);
     }
 
     #[test]
@@ -1303,7 +1389,23 @@ mod tests {
     #[test]
     fn armor_cap_preserves_at_least_ten_percent_of_high_incoming_damage() {
         let damage = compute_damage(100.0, 100_000.0, 1.0);
-        assert!((damage - 10.0).abs() < 0.001);
+        assert!((damage - 12.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn integer_point_projection_uses_low_range_bands() {
+        let damage_points = super::world_value_to_points(12.0, super::COMBAT_DAMAGE_POINT_SCALE);
+        let armor_points = super::world_value_to_points(6.0, super::COMBAT_ARMOR_POINT_SCALE);
+        assert_eq!(damage_points, 3);
+        assert_eq!(armor_points, 2);
+    }
+
+    #[test]
+    fn damage_formula_outputs_point_snapped_values() {
+        let damage = compute_damage(21.0, 5.0, 1.0);
+        let step = super::COMBAT_WORLD_UNITS_PER_POINT;
+        let snapped = (damage / step).round() * step;
+        assert!((damage - snapped).abs() < 0.001);
     }
 
     #[test]
@@ -1341,7 +1443,7 @@ mod tests {
     #[test]
     fn critical_damage_multiplier_applies_only_for_critical_hits() {
         assert!((apply_critical_multiplier(10.0, false, 2.0) - 10.0).abs() < 0.0001);
-        assert!((apply_critical_multiplier(10.0, true, 2.0) - 20.0).abs() < 0.0001);
+        assert!((apply_critical_multiplier(10.0, true, 2.0) - 24.0).abs() < 0.0001);
         assert!((apply_critical_multiplier(10.0, true, 0.5) - 10.0).abs() < 0.0001);
     }
 

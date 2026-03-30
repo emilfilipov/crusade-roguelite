@@ -736,6 +736,20 @@ pub struct UpgradeConfig {
     pub requirement_band_at_least: Option<String>,
     #[serde(default)]
     pub requirement_band_at_most: Option<String>,
+    #[serde(default)]
+    pub effect_band_shift_stat: Option<String>,
+    #[serde(default)]
+    pub effect_band_shift_steps: Option<i32>,
+    #[serde(default)]
+    pub effect_band_floor_stat: Option<String>,
+    #[serde(default)]
+    pub effect_band_floor_min: Option<String>,
+    #[serde(default)]
+    pub effect_trait_hook: Option<String>,
+    #[serde(default)]
+    pub effect_trait_modifier_kind: Option<String>,
+    #[serde(default)]
+    pub effect_trait_modifier_value: Option<f32>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -1735,6 +1749,7 @@ fn validate_upgrades(config: &UpgradesConfigFile) -> Result<()> {
             bail!("upgrade[{idx}] major upgrades must provide a non-empty downside");
         }
         validate_upgrade_requirement(idx, upgrade)?;
+        validate_upgrade_semantics(idx, upgrade)?;
     }
     Ok(())
 }
@@ -1837,6 +1852,125 @@ fn validate_upgrade_requirement(idx: usize, upgrade: &UpgradeConfig) -> Result<(
     Ok(())
 }
 
+fn validate_upgrade_semantics(idx: usize, upgrade: &UpgradeConfig) -> Result<()> {
+    let shift_stat = upgrade
+        .effect_band_shift_stat
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let shift_steps = upgrade.effect_band_shift_steps;
+    if shift_stat.is_some() || shift_steps.is_some() {
+        let Some(stat_id) = shift_stat else {
+            bail!("upgrade[{idx}] effect_band_shift_steps requires effect_band_shift_stat");
+        };
+        if !is_supported_upgrade_effect_band_stat(stat_id) {
+            bail!(
+                "upgrade[{idx}] unknown effect_band_shift_stat '{stat_id}', expected one of: damage, armor, move_speed, luck"
+            );
+        }
+        let Some(steps) = shift_steps else {
+            bail!("upgrade[{idx}] effect_band_shift_stat requires effect_band_shift_steps");
+        };
+        if steps == 0 || !(-4..=4).contains(&steps) {
+            bail!("upgrade[{idx}] effect_band_shift_steps must be in [-4, -1] or [1, 4]");
+        }
+    }
+
+    let floor_stat = upgrade
+        .effect_band_floor_stat
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let floor_min = upgrade
+        .effect_band_floor_min
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if floor_stat.is_some() || floor_min.is_some() {
+        let Some(stat_id) = floor_stat else {
+            bail!("upgrade[{idx}] effect_band_floor_min requires effect_band_floor_stat");
+        };
+        if !is_supported_upgrade_effect_band_stat(stat_id) {
+            bail!(
+                "upgrade[{idx}] unknown effect_band_floor_stat '{stat_id}', expected one of: damage, armor, move_speed, luck"
+            );
+        }
+        let Some(min_band) = floor_min else {
+            bail!("upgrade[{idx}] effect_band_floor_stat requires effect_band_floor_min");
+        };
+        if !is_supported_upgrade_requirement_band_id(min_band) {
+            bail!(
+                "upgrade[{idx}] unknown effect_band_floor_min '{min_band}', expected one of: very_low, low, moderate, high, very_high"
+            );
+        }
+    }
+
+    if let (Some(shift_stat), Some(floor_stat)) = (shift_stat, floor_stat)
+        && shift_stat != floor_stat
+    {
+        bail!(
+            "upgrade[{idx}] effect_band_shift_stat and effect_band_floor_stat must match when both are provided"
+        );
+    }
+
+    let trait_hook = upgrade
+        .effect_trait_hook
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let trait_modifier_kind = upgrade
+        .effect_trait_modifier_kind
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let trait_modifier_value = upgrade.effect_trait_modifier_value;
+    if trait_hook.is_some() || trait_modifier_kind.is_some() || trait_modifier_value.is_some() {
+        let Some(trait_id) = trait_hook else {
+            bail!("upgrade[{idx}] effect_trait_modifier_* fields require effect_trait_hook");
+        };
+        if !is_supported_upgrade_requirement_trait(trait_id) {
+            bail!(
+                "upgrade[{idx}] unknown effect_trait_hook '{trait_id}', expected one of: shielded, frontline, anti_cavalry, cavalry, anti_armor, skirmisher, support"
+            );
+        }
+        let Some(modifier_kind) = trait_modifier_kind else {
+            bail!("upgrade[{idx}] effect_trait_hook requires effect_trait_modifier_kind");
+        };
+        if !is_supported_upgrade_effect_trait_modifier_kind(modifier_kind) {
+            bail!(
+                "upgrade[{idx}] unknown effect_trait_modifier_kind '{modifier_kind}', expected one of: damage_multiplier, attack_speed_multiplier, move_speed_bonus, armor_bonus, morale_loss_multiplier, execute_threshold, rescue_speed_multiplier"
+            );
+        }
+        if is_multiplicative_trait_modifier_kind(modifier_kind)
+            && !is_whitelisted_multiplicative_upgrade_semantic_kind(upgrade.kind.as_str())
+        {
+            bail!(
+                "upgrade[{idx}] effect_trait_modifier_kind '{modifier_kind}' is restricted to whitelisted doctrine kinds; use additive semantic kinds for non-whitelisted upgrades"
+            );
+        }
+        let Some(value) = trait_modifier_value else {
+            bail!("upgrade[{idx}] effect_trait_hook requires effect_trait_modifier_value");
+        };
+        if !value.is_finite() || value.abs() <= f32::EPSILON {
+            bail!("upgrade[{idx}] effect_trait_modifier_value must be finite and non-zero");
+        }
+        if upgrade.requirement_type.as_deref().map(str::trim) == Some("has_trait")
+            && let Some(requirement_trait) = upgrade
+                .requirement_trait
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            && requirement_trait != trait_id
+        {
+            bail!(
+                "upgrade[{idx}] effect_trait_hook must match requirement_trait when requirement_type=has_trait"
+            );
+        }
+    }
+
+    Ok(())
+}
+
 fn is_supported_upgrade_requirement_trait(trait_id: &str) -> bool {
     matches!(
         trait_id,
@@ -1847,6 +1981,44 @@ fn is_supported_upgrade_requirement_trait(trait_id: &str) -> bool {
             | "anti_armor"
             | "skirmisher"
             | "support"
+    )
+}
+
+fn is_supported_upgrade_effect_band_stat(stat_id: &str) -> bool {
+    matches!(stat_id, "damage" | "armor" | "move_speed" | "luck")
+}
+
+fn is_supported_upgrade_effect_trait_modifier_kind(kind: &str) -> bool {
+    matches!(
+        kind,
+        "damage_multiplier"
+            | "attack_speed_multiplier"
+            | "move_speed_bonus"
+            | "armor_bonus"
+            | "morale_loss_multiplier"
+            | "execute_threshold"
+            | "rescue_speed_multiplier"
+    )
+}
+
+fn is_multiplicative_trait_modifier_kind(kind: &str) -> bool {
+    matches!(
+        kind,
+        "damage_multiplier"
+            | "attack_speed_multiplier"
+            | "morale_loss_multiplier"
+            | "rescue_speed_multiplier"
+    )
+}
+
+fn is_whitelisted_multiplicative_upgrade_semantic_kind(kind: &str) -> bool {
+    matches!(
+        kind,
+        "mob_fury"
+            | "mob_mercy"
+            | "doctrine_execution_rites"
+            | "doctrine_countervolley"
+            | "doctrine_pike_hedgehog"
     )
 }
 
@@ -2987,6 +3159,128 @@ mod tests {
         );
         let err = GameData::load_from_dir(tmp.path()).expect_err("expected bad band id");
         assert!(err.to_string().contains("unknown requirement band"));
+    }
+
+    #[test]
+    fn accepts_upgrade_semantic_effect_primitives() {
+        let tmp = TempDir::new().expect("tmp");
+        write_valid_set(tmp.path());
+        write_config(
+            tmp.path(),
+            "upgrades.json",
+            r#"{
+              "upgrades":[
+                {
+                  "id":"band_shift_ok",
+                  "kind":"damage",
+                  "value":7.0,
+                  "reward_lane":"minor",
+                  "effect_band_shift_stat":"damage",
+                  "effect_band_shift_steps":1
+                },
+                {
+                  "id":"trait_hook_ok",
+                  "kind":"mob_fury",
+                  "value":1.0,
+                  "reward_lane":"major",
+                  "downside":"Locks doctrine around frontline-heavy compositions.",
+                  "effect_trait_hook":"frontline",
+                  "effect_trait_modifier_kind":"damage_multiplier",
+                  "effect_trait_modifier_value":0.15
+                }
+              ]
+            }"#,
+        );
+        let loaded =
+            GameData::load_from_dir(tmp.path()).expect("expected valid semantic effect fields");
+        assert_eq!(loaded.upgrades.upgrades.len(), 2);
+    }
+
+    #[test]
+    fn rejects_upgrade_semantic_effect_with_invalid_band_shift() {
+        let tmp = TempDir::new().expect("tmp");
+        write_valid_set(tmp.path());
+        write_config(
+            tmp.path(),
+            "upgrades.json",
+            r#"{
+              "upgrades":[
+                {
+                  "id":"band_shift_bad",
+                  "kind":"damage",
+                  "value":7.0,
+                  "reward_lane":"minor",
+                  "effect_band_shift_stat":"damage",
+                  "effect_band_shift_steps":0
+                }
+              ]
+            }"#,
+        );
+        let err = GameData::load_from_dir(tmp.path())
+            .expect_err("expected semantic validation failure for shift steps");
+        assert!(
+            err.to_string()
+                .contains("effect_band_shift_steps must be in")
+        );
+    }
+
+    #[test]
+    fn rejects_upgrade_semantic_effect_with_unknown_trait_modifier_kind() {
+        let tmp = TempDir::new().expect("tmp");
+        write_valid_set(tmp.path());
+        write_config(
+            tmp.path(),
+            "upgrades.json",
+            r#"{
+              "upgrades":[
+                {
+                  "id":"trait_modifier_bad",
+                  "kind":"mob_fury",
+                  "value":1.0,
+                  "reward_lane":"major",
+                  "downside":"Locks doctrine around frontline-heavy compositions.",
+                  "effect_trait_hook":"frontline",
+                  "effect_trait_modifier_kind":"mystery_kind",
+                  "effect_trait_modifier_value":0.15
+                }
+              ]
+            }"#,
+        );
+        let err = GameData::load_from_dir(tmp.path())
+            .expect_err("expected semantic validation failure for trait modifier kind");
+        assert!(
+            err.to_string()
+                .contains("unknown effect_trait_modifier_kind")
+        );
+    }
+
+    #[test]
+    fn rejects_non_whitelisted_multiplicative_trait_modifier_kind() {
+        let tmp = TempDir::new().expect("tmp");
+        write_valid_set(tmp.path());
+        write_config(
+            tmp.path(),
+            "upgrades.json",
+            r#"{
+              "upgrades":[
+                {
+                  "id":"bad_mul_semantic",
+                  "kind":"damage",
+                  "value":7.0,
+                  "reward_lane":"minor",
+                  "effect_trait_hook":"frontline",
+                  "effect_trait_modifier_kind":"damage_multiplier",
+                  "effect_trait_modifier_value":0.12
+                }
+              ]
+            }"#,
+        );
+        let err = GameData::load_from_dir(tmp.path())
+            .expect_err("expected multiplicative semantic whitelist failure");
+        assert!(
+            err.to_string()
+                .contains("effect_trait_modifier_kind 'damage_multiplier' is restricted")
+        );
     }
 
     #[test]

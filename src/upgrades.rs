@@ -349,6 +349,194 @@ impl RequirementBand {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SemanticBandStat {
+    Damage,
+    Armor,
+    MoveSpeed,
+    Luck,
+}
+
+impl SemanticBandStat {
+    pub fn from_id(id: &str) -> Option<Self> {
+        match id {
+            "damage" => Some(Self::Damage),
+            "armor" => Some(Self::Armor),
+            "move_speed" => Some(Self::MoveSpeed),
+            "luck" => Some(Self::Luck),
+            _ => None,
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Damage => "Damage",
+            Self::Armor => "Armor",
+            Self::MoveSpeed => "Move Speed",
+            Self::Luck => "Luck",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TraitModifierKind {
+    DamageMultiplier,
+    AttackSpeedMultiplier,
+    MoveSpeedBonus,
+    ArmorBonus,
+    MoraleLossMultiplier,
+    ExecuteThreshold,
+    RescueSpeedMultiplier,
+}
+
+impl TraitModifierKind {
+    pub fn from_id(id: &str) -> Option<Self> {
+        match id {
+            "damage_multiplier" => Some(Self::DamageMultiplier),
+            "attack_speed_multiplier" => Some(Self::AttackSpeedMultiplier),
+            "move_speed_bonus" => Some(Self::MoveSpeedBonus),
+            "armor_bonus" => Some(Self::ArmorBonus),
+            "morale_loss_multiplier" => Some(Self::MoraleLossMultiplier),
+            "execute_threshold" => Some(Self::ExecuteThreshold),
+            "rescue_speed_multiplier" => Some(Self::RescueSpeedMultiplier),
+            _ => None,
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::DamageMultiplier => "Damage Multiplier",
+            Self::AttackSpeedMultiplier => "Attack Speed Multiplier",
+            Self::MoveSpeedBonus => "Move Speed Bonus",
+            Self::ArmorBonus => "Armor Bonus",
+            Self::MoraleLossMultiplier => "Morale Loss Multiplier",
+            Self::ExecuteThreshold => "Execute Threshold",
+            Self::RescueSpeedMultiplier => "Rescue Speed Multiplier",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum UpgradeSemanticEffect {
+    BandShift {
+        stat: SemanticBandStat,
+        steps: i32,
+    },
+    BandFloor {
+        stat: SemanticBandStat,
+        floor: RequirementBand,
+    },
+    TraitModifier {
+        trait_tag: RequirementTraitTag,
+        modifier_kind: TraitModifierKind,
+        value: f32,
+    },
+}
+
+pub fn semantic_effects_for_upgrade(upgrade: &UpgradeConfig) -> Vec<UpgradeSemanticEffect> {
+    let mut effects = Vec::new();
+    if let (Some(stat_id), Some(steps)) = (
+        upgrade
+            .effect_band_shift_stat
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty()),
+        upgrade.effect_band_shift_steps,
+    ) && let Some(stat) = SemanticBandStat::from_id(stat_id)
+    {
+        effects.push(UpgradeSemanticEffect::BandShift { stat, steps });
+    }
+    if let (Some(stat_id), Some(floor_id)) = (
+        upgrade
+            .effect_band_floor_stat
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty()),
+        upgrade
+            .effect_band_floor_min
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty()),
+    ) && let (Some(stat), Some(floor)) = (
+        SemanticBandStat::from_id(stat_id),
+        RequirementBand::from_id(floor_id),
+    ) {
+        effects.push(UpgradeSemanticEffect::BandFloor { stat, floor });
+    }
+    if let (Some(trait_id), Some(modifier_id), Some(value)) = (
+        upgrade
+            .effect_trait_hook
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty()),
+        upgrade
+            .effect_trait_modifier_kind
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty()),
+        upgrade.effect_trait_modifier_value,
+    ) && let (Some(trait_tag), Some(modifier_kind)) = (
+        RequirementTraitTag::from_id(trait_id),
+        TraitModifierKind::from_id(modifier_id),
+    ) {
+        effects.push(UpgradeSemanticEffect::TraitModifier {
+            trait_tag,
+            modifier_kind,
+            value,
+        });
+    }
+    effects
+}
+
+pub fn apply_semantic_band_shift(current: RequirementBand, steps: i32) -> RequirementBand {
+    let raw = match current {
+        RequirementBand::VeryLow => 0,
+        RequirementBand::Low => 1,
+        RequirementBand::Moderate => 2,
+        RequirementBand::High => 3,
+        RequirementBand::VeryHigh => 4,
+    };
+    requirement_band_from_index(raw + steps)
+}
+
+pub fn apply_semantic_band_floor(
+    current: RequirementBand,
+    floor: RequirementBand,
+) -> RequirementBand {
+    current.max(floor)
+}
+
+pub fn apply_semantic_trait_modifier(
+    base: f32,
+    has_trait: bool,
+    modifier_kind: TraitModifierKind,
+    value: f32,
+) -> f32 {
+    if !has_trait {
+        return base;
+    }
+    match modifier_kind {
+        TraitModifierKind::DamageMultiplier | TraitModifierKind::AttackSpeedMultiplier => {
+            (base * (1.0 + value)).max(0.0)
+        }
+        TraitModifierKind::MoveSpeedBonus | TraitModifierKind::ArmorBonus => base + value,
+        TraitModifierKind::MoraleLossMultiplier => (base * (1.0 + value)).max(0.0),
+        TraitModifierKind::ExecuteThreshold | TraitModifierKind::RescueSpeedMultiplier => {
+            (base + value).max(0.0)
+        }
+    }
+}
+
+fn requirement_band_from_index(index: i32) -> RequirementBand {
+    match index.clamp(0, 4) {
+        0 => RequirementBand::VeryLow,
+        1 => RequirementBand::Low,
+        2 => RequirementBand::Moderate,
+        3 => RequirementBand::High,
+        _ => RequirementBand::VeryHigh,
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct OwnedConditionalUpgrade {
     pub id: String,
@@ -1301,27 +1489,30 @@ pub fn upgrade_display_title(upgrade: &UpgradeConfig) -> &'static str {
 }
 
 pub fn upgrade_display_description(upgrade: &UpgradeConfig) -> String {
-    match upgrade.kind.as_str() {
-        "damage" => format!("Increase army damage by +{:.1}%.", upgrade.value),
+    let mut description = match upgrade.kind.as_str() {
+        "damage" => format!(
+            "Increase army damage by +{:.0} points (additive).",
+            (upgrade.value / 7.0).round().max(1.0)
+        ),
         "attack_speed" => format!(
-            "Increase army attack speed by +{:.0}%.",
-            upgrade.value * 100.0
+            "Increase army attack cadence by +{:.0} speed points (additive).",
+            (upgrade.value * 100.0 / 8.0).round().max(1.0)
         ),
         "quartermaster" => format!(
-            "Increase gold gained from all gold pickups by +{:.0}%.",
-            upgrade.value * 100.0
+            "Increase gold pickup yield by +{:.0} economy points.",
+            (upgrade.value * 100.0 / 10.0).round().max(1.0)
         ),
         "luck" => format!(
-            "Increase Luck by +{:.0}%: improves crit chance, crit damage, item quality, and drop chances.",
-            upgrade.value * 100.0
+            "Increase Luck by +{:.0} points: improves crit chance, crit damage, item quality, and drop chances.",
+            (upgrade.value * 100.0 / 5.0).round().max(1.0)
         ),
         "crit_chance" => format!(
-            "Increase critical hit chance by +{:.1}%.",
-            upgrade.value * 100.0
+            "Increase critical hit chance by +{:.0} crit points.",
+            (upgrade.value * 100.0).round().max(1.0)
         ),
         "crit_damage" => format!(
-            "Increase critical hit damage by +{:.0}%.",
-            upgrade.value * 100.0
+            "Increase critical hit damage bonus by +{:.0} crit-damage points.",
+            (upgrade.value * 100.0 / 10.0).round().max(1.0)
         ),
         "armor" => format!("Add +{:.1} armor to friendlies.", upgrade.value),
         "pickup_radius" => format!("Increase pickup radius by +{:.0}.", upgrade.value),
@@ -1333,20 +1524,20 @@ pub fn upgrade_display_description(upgrade: &UpgradeConfig) -> String {
         ),
         "move_speed" => format!("Increase army movement speed by +{:.0}.", upgrade.value),
         "item_rarity" => format!(
-            "Increase equipment item rarity roll bonus by +{:.0}%.",
-            upgrade.value * 100.0
+            "Increase equipment quality by +{:.0} luck points.",
+            (upgrade.value * 100.0 / 5.0).round().max(1.0)
         ),
         "upgrade_rarity" => format!(
-            "Increase level-up rarity roll bonus by +{:.0}%.",
-            upgrade.value * 100.0
+            "Increase draft quality by +{:.0} luck points.",
+            (upgrade.value * 100.0 / 5.0).round().max(1.0)
         ),
         "skill_duration" => format!(
-            "Increase duration of cooldown-based skills by +{:.0}%.",
-            upgrade.value * 100.0
+            "Increase cooldown-based skill duration by +{:.0} duration points.",
+            (upgrade.value * 100.0 / 10.0).round().max(1.0)
         ),
         "cooldown_reduction" => format!(
-            "Reduce cooldown of cooldown-based skills by {:.0}%.",
-            upgrade.value * 100.0
+            "Reduce cooldowns by +{:.0} cooldown points.",
+            (upgrade.value * 100.0 / 10.0).round().max(1.0)
         ),
         "hospitalier_aura" => format!(
             "Friendlies in aura regen +{:.1} HP/s and +{:.2} morale/s.",
@@ -1389,6 +1580,53 @@ pub fn upgrade_display_description(upgrade: &UpgradeConfig) -> String {
             _ => "Major reward only: unlock a formation skill for the skill bar.".to_string(),
         },
         _ => "Apply a battlefield improvement.".to_string(),
+    };
+
+    let semantic_lines = semantic_effect_preview_lines(upgrade);
+    if !semantic_lines.is_empty() {
+        description.push('\n');
+        description.push_str(semantic_lines.join("\n").as_str());
+    }
+    description
+}
+
+pub fn semantic_effect_preview_lines(upgrade: &UpgradeConfig) -> Vec<String> {
+    semantic_effects_for_upgrade(upgrade)
+        .into_iter()
+        .map(|effect| match effect {
+            UpgradeSemanticEffect::BandShift { stat, steps } => format!(
+                "Semantic: {} {}{} band{}.",
+                stat.label(),
+                if steps > 0 { "+" } else { "" },
+                steps,
+                if steps.abs() == 1 { "" } else { "s" }
+            ),
+            UpgradeSemanticEffect::BandFloor { stat, floor } => {
+                format!("Semantic: {} floor is {}.", stat.label(), floor.label())
+            }
+            UpgradeSemanticEffect::TraitModifier {
+                trait_tag,
+                modifier_kind,
+                value,
+            } => format!(
+                "Trait Hook: {} -> {} {}.",
+                trait_tag.label(),
+                modifier_kind.label(),
+                semantic_trait_modifier_value_label(modifier_kind, value)
+            ),
+        })
+        .collect()
+}
+
+fn semantic_trait_modifier_value_label(kind: TraitModifierKind, value: f32) -> String {
+    match kind {
+        TraitModifierKind::DamageMultiplier
+        | TraitModifierKind::AttackSpeedMultiplier
+        | TraitModifierKind::MoraleLossMultiplier
+        | TraitModifierKind::RescueSpeedMultiplier => format!("{:+.0}%", value * 100.0),
+        TraitModifierKind::MoveSpeedBonus
+        | TraitModifierKind::ArmorBonus
+        | TraitModifierKind::ExecuteThreshold => format!("{:+.2}", value),
     }
 }
 
@@ -1643,11 +1881,10 @@ fn conditional_effects_from_owned(
         }
         match entry.kind.as_str() {
             "mob_fury" => {
-                effects.friendly_damage_multiplier *= 1.0 + MOB_FURY_DAMAGE_BONUS;
-                effects.friendly_attack_speed_multiplier *= 1.0 + MOB_FURY_ATTACK_SPEED_BONUS;
+                effects.friendly_damage_multiplier += MOB_FURY_DAMAGE_BONUS;
+                effects.friendly_attack_speed_multiplier += MOB_FURY_ATTACK_SPEED_BONUS;
                 effects.friendly_move_speed_bonus += MOB_FURY_MOVE_SPEED_BONUS;
-                let mitigation_multiplier = 1.0 - MOB_FURY_LOSS_MITIGATION;
-                effects.friendly_morale_loss_multiplier *= mitigation_multiplier;
+                effects.friendly_morale_loss_multiplier -= MOB_FURY_LOSS_MITIGATION;
             }
             "mob_justice" => {
                 effects.execute_below_health_ratio = effects
@@ -1660,28 +1897,32 @@ fn conditional_effects_from_owned(
                     .min(MOB_MERCY_RESCUE_TIME_MULTIPLIER);
             }
             "doctrine_execution_rites" => {
-                effects.friendly_damage_multiplier *= 1.0 + DOCTRINE_EXECUTION_RITES_DAMAGE_BONUS;
+                effects.friendly_damage_multiplier += DOCTRINE_EXECUTION_RITES_DAMAGE_BONUS;
                 effects.execute_below_health_ratio = effects
                     .execute_below_health_ratio
                     .max(DOCTRINE_EXECUTION_RITES_EXECUTE_THRESHOLD);
-                effects.rescue_time_multiplier *= DOCTRINE_EXECUTION_RITES_RESCUE_PENALTY;
+                effects.rescue_time_multiplier += DOCTRINE_EXECUTION_RITES_RESCUE_PENALTY - 1.0;
             }
             "doctrine_countervolley" => {
-                effects.friendly_damage_multiplier *= 1.0 + DOCTRINE_COUNTERVOLLEY_DAMAGE_BONUS;
-                effects.friendly_attack_speed_multiplier *=
-                    1.0 + DOCTRINE_COUNTERVOLLEY_ATTACK_SPEED_BONUS;
-                effects.friendly_morale_loss_multiplier *=
-                    DOCTRINE_COUNTERVOLLEY_MORALE_LOSS_MULTIPLIER;
+                effects.friendly_damage_multiplier += DOCTRINE_COUNTERVOLLEY_DAMAGE_BONUS;
+                effects.friendly_attack_speed_multiplier +=
+                    DOCTRINE_COUNTERVOLLEY_ATTACK_SPEED_BONUS;
+                effects.friendly_morale_loss_multiplier +=
+                    DOCTRINE_COUNTERVOLLEY_MORALE_LOSS_MULTIPLIER - 1.0;
             }
             "doctrine_pike_hedgehog" => {
-                effects.friendly_damage_multiplier *= 1.0 + DOCTRINE_PIKE_HEDGEHOG_DAMAGE_BONUS;
+                effects.friendly_damage_multiplier += DOCTRINE_PIKE_HEDGEHOG_DAMAGE_BONUS;
                 effects.friendly_move_speed_bonus -= DOCTRINE_PIKE_HEDGEHOG_MOVE_SPEED_PENALTY;
-                effects.friendly_morale_loss_multiplier *=
-                    DOCTRINE_PIKE_HEDGEHOG_MORALE_LOSS_MULTIPLIER;
+                effects.friendly_morale_loss_multiplier +=
+                    DOCTRINE_PIKE_HEDGEHOG_MORALE_LOSS_MULTIPLIER - 1.0;
             }
             _ => {}
         }
     }
+    effects.friendly_damage_multiplier = effects.friendly_damage_multiplier.max(0.0);
+    effects.friendly_attack_speed_multiplier = effects.friendly_attack_speed_multiplier.max(0.1);
+    effects.friendly_morale_loss_multiplier = effects.friendly_morale_loss_multiplier.max(0.0);
+    effects.rescue_time_multiplier = effects.rescue_time_multiplier.max(0.1);
     (effects, status_entries)
 }
 
@@ -1955,6 +2196,13 @@ mod tests {
             requirement_band_stat: None,
             requirement_band_at_least: None,
             requirement_band_at_most: None,
+            effect_band_shift_stat: None,
+            effect_band_shift_steps: None,
+            effect_band_floor_stat: None,
+            effect_band_floor_min: None,
+            effect_trait_hook: None,
+            effect_trait_modifier_kind: None,
+            effect_trait_modifier_value: None,
         }
     }
 
@@ -2017,6 +2265,87 @@ mod tests {
         assert_eq!(picks.len(), 3);
         let ids: HashSet<String> = picks.iter().map(|picked| picked.id.clone()).collect();
         assert_eq!(ids.len(), 3);
+    }
+
+    #[test]
+    fn draft_rolls_are_reproducible_for_identical_seed_and_inputs() {
+        let mut major_a = upgrade("doctrine_command_net", "major_a");
+        major_a.reward_lane = Some("major".to_string());
+        major_a.one_time = true;
+        let mut major_b = upgrade("doctrine_stalwart_oath", "major_b");
+        major_b.reward_lane = Some("major".to_string());
+        major_b.one_time = true;
+        let mut major_c = upgrade("doctrine_forced_march", "major_c");
+        major_c.reward_lane = Some("major".to_string());
+        major_c.one_time = true;
+        let pool = vec![
+            upgrade("damage", "minor_a"),
+            upgrade("armor", "minor_b"),
+            upgrade("attack_speed", "minor_c"),
+            upgrade("pickup_radius", "minor_d"),
+            upgrade("luck", "minor_e"),
+            major_a,
+            major_b,
+            major_c,
+        ];
+
+        let mut rng_a = UpgradeRngState {
+            state: 0xA1B2_C3D4_E5F6_0123,
+        };
+        let mut rng_b = UpgradeRngState {
+            state: 0xA1B2_C3D4_E5F6_0123,
+        };
+        let tracker = OneTimeUpgradeTracker::default();
+        let stacks = UpgradeStackTracker::default();
+        let skillbar = FormationSkillBar::default();
+
+        let minor_a = roll_upgrade_options(
+            &pool,
+            &mut rng_a,
+            4,
+            super::UpgradeRewardKind::Minor,
+            0.0,
+            &tracker,
+            &stacks,
+            &skillbar,
+        );
+        let minor_b = roll_upgrade_options(
+            &pool,
+            &mut rng_b,
+            4,
+            super::UpgradeRewardKind::Minor,
+            0.0,
+            &tracker,
+            &stacks,
+            &skillbar,
+        );
+        let minor_ids_a: Vec<String> = minor_a.iter().map(|entry| entry.id.clone()).collect();
+        let minor_ids_b: Vec<String> = minor_b.iter().map(|entry| entry.id.clone()).collect();
+        assert_eq!(minor_ids_a, minor_ids_b);
+
+        let major_a = roll_upgrade_options(
+            &pool,
+            &mut rng_a,
+            2,
+            super::UpgradeRewardKind::Major,
+            0.0,
+            &tracker,
+            &stacks,
+            &skillbar,
+        );
+        let major_b = roll_upgrade_options(
+            &pool,
+            &mut rng_b,
+            2,
+            super::UpgradeRewardKind::Major,
+            0.0,
+            &tracker,
+            &stacks,
+            &skillbar,
+        );
+        let major_ids_a: Vec<String> = major_a.iter().map(|entry| entry.id.clone()).collect();
+        let major_ids_b: Vec<String> = major_b.iter().map(|entry| entry.id.clone()).collect();
+        assert_eq!(major_ids_a, major_ids_b);
     }
 
     #[test]
@@ -2127,6 +2456,13 @@ mod tests {
             requirement_band_stat: None,
             requirement_band_at_least: None,
             requirement_band_at_most: None,
+            effect_band_shift_stat: None,
+            effect_band_shift_steps: None,
+            effect_band_floor_stat: None,
+            effect_band_floor_min: None,
+            effect_trait_hook: None,
+            effect_trait_modifier_kind: None,
+            effect_trait_modifier_value: None,
         };
         let pool = vec![formation_upgrade];
         let mut tracker = OneTimeUpgradeTracker::default();
@@ -2213,6 +2549,13 @@ mod tests {
             requirement_band_stat: None,
             requirement_band_at_least: None,
             requirement_band_at_most: None,
+            effect_band_shift_stat: None,
+            effect_band_shift_steps: None,
+            effect_band_floor_stat: None,
+            effect_band_floor_min: None,
+            effect_trait_hook: None,
+            effect_trait_modifier_kind: None,
+            effect_trait_modifier_value: None,
         };
         super::apply_one_time_tracker_effects(&tradeoff, &mut tracker);
         assert_eq!(
@@ -2273,6 +2616,13 @@ mod tests {
             requirement_band_stat: None,
             requirement_band_at_least: None,
             requirement_band_at_most: None,
+            effect_band_shift_stat: None,
+            effect_band_shift_steps: None,
+            effect_band_floor_stat: None,
+            effect_band_floor_min: None,
+            effect_trait_hook: None,
+            effect_trait_modifier_kind: None,
+            effect_trait_modifier_value: None,
         };
         let normal_upgrade = upgrade("damage", "damage_up");
         let pool = vec![formation_upgrade, normal_upgrade];
@@ -2334,6 +2684,13 @@ mod tests {
             requirement_band_stat: None,
             requirement_band_at_least: None,
             requirement_band_at_most: None,
+            effect_band_shift_stat: None,
+            effect_band_shift_steps: None,
+            effect_band_floor_stat: None,
+            effect_band_floor_min: None,
+            effect_trait_hook: None,
+            effect_trait_modifier_kind: None,
+            effect_trait_modifier_value: None,
         };
         let pool = vec![formation_upgrade];
         let mut rng = UpgradeRngState {
@@ -2484,6 +2841,13 @@ mod tests {
             requirement_band_stat: None,
             requirement_band_at_least: None,
             requirement_band_at_most: None,
+            effect_band_shift_stat: None,
+            effect_band_shift_steps: None,
+            effect_band_floor_stat: None,
+            effect_band_floor_min: None,
+            effect_trait_hook: None,
+            effect_trait_modifier_kind: None,
+            effect_trait_modifier_value: None,
         };
 
         super::apply_upgrade(
@@ -2557,6 +2921,13 @@ mod tests {
             requirement_band_stat: None,
             requirement_band_at_least: None,
             requirement_band_at_most: None,
+            effect_band_shift_stat: None,
+            effect_band_shift_steps: None,
+            effect_band_floor_stat: None,
+            effect_band_floor_min: None,
+            effect_trait_hook: None,
+            effect_trait_modifier_kind: None,
+            effect_trait_modifier_value: None,
         };
         super::apply_upgrade(
             &upgrade,
@@ -2622,6 +2993,51 @@ mod tests {
         assert!(effects.friendly_damage_multiplier > 1.0);
         assert!(effects.friendly_attack_speed_multiplier > 1.0);
         assert!(effects.friendly_morale_loss_multiplier > 1.0);
+    }
+
+    #[test]
+    fn pike_hedgehog_doctrine_applies_conditional_upside_and_downside() {
+        let mut buffs = GlobalBuffs::default();
+        let (mut item_rarity, mut upgrade_rarity, mut skill_timing) = empty_upgrade_bonus_state();
+        let mut conditional = super::ConditionalUpgradeOwnership::default();
+        let mut skillbar = FormationSkillBar::default();
+
+        let mut doctrine = upgrade("doctrine_pike_hedgehog", "doctrine_pike_hedgehog");
+        doctrine.reward_lane = Some("major".to_string());
+        doctrine.one_time = true;
+        doctrine.requirement_type = Some("band_at_least".to_string());
+        doctrine.requirement_band_stat = Some("anti_cavalry_share".to_string());
+        doctrine.requirement_band_at_least = Some("moderate".to_string());
+        doctrine.downside = Some("Formation movement slows.".to_string());
+
+        super::apply_upgrade(
+            &doctrine,
+            &mut buffs,
+            &mut item_rarity,
+            &mut upgrade_rarity,
+            &mut skill_timing,
+            &mut conditional,
+            &mut skillbar,
+        );
+
+        let eval_context = super::RequirementEvalContext {
+            anti_cavalry_share: 0.42,
+            ..Default::default()
+        };
+        let (effects, status) = super::conditional_effects_from_owned(
+            &conditional.entries,
+            &eval_context,
+            ActiveFormation::ShieldWall,
+        );
+
+        assert!(
+            status
+                .iter()
+                .any(|entry| entry.id == "doctrine_pike_hedgehog" && entry.active)
+        );
+        assert!(effects.friendly_damage_multiplier > 1.0);
+        assert!(effects.friendly_move_speed_bonus < 0.0);
+        assert!(effects.friendly_morale_loss_multiplier < 1.0);
     }
 
     #[test]
@@ -2941,6 +3357,85 @@ mod tests {
     }
 
     #[test]
+    fn semantic_effect_parser_extracts_shift_floor_and_trait_modifier() {
+        let mut upgrade = upgrade("damage", "semantic_parse");
+        upgrade.effect_band_shift_stat = Some("damage".to_string());
+        upgrade.effect_band_shift_steps = Some(1);
+        upgrade.effect_band_floor_stat = Some("damage".to_string());
+        upgrade.effect_band_floor_min = Some("moderate".to_string());
+        upgrade.effect_trait_hook = Some("frontline".to_string());
+        upgrade.effect_trait_modifier_kind = Some("damage_multiplier".to_string());
+        upgrade.effect_trait_modifier_value = Some(0.15);
+
+        let effects = super::semantic_effects_for_upgrade(&upgrade);
+        assert_eq!(effects.len(), 3);
+        assert!(effects.iter().any(|effect| matches!(
+            effect,
+            super::UpgradeSemanticEffect::BandShift {
+                stat: super::SemanticBandStat::Damage,
+                steps: 1
+            }
+        )));
+        assert!(effects.iter().any(|effect| matches!(
+            effect,
+            super::UpgradeSemanticEffect::BandFloor {
+                stat: super::SemanticBandStat::Damage,
+                floor: super::RequirementBand::Moderate
+            }
+        )));
+        assert!(effects.iter().any(|effect| matches!(
+            effect,
+            super::UpgradeSemanticEffect::TraitModifier {
+                trait_tag: super::RequirementTraitTag::Frontline,
+                modifier_kind: super::TraitModifierKind::DamageMultiplier,
+                value
+            } if (*value - 0.15).abs() < 0.001
+        )));
+    }
+
+    #[test]
+    fn semantic_band_shift_and_floor_resolution_clamps_bands() {
+        assert_eq!(
+            super::apply_semantic_band_shift(super::RequirementBand::Moderate, 1),
+            super::RequirementBand::High
+        );
+        assert_eq!(
+            super::apply_semantic_band_shift(super::RequirementBand::VeryHigh, 3),
+            super::RequirementBand::VeryHigh
+        );
+        assert_eq!(
+            super::apply_semantic_band_shift(super::RequirementBand::Low, -3),
+            super::RequirementBand::VeryLow
+        );
+        assert_eq!(
+            super::apply_semantic_band_floor(
+                super::RequirementBand::Low,
+                super::RequirementBand::Moderate
+            ),
+            super::RequirementBand::Moderate
+        );
+    }
+
+    #[test]
+    fn semantic_trait_modifier_applies_only_when_trait_is_present() {
+        let unchanged = super::apply_semantic_trait_modifier(
+            1.0,
+            false,
+            super::TraitModifierKind::DamageMultiplier,
+            0.15,
+        );
+        assert!((unchanged - 1.0).abs() < 0.001);
+
+        let boosted = super::apply_semantic_trait_modifier(
+            1.0,
+            true,
+            super::TraitModifierKind::DamageMultiplier,
+            0.15,
+        );
+        assert!((boosted - 1.15).abs() < 0.001);
+    }
+
+    #[test]
     fn conditional_effects_apply_and_revoke_without_duplicate_stack_bugs() {
         let entries = vec![
             super::OwnedConditionalUpgrade {
@@ -3123,6 +3618,13 @@ mod tests {
             requirement_band_stat: None,
             requirement_band_at_least: None,
             requirement_band_at_most: None,
+            effect_band_shift_stat: None,
+            effect_band_shift_steps: None,
+            effect_band_floor_stat: None,
+            effect_band_floor_min: None,
+            effect_trait_hook: None,
+            effect_trait_modifier_kind: None,
+            effect_trait_modifier_value: None,
         };
         assert_eq!(
             upgrade_display_title(&unique_slots_upgrade),
@@ -3155,6 +3657,13 @@ mod tests {
             requirement_band_stat: None,
             requirement_band_at_least: None,
             requirement_band_at_most: None,
+            effect_band_shift_stat: None,
+            effect_band_shift_steps: None,
+            effect_band_floor_stat: None,
+            effect_band_floor_min: None,
+            effect_trait_hook: None,
+            effect_trait_modifier_kind: None,
+            effect_trait_modifier_value: None,
         };
         assert_eq!(
             upgrade_card_icon(&formation_upgrade),

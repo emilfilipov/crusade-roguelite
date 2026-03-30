@@ -88,3 +88,6 @@ Track external art sources, licenses, and current runtime mapping.
 - Counter-matrix role/armor tags are metadata/runtime logic only and currently introduce no new art-asset requirements.
 - Hero subtype specialization + strengths/weaknesses tooltip clarity are text/metadata updates and currently introduce no additional asset requirements.
 - Deterministic itemization (`assets/data/items.json`) now uses authored stat packages plus `nature`/`downside`/`doctrine_tags`; this is metadata-only and introduces no new asset-source requirements.
+- Item template economy fields (`scrap_gold_value`) and upgrade semantic metadata fields (`effect_band_shift_*`, `effect_band_floor_*`, `effect_trait_modifier_*`) are data-only changes and introduce no new asset-source requirements.
+- Revamp QA/balance certification updates (`CRU-209/210/211/262`) are test/docs/runtime-logic changes only and introduce no additional asset-source requirements.
+- Final release/integration and expansion certification artifacts (`docs/REVAMP_RELEASE_CHECKLIST.md`, `docs/EXPANSION_QA_MATRIX.md`) are documentation-only and introduce no asset-source changes.

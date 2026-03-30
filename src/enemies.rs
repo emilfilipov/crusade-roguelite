@@ -189,13 +189,20 @@ const RESUME_FACTOR: f32 = 0.98;
 const ENEMY_INSIDE_FORMATION_PADDING_SLOTS: f32 = 0.35;
 const ENEMY_FORMATION_REPEL_MARGIN_SLOTS: f32 = 0.12;
 const WAVE_UNITS_MULTIPLIER: f32 = 2.0;
-const MAX_ENEMIES_PER_WAVE: f32 = 200.0;
+const MAX_NON_ARMY_ENEMIES_PER_WAVE: f32 = 200.0;
+const MAX_ARMY_ENEMIES_PER_WAVE: f32 = 320.0;
 const POST_SCRIPTED_WAVE_COUNT_GROWTH: f32 = 1.18;
 const WAVE_STAT_GROWTH_PER_WAVE: f32 = 0.102;
 const WAVE_BATCH_SIZE: u32 = 7;
 const WAVE_BATCH_INTERVAL_SECS: f32 = 0.7;
 const MINOR_ARMY_COUNT_MULTIPLIER: f32 = 0.55;
 const MAJOR_ARMY_COUNT_MULTIPLIER: f32 = 1.25;
+const SMALL_ARMY_BATCH_GROWTH_INTERVAL_WAVES: u32 = 20;
+const MINOR_ARMY_BATCH_GROWTH_INTERVAL_WAVES: u32 = 20;
+const MAJOR_ARMY_BATCH_GROWTH_INTERVAL_WAVES: u32 = 20;
+const MAX_SMALL_ARMY_BATCHES_PER_WAVE: u32 = 5;
+const MAX_MINOR_ARMY_BATCHES_PER_WAVE: u32 = 4;
+const MAX_MAJOR_ARMY_BATCHES_PER_WAVE: u32 = 3;
 const MINOR_ARMY_STAT_MULTIPLIER: f32 = 1.12;
 const MAJOR_ARMY_STAT_MULTIPLIER: f32 = 1.30;
 const SMALL_ARMY_LOADOUT_SLOT_COUNT: usize = 3;
@@ -286,7 +293,7 @@ fn spawn_waves(
     let alive_count = alive_enemies.iter().count();
     if !wave_runtime.wave_started {
         let wave_number = wave_runtime.current_wave;
-        let base_spawn_count = units_to_spawn_for_wave(&data.waves, wave_number);
+        let base_spawn_count = army_units_to_spawn_for_wave(&data.waves, wave_number);
         let base_stat_scale = wave_stat_multiplier(wave_number);
         for plan in planned_wave_army_batches(base_spawn_count, wave_number, base_stat_scale) {
             enqueue_wave_batch(
@@ -1029,31 +1036,91 @@ fn planned_wave_army_batches(
     wave_number: u32,
     base_stat_scale: f32,
 ) -> Vec<WaveArmyBatchPlan> {
-    let mut plans = Vec::with_capacity(3);
-    plans.push(WaveArmyBatchPlan {
-        lane: EnemyArmyLane::Small,
-        count: base_count.max(1),
-        stat_scale: base_stat_scale,
-    });
+    let mut plans = Vec::new();
+    append_lane_batches(
+        &mut plans,
+        EnemyArmyLane::Small,
+        base_count.max(1),
+        base_stat_scale,
+        small_army_batch_count_for_wave(wave_number),
+    );
     if is_minor_army_wave(wave_number) {
-        plans.push(WaveArmyBatchPlan {
-            lane: EnemyArmyLane::Minor,
-            count: scaled_lane_count(base_count, MINOR_ARMY_COUNT_MULTIPLIER),
-            stat_scale: base_stat_scale * MINOR_ARMY_STAT_MULTIPLIER,
-        });
+        append_lane_batches(
+            &mut plans,
+            EnemyArmyLane::Minor,
+            scaled_lane_count(base_count, MINOR_ARMY_COUNT_MULTIPLIER),
+            base_stat_scale * MINOR_ARMY_STAT_MULTIPLIER,
+            minor_army_batch_count_for_wave(wave_number),
+        );
     }
     if is_major_army_wave(wave_number) {
-        plans.push(WaveArmyBatchPlan {
-            lane: EnemyArmyLane::Major,
-            count: scaled_lane_count(base_count, MAJOR_ARMY_COUNT_MULTIPLIER),
-            stat_scale: base_stat_scale * MAJOR_ARMY_STAT_MULTIPLIER,
-        });
+        append_lane_batches(
+            &mut plans,
+            EnemyArmyLane::Major,
+            scaled_lane_count(base_count, MAJOR_ARMY_COUNT_MULTIPLIER),
+            base_stat_scale * MAJOR_ARMY_STAT_MULTIPLIER,
+            major_army_batch_count_for_wave(wave_number),
+        );
     }
     plans
 }
 
 fn scaled_lane_count(base_count: u32, multiplier: f32) -> u32 {
     ((base_count.max(1) as f32) * multiplier).round().max(1.0) as u32
+}
+
+fn append_lane_batches(
+    plans: &mut Vec<WaveArmyBatchPlan>,
+    lane: EnemyArmyLane,
+    total_count: u32,
+    stat_scale: f32,
+    batch_count: u32,
+) {
+    if total_count == 0 {
+        return;
+    }
+    let batch_count = batch_count.max(1);
+    let base_batch_size = total_count / batch_count;
+    let remainder = total_count % batch_count;
+    for batch_index in 0..batch_count {
+        let count = base_batch_size + u32::from(batch_index < remainder);
+        if count == 0 {
+            continue;
+        }
+        plans.push(WaveArmyBatchPlan {
+            lane,
+            count,
+            stat_scale,
+        });
+    }
+}
+
+fn scaled_batch_count(wave_number: u32, growth_interval: u32, max_batches: u32) -> u32 {
+    (1 + wave_number / growth_interval).clamp(1, max_batches.max(1))
+}
+
+fn small_army_batch_count_for_wave(wave_number: u32) -> u32 {
+    scaled_batch_count(
+        wave_number.saturating_sub(1),
+        SMALL_ARMY_BATCH_GROWTH_INTERVAL_WAVES,
+        MAX_SMALL_ARMY_BATCHES_PER_WAVE,
+    )
+}
+
+fn minor_army_batch_count_for_wave(wave_number: u32) -> u32 {
+    scaled_batch_count(
+        wave_number.saturating_sub(2),
+        MINOR_ARMY_BATCH_GROWTH_INTERVAL_WAVES,
+        MAX_MINOR_ARMY_BATCHES_PER_WAVE,
+    )
+}
+
+fn major_army_batch_count_for_wave(wave_number: u32) -> u32 {
+    scaled_batch_count(
+        wave_number.saturating_sub(10),
+        MAJOR_ARMY_BATCH_GROWTH_INTERVAL_WAVES,
+        MAX_MAJOR_ARMY_BATCHES_PER_WAVE,
+    )
 }
 
 pub fn enemy_army_level_for_difficulty(difficulty: GameDifficulty, player_level: u32) -> u32 {
@@ -1309,14 +1376,21 @@ fn wave_base_count(config: &WavesConfigFile, wave_number: u32) -> f32 {
 
 pub fn units_per_second_for_wave(config: &WavesConfigFile, wave_number: u32) -> f32 {
     let base_count = wave_base_count(config, wave_number);
-    let wave_total = (base_count * WAVE_UNITS_MULTIPLIER).clamp(1.0, MAX_ENEMIES_PER_WAVE);
+    let wave_total = (base_count * WAVE_UNITS_MULTIPLIER).clamp(1.0, MAX_NON_ARMY_ENEMIES_PER_WAVE);
     wave_total / WAVE_DURATION_SECS
 }
 
 pub fn units_to_spawn_for_wave(config: &WavesConfigFile, wave_number: u32) -> u32 {
     let base_count = wave_base_count(config, wave_number);
     (base_count * WAVE_UNITS_MULTIPLIER)
-        .clamp(1.0, MAX_ENEMIES_PER_WAVE)
+        .clamp(1.0, MAX_NON_ARMY_ENEMIES_PER_WAVE)
+        .round() as u32
+}
+
+pub fn army_units_to_spawn_for_wave(config: &WavesConfigFile, wave_number: u32) -> u32 {
+    let base_count = wave_base_count(config, wave_number);
+    (base_count * WAVE_UNITS_MULTIPLIER)
+        .clamp(1.0, MAX_ARMY_ENEMIES_PER_WAVE)
         .round() as u32
 }
 
@@ -2012,19 +2086,20 @@ mod tests {
     use crate::combat::RangedAttackProfile;
     use crate::data::{GameData, WaveConfig, WavesConfigFile};
     use crate::enemies::{
-        BanditVisualState, EnemyRoleCounts, EnemySpawnRole, batch_interval_secs,
-        batch_size_for_wave, build_enemy_pool_roles_for_wave, choose_enemy_kind_for_role,
-        combined_enemy_speed_multiplier, combined_enemy_stat_multiplier,
-        crowded_enemy_neighbor_count, decide_bandit_visual_state, enemy_army_level_for_difficulty,
-        enemy_army_progression_profile, enemy_desired_engagement_range, enemy_engagement_range,
-        enemy_move_speed, enemy_player_pressure_multiplier, enemy_prefers_ranged_spacing,
+        BanditVisualState, EnemyRoleCounts, EnemySpawnRole, army_units_to_spawn_for_wave,
+        batch_interval_secs, batch_size_for_wave, build_enemy_pool_roles_for_wave,
+        choose_enemy_kind_for_role, combined_enemy_speed_multiplier,
+        combined_enemy_stat_multiplier, crowded_enemy_neighbor_count, decide_bandit_visual_state,
+        enemy_army_level_for_difficulty, enemy_army_progression_profile,
+        enemy_desired_engagement_range, enemy_engagement_range, enemy_move_speed,
+        enemy_player_pressure_multiplier, enemy_prefers_ranged_spacing,
         enemy_ranged_support_avoid_trigger_distance, enemy_tier_mix_for_wave,
         formation_overflow_repel_target, formation_perimeter_target, is_major_army_wave,
         is_minor_army_wave, major_wave_preview_target_count_for_batch,
         max_inside_enemy_count_for_formation, next_enemy_stuck_secs, overflow_indices_by_distance,
         pick_next_spawn_role, planned_wave_army_batches, random_spawn_position,
-        should_start_crowd_hold, units_per_second_for_wave, wave_duration_secs,
-        wave_stat_multiplier,
+        should_start_crowd_hold, units_per_second_for_wave, units_to_spawn_for_wave,
+        wave_duration_secs, wave_stat_multiplier,
     };
     use crate::formation::{ActiveFormation, formation_contains_position};
     use crate::map::MapBounds;
@@ -2164,6 +2239,61 @@ mod tests {
         );
         assert!(is_minor_army_wave(10));
         assert!(is_major_army_wave(10));
+    }
+
+    #[test]
+    fn wave_batch_planner_increases_lane_batch_count_over_time() {
+        let wave_21 = planned_wave_army_batches(120, 21, 1.0);
+        let wave_22 = planned_wave_army_batches(120, 22, 1.0);
+        let wave_30 = planned_wave_army_batches(120, 30, 1.0);
+
+        let wave_21_small = wave_21
+            .iter()
+            .filter(|entry| entry.lane == super::EnemyArmyLane::Small)
+            .count();
+        assert!(
+            wave_21_small >= 2,
+            "small lane should split into multiple army batches after wave 20"
+        );
+
+        let wave_22_minor = wave_22
+            .iter()
+            .filter(|entry| entry.lane == super::EnemyArmyLane::Minor)
+            .count();
+        assert!(
+            wave_22_minor >= 2,
+            "minor lane should split into multiple army batches after wave 20"
+        );
+
+        let wave_30_major = wave_30
+            .iter()
+            .filter(|entry| entry.lane == super::EnemyArmyLane::Major)
+            .count();
+        assert!(
+            wave_30_major >= 2,
+            "major lane should split into multiple army batches by wave 30"
+        );
+    }
+
+    #[test]
+    fn army_wave_spawn_count_uses_separate_cap_from_non_army_flow() {
+        let config = WavesConfigFile {
+            waves: vec![
+                WaveConfig {
+                    time_secs: 0.0,
+                    count: 8,
+                },
+                WaveConfig {
+                    time_secs: 30.0,
+                    count: 12,
+                },
+            ],
+        };
+
+        let non_army = units_to_spawn_for_wave(&config, 40);
+        let army = army_units_to_spawn_for_wave(&config, 40);
+        assert!(non_army <= 200);
+        assert!(army > non_army);
     }
 
     #[test]

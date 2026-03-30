@@ -345,7 +345,7 @@
   - `docs/ASSET_SOURCES.md`
 
 ### CRU-208 - Gold Economy and Scrap Rebalance for Deterministic Items
-- Status: `TODO`
+- Status: `DONE`
 - Type: `Balance`
 - Priority: `P1`
 - Depends on: `CRU-207`
@@ -371,7 +371,7 @@
   - `docs/ASSET_SOURCES.md`
 
 ### CRU-217 - Upgrade/Item Semantics Migration to Band Shifts and Trait Hooks
-- Status: `TODO`
+- Status: `DONE`
 - Type: `Gameplay`
 - Priority: `P0`
 - Depends on: `CRU-204, CRU-205, CRU-207, CRU-215`
@@ -398,7 +398,7 @@
   - `docs/ASSET_SOURCES.md`
 
 ### CRU-209 - UI/UX Revamp for Laned Drafts and Tradeoff Clarity
-- Status: `TODO`
+- Status: `DONE`
 - Type: `UI`
 - Priority: `P0`
 - Depends on: `CRU-202, CRU-203, CRU-207`
@@ -424,7 +424,7 @@
   - `docs/ASSET_SOURCES.md`
 
 ### CRU-216 - UI Conversion to Stat Bands and Trait-First Readability
-- Status: `TODO`
+- Status: `DONE`
 - Type: `UI`
 - Priority: `P0`
 - Depends on: `CRU-209, CRU-215, CRU-217`
@@ -451,7 +451,7 @@
   - `docs/ASSET_SOURCES.md`
 
 ### CRU-210 - Integrated Balance Pass for Strategic Contrast
-- Status: `TODO`
+- Status: `DONE`
 - Type: `Balance`
 - Priority: `P0`
 - Depends on: `CRU-204, CRU-205, CRU-206, CRU-208, CRU-209, CRU-216, CRU-217`
@@ -477,7 +477,7 @@
   - `docs/ASSET_SOURCES.md`
 
 ### CRU-211 - Regression Harness and QA Matrix for Revamp
-- Status: `TODO`
+- Status: `DONE`
 - Type: `QA`
 - Priority: `P0`
 - Depends on: `CRU-210`
@@ -503,7 +503,7 @@
   - `docs/ASSET_SOURCES.md`
 
 ### CRU-212 - Release Integration and Documentation Finalization
-- Status: `TODO`
+- Status: `DONE`
 - Type: `Release`
 - Priority: `P1`
 - Depends on: `CRU-211`
@@ -1589,7 +1589,7 @@
   - `docs/ASSET_SOURCES.md`
 
 ### CRU-262 - Skill/Upgrade Rebalance and Regression Certification
-- Status: `TODO`
+- Status: `DONE`
 - Type: `QA`
 - Priority: `P1`
 - Depends on: `CRU-261, CRU-210, CRU-211`
@@ -1615,7 +1615,7 @@
   - `docs/ASSET_SOURCES.md`
 
 ### CRU-263 - Integer-First Combat Baseline Refactor (Low-Number Scale)
-- Status: `TODO`
+- Status: `DONE`
 - Type: `Core`
 - Priority: `P0`
 - Depends on: `CRU-255, CRU-260`
@@ -1641,7 +1641,7 @@
   - `docs/ASSET_SOURCES.md`
 
 ### CRU-264 - Additive-Only Upgrade Math Cutover (Remove Multiplicative Drift)
-- Status: `TODO`
+- Status: `DONE`
 - Type: `Gameplay`
 - Priority: `P0`
 - Depends on: `CRU-263, CRU-261`
@@ -1879,7 +1879,7 @@
   - `docs/ASSET_SOURCES.md`
 
 ### CRU-234 - Integrated Balance and QA Pass for Army/Tier/Hero Expansion
-- Status: `TODO`
+- Status: `DONE`
 - Type: `QA`
 - Priority: `P0`
 - Depends on: `CRU-223, CRU-224, CRU-225, CRU-232, CRU-233, CRU-242, CRU-244`

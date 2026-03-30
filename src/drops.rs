@@ -1058,9 +1058,10 @@ fn commander_spawn_center(commanders: &Query<&Transform, With<CommanderUnit>>) -
 }
 
 pub fn scaled_pack_gold(base_gold: f32, wave_number: u32, commander_level: u32) -> f32 {
-    let wave_scale = 1.0 + wave_number.saturating_sub(1) as f32 * 0.06;
-    let level_scale = 1.0 + commander_level.saturating_sub(1) as f32 * 0.03;
-    (base_gold * wave_scale * level_scale).max(1.0)
+    let wave_scale = 1.0 + wave_number.saturating_sub(1) as f32 * 0.03;
+    let level_scale = 1.0 + commander_level.saturating_sub(1) as f32 * 0.012;
+    let combined_scale = (wave_scale * level_scale).clamp(1.0, 4.5);
+    (base_gold * combined_scale).max(1.0)
 }
 
 pub fn apply_gold_gain_multiplier(

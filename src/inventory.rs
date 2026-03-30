@@ -254,6 +254,8 @@ pub struct GearItemEntry {
     pub doctrine_tags: Vec<String>,
     #[serde(default)]
     pub nature: ItemNature,
+    #[serde(default = "default_item_scrap_gold_value")]
+    pub scrap_gold_value: f32,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
@@ -499,6 +501,8 @@ pub struct GearTemplateConfig {
     pub nature: ItemNature,
     #[serde(default = "default_template_weight")]
     pub drop_weight: f32,
+    #[serde(default = "default_template_scrap_gold_value")]
+    pub scrap_gold_value: f32,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -553,6 +557,7 @@ fn default_item_templates() -> Vec<GearTemplateConfig> {
             doctrine_tags: vec!["tempo".to_string(), "aura".to_string()],
             nature: ItemNature::Major,
             drop_weight: 1.0,
+            scrap_gold_value: 64.0,
         },
         GearTemplateConfig {
             id: "instrument_drum".to_string(),
@@ -570,6 +575,7 @@ fn default_item_templates() -> Vec<GearTemplateConfig> {
             doctrine_tags: vec!["sustain".to_string(), "frontline".to_string()],
             nature: ItemNature::Major,
             drop_weight: 1.0,
+            scrap_gold_value: 72.0,
         },
         GearTemplateConfig {
             id: "chant_battle_song".to_string(),
@@ -587,6 +593,7 @@ fn default_item_templates() -> Vec<GearTemplateConfig> {
             doctrine_tags: vec!["morale".to_string(), "support".to_string()],
             nature: ItemNature::Major,
             drop_weight: 1.0,
+            scrap_gold_value: 74.0,
         },
         GearTemplateConfig {
             id: "squire_young".to_string(),
@@ -606,6 +613,7 @@ fn default_item_templates() -> Vec<GearTemplateConfig> {
             doctrine_tags: vec!["support".to_string()],
             nature: ItemNature::Minor,
             drop_weight: 1.0,
+            scrap_gold_value: 34.0,
         },
         GearTemplateConfig {
             id: "symbol_cross".to_string(),
@@ -624,6 +632,7 @@ fn default_item_templates() -> Vec<GearTemplateConfig> {
             doctrine_tags: vec!["aura".to_string(), "faction".to_string()],
             nature: ItemNature::Major,
             drop_weight: 1.0,
+            scrap_gold_value: 66.0,
         },
         GearTemplateConfig {
             id: "symbol_crescent".to_string(),
@@ -642,6 +651,7 @@ fn default_item_templates() -> Vec<GearTemplateConfig> {
             doctrine_tags: vec!["aura".to_string(), "faction".to_string()],
             nature: ItemNature::Major,
             drop_weight: 1.0,
+            scrap_gold_value: 66.0,
         },
         GearTemplateConfig {
             id: "sword_simple".to_string(),
@@ -659,6 +669,7 @@ fn default_item_templates() -> Vec<GearTemplateConfig> {
             doctrine_tags: vec!["melee".to_string(), "tempo".to_string()],
             nature: ItemNature::Minor,
             drop_weight: 1.0,
+            scrap_gold_value: 30.0,
         },
         GearTemplateConfig {
             id: "bow_simple".to_string(),
@@ -676,6 +687,7 @@ fn default_item_templates() -> Vec<GearTemplateConfig> {
             doctrine_tags: vec!["ranged".to_string(), "anti_armor".to_string()],
             nature: ItemNature::Minor,
             drop_weight: 1.0,
+            scrap_gold_value: 32.0,
         },
         GearTemplateConfig {
             id: "armor_simple".to_string(),
@@ -693,12 +705,21 @@ fn default_item_templates() -> Vec<GearTemplateConfig> {
             doctrine_tags: vec!["defense".to_string(), "frontline".to_string()],
             nature: ItemNature::Minor,
             drop_weight: 1.0,
+            scrap_gold_value: 32.0,
         },
     ]
 }
 
 fn default_template_weight() -> f32 {
     1.0
+}
+
+fn default_template_scrap_gold_value() -> f32 {
+    18.0
+}
+
+fn default_item_scrap_gold_value() -> f32 {
+    18.0
 }
 
 fn load_item_template_catalog_from_disk(path: &Path) -> Option<ItemTemplateCatalog> {
@@ -735,6 +756,11 @@ fn load_item_template_catalog_from_disk(path: &Path) -> Option<ItemTemplateCatal
             template.drop_weight = 0.0;
         } else {
             template.drop_weight = template.drop_weight.max(0.0);
+        }
+        if !template.scrap_gold_value.is_finite() {
+            template.scrap_gold_value = default_template_scrap_gold_value();
+        } else {
+            template.scrap_gold_value = template.scrap_gold_value.clamp(1.0, 999.0);
         }
         template.downside = template
             .downside
@@ -994,6 +1020,13 @@ pub fn item_rarity_tier_for_display(item: &GearItemEntry) -> GearRarity {
 }
 
 pub fn item_scrap_gold_value(item: &GearItemEntry) -> f32 {
+    if item.scrap_gold_value.is_finite() && item.scrap_gold_value > 0.0 {
+        return item.scrap_gold_value.round();
+    }
+    legacy_item_scrap_gold_value(item)
+}
+
+fn legacy_item_scrap_gold_value(item: &GearItemEntry) -> f32 {
     let overall_tier_points = item_rarity_tier_for_display(item).points() as f32;
     let stat_tier_points: f32 = item
         .stats
@@ -1011,6 +1044,115 @@ pub fn item_scrap_gold_value(item: &GearItemEntry) -> f32 {
     };
     let raw = nature_bonus + overall_tier_points * 10.0 + stat_tier_points * 4.0 + special_bonus;
     raw.max(1.0).round()
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
+enum TooltipBand {
+    VeryLow,
+    Low,
+    Moderate,
+    High,
+    VeryHigh,
+}
+
+impl TooltipBand {
+    fn from_thresholds(value: f32, thresholds: [f32; 4]) -> Self {
+        if value < thresholds[0] {
+            Self::VeryLow
+        } else if value < thresholds[1] {
+            Self::Low
+        } else if value < thresholds[2] {
+            Self::Moderate
+        } else if value < thresholds[3] {
+            Self::High
+        } else {
+            Self::VeryHigh
+        }
+    }
+
+    fn from_descending_thresholds(value: f32, thresholds: [f32; 4]) -> Self {
+        if value > thresholds[0] {
+            Self::VeryLow
+        } else if value > thresholds[1] {
+            Self::Low
+        } else if value > thresholds[2] {
+            Self::Moderate
+        } else if value > thresholds[3] {
+            Self::High
+        } else {
+            Self::VeryHigh
+        }
+    }
+
+    const fn label(self) -> &'static str {
+        match self {
+            Self::VeryLow => "Very Low",
+            Self::Low => "Low",
+            Self::Moderate => "Moderate",
+            Self::High => "High",
+            Self::VeryHigh => "Very High",
+        }
+    }
+
+    const fn meter(self) -> &'static str {
+        match self {
+            Self::VeryLow => "|",
+            Self::Low => "||",
+            Self::Moderate => "|||",
+            Self::High => "||||",
+            Self::VeryHigh => "|||||",
+        }
+    }
+}
+
+fn stat_band_for_tooltip(stat: &GearRolledStat) -> TooltipBand {
+    match stat.kind {
+        GearStatKind::DamagePercent => {
+            TooltipBand::from_thresholds(stat.value, [0.06, 0.10, 0.14, 0.18])
+        }
+        GearStatKind::AttackSpeedPercent => {
+            TooltipBand::from_thresholds(stat.value, [0.05, 0.08, 0.12, 0.16])
+        }
+        GearStatKind::ArmorFlat => TooltipBand::from_thresholds(stat.value, [1.0, 2.5, 4.0, 6.0]),
+        GearStatKind::RangedRangeFlat => {
+            TooltipBand::from_thresholds(stat.value, [8.0, 16.0, 24.0, 32.0])
+        }
+        GearStatKind::MoveSpeedFlat => {
+            TooltipBand::from_thresholds(stat.value, [4.0, 8.0, 12.0, 16.0])
+        }
+        GearStatKind::CommanderMaxHealthFlat => {
+            TooltipBand::from_thresholds(stat.value, [4.0, 8.0, 12.0, 16.0])
+        }
+        GearStatKind::MoraleRegenPerSec => {
+            TooltipBand::from_thresholds(stat.value, [0.2, 0.4, 0.7, 1.0])
+        }
+        GearStatKind::MoraleLossResistancePercent => {
+            TooltipBand::from_thresholds(stat.value, [0.08, 0.14, 0.2, 0.28])
+        }
+        GearStatKind::AuraRangeFlat => {
+            TooltipBand::from_thresholds(stat.value, [8.0, 14.0, 20.0, 28.0])
+        }
+        GearStatKind::AuraEnemyEffectPercent => {
+            TooltipBand::from_thresholds(stat.value, [0.05, 0.09, 0.13, 0.17])
+        }
+        GearStatKind::CooldownReductionSecs => {
+            TooltipBand::from_descending_thresholds(stat.value, [1.8, 1.4, 1.0, 0.6])
+        }
+        GearStatKind::ArmorPulseFlat => {
+            TooltipBand::from_thresholds(stat.value, [1.0, 2.5, 4.0, 5.5])
+        }
+        GearStatKind::SquirePrimary => {
+            TooltipBand::from_thresholds(stat.value, [0.04, 0.07, 0.10, 0.13])
+        }
+        GearStatKind::SquireSecondary => {
+            TooltipBand::from_thresholds(stat.value, [0.03, 0.06, 0.09, 0.12])
+        }
+    }
+}
+
+fn format_stat_band_for_tooltip(stat: &GearRolledStat) -> String {
+    let band = stat_band_for_tooltip(stat);
+    format!("{} {}", band.meter(), band.label())
 }
 
 pub fn format_stat_value_for_tooltip(stat: &GearRolledStat) -> String {
@@ -1038,7 +1180,7 @@ pub fn gear_item_type_label(item_type: GearItemType) -> &'static str {
     }
 }
 
-pub fn gear_item_tooltip(item: &GearItemEntry) -> String {
+pub fn gear_item_tooltip(item: &GearItemEntry, show_exact_values: bool) -> String {
     let mut lines = vec![
         format!(
             "{} [{} | {}]",
@@ -1050,12 +1192,23 @@ pub fn gear_item_tooltip(item: &GearItemEntry) -> String {
         item.description.clone(),
     ];
     for stat in &item.stats {
-        lines.push(format!(
-            "- {} ({}) {}",
-            stat.kind.label(),
-            stat.rarity.label(),
-            format_stat_value_for_tooltip(stat)
-        ));
+        let qualitative = format_stat_band_for_tooltip(stat);
+        if show_exact_values {
+            lines.push(format!(
+                "- {} ({}) {} [{}]",
+                stat.kind.label(),
+                stat.rarity.label(),
+                qualitative,
+                format_stat_value_for_tooltip(stat)
+            ));
+        } else {
+            lines.push(format!(
+                "- {} ({}) {}",
+                stat.kind.label(),
+                stat.rarity.label(),
+                qualitative
+            ));
+        }
     }
     if let Some(effect) = item.special_effect {
         lines.push(format!("- Effect: {}", effect.label()));
@@ -1178,6 +1331,7 @@ fn roll_item_from_template(
         downside: template.downside.clone(),
         doctrine_tags: template.doctrine_tags.clone(),
         nature: template.nature,
+        scrap_gold_value: template.scrap_gold_value,
     }
 }
 
@@ -1564,6 +1718,7 @@ mod tests {
             downside: None,
             doctrine_tags: Vec::new(),
             nature: ItemNature::Minor,
+            scrap_gold_value: 18.0,
         }
     }
 
@@ -1668,11 +1823,35 @@ mod tests {
             downside: Some("Armor reduced by 1.".to_string()),
             doctrine_tags: vec!["tempo".to_string(), "aura".to_string()],
             nature: ItemNature::Major,
+            scrap_gold_value: 64.0,
         };
-        let tooltip = gear_item_tooltip(&item);
+        let tooltip = gear_item_tooltip(&item, false);
         assert!(tooltip.contains("[Rare | Major]"));
+        assert!(tooltip.contains("|||"));
         assert!(tooltip.contains("Doctrine Tags: tempo, aura"));
         assert!(tooltip.contains("Downside: Armor reduced by 1."));
+    }
+
+    #[test]
+    fn item_tooltip_can_surface_exact_values_in_advanced_mode() {
+        let item = make_test_item(GearItemType::MeleeWeapon, GearStatKind::DamagePercent, 0.12);
+        let tooltip = gear_item_tooltip(&item, true);
+        assert!(tooltip.contains("+12.0%"));
+    }
+
+    #[test]
+    fn scrap_value_is_deterministic_and_authored_per_template() {
+        let mut rng = InventoryRngState::from_seed(0xBADA_55E5);
+        let item =
+            super::roll_item_from_template(&mut rng, &super::default_item_templates()[0], 0.0);
+        let copy =
+            super::roll_item_from_template(&mut rng, &super::default_item_templates()[0], 0.0);
+        assert_eq!(item.template_id, copy.template_id);
+        assert!(
+            (super::item_scrap_gold_value(&item) - super::item_scrap_gold_value(&copy)).abs()
+                < 0.001
+        );
+        assert!((super::item_scrap_gold_value(&item) - 64.0).abs() < 0.001);
     }
 
     #[test]
@@ -1703,6 +1882,7 @@ mod tests {
                     doctrine_tags: vec!["aura".to_string()],
                     nature: ItemNature::Minor,
                     drop_weight: 1.0,
+                    scrap_gold_value: 26.0,
                 },
                 GearTemplateConfig {
                     id: "symbol_faction".to_string(),
@@ -1728,6 +1908,7 @@ mod tests {
                     doctrine_tags: vec!["aura".to_string()],
                     nature: ItemNature::Minor,
                     drop_weight: 1.0,
+                    scrap_gold_value: 26.0,
                 },
             ],
         };
