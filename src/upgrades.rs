@@ -37,6 +37,31 @@ const DOCTRINE_COUNTERVOLLEY_MORALE_LOSS_MULTIPLIER: f32 = 1.12;
 const DOCTRINE_PIKE_HEDGEHOG_DAMAGE_BONUS: f32 = 0.16;
 const DOCTRINE_PIKE_HEDGEHOG_MOVE_SPEED_PENALTY: f32 = 14.0;
 const DOCTRINE_PIKE_HEDGEHOG_MORALE_LOSS_MULTIPLIER: f32 = 0.88;
+const DOCTRINE_IRON_PHALANX_DAMAGE_BONUS: f32 = 0.08;
+const DOCTRINE_IRON_PHALANX_MOVE_SPEED_PENALTY: f32 = 10.0;
+const DOCTRINE_IRON_PHALANX_MORALE_LOSS_MULTIPLIER: f32 = 0.82;
+const DOCTRINE_HAILSTORM_DAMAGE_BONUS: f32 = 0.20;
+const DOCTRINE_HAILSTORM_ATTACK_SPEED_BONUS: f32 = 0.14;
+const DOCTRINE_HAILSTORM_MORALE_LOSS_MULTIPLIER: f32 = 1.10;
+const DOCTRINE_RAZOR_LANCE_DAMAGE_BONUS: f32 = 0.22;
+const DOCTRINE_RAZOR_LANCE_MOVE_SPEED_BONUS: f32 = 16.0;
+const DOCTRINE_RAZOR_LANCE_MORALE_LOSS_MULTIPLIER: f32 = 1.15;
+const DOCTRINE_BATTLE_MEDICS_DAMAGE_PENALTY: f32 = 0.12;
+const DOCTRINE_BATTLE_MEDICS_RESCUE_TIME_MULTIPLIER: f32 = 0.70;
+const DOCTRINE_LAST_STAND_DAMAGE_BONUS: f32 = 0.15;
+const DOCTRINE_LAST_STAND_MORALE_LOSS_MULTIPLIER: f32 = 0.90;
+const DOCTRINE_PUNITIVE_RITES_DAMAGE_BONUS: f32 = 0.10;
+const DOCTRINE_PUNITIVE_RITES_EXECUTE_THRESHOLD: f32 = 0.12;
+const DOCTRINE_PUNITIVE_RITES_RESCUE_PENALTY: f32 = 1.20;
+const DOCTRINE_SCREENED_ADVANCE_DAMAGE_BONUS: f32 = 0.12;
+const DOCTRINE_SCREENED_ADVANCE_MOVE_SPEED_PENALTY: f32 = 8.0;
+const DOCTRINE_SCREENED_ADVANCE_MORALE_LOSS_MULTIPLIER: f32 = 0.90;
+const DOCTRINE_HOUNDMASTERS_ATTACK_SPEED_BONUS: f32 = 0.14;
+const DOCTRINE_HOUNDMASTERS_MOVE_SPEED_BONUS: f32 = 12.0;
+const DOCTRINE_HOUNDMASTERS_MORALE_LOSS_MULTIPLIER: f32 = 1.08;
+const DOCTRINE_BATTLE_STANDARD_DAMAGE_BONUS: f32 = 0.10;
+const DOCTRINE_BATTLE_STANDARD_MOVE_SPEED_PENALTY: f32 = 6.0;
+const DOCTRINE_BATTLE_STANDARD_MORALE_LOSS_MULTIPLIER: f32 = 0.82;
 const UNIQUE_SLOT_TRADEOFF_KIND: &str = "unique_slot_tradeoff";
 const MAX_SKILL_COOLDOWN_REDUCTION: f32 = 0.75;
 const LUCK_TO_CRIT_CHANCE_MULTIPLIER: f32 = 0.5;
@@ -76,6 +101,16 @@ pub fn is_supported_upgrade_kind(kind: &str) -> bool {
             | "doctrine_execution_rites"
             | "doctrine_countervolley"
             | "doctrine_pike_hedgehog"
+            | "doctrine_iron_phalanx"
+            | "doctrine_hailstorm"
+            | "doctrine_razor_lance"
+            | "doctrine_battle_medics"
+            | "doctrine_tax_levy"
+            | "doctrine_last_stand"
+            | "doctrine_punitive_rites"
+            | "doctrine_screened_advance"
+            | "doctrine_houndmasters"
+            | "doctrine_battle_standard"
             | UNIQUE_SLOT_TRADEOFF_KIND
     )
 }
@@ -1433,6 +1468,16 @@ pub fn upgrade_card_icon(upgrade: &UpgradeConfig) -> UpgradeCardIcon {
         "doctrine_execution_rites" => UpgradeCardIcon::MobJustice,
         "doctrine_countervolley" => UpgradeCardIcon::AttackSpeed,
         "doctrine_pike_hedgehog" => UpgradeCardIcon::Armor,
+        "doctrine_iron_phalanx" => UpgradeCardIcon::Armor,
+        "doctrine_hailstorm" => UpgradeCardIcon::AttackSpeed,
+        "doctrine_razor_lance" => UpgradeCardIcon::MoveSpeed,
+        "doctrine_battle_medics" => UpgradeCardIcon::HospitalierAura,
+        "doctrine_tax_levy" => UpgradeCardIcon::Luck,
+        "doctrine_last_stand" => UpgradeCardIcon::MobFury,
+        "doctrine_punitive_rites" => UpgradeCardIcon::MobJustice,
+        "doctrine_screened_advance" => UpgradeCardIcon::Armor,
+        "doctrine_houndmasters" => UpgradeCardIcon::MoveSpeed,
+        "doctrine_battle_standard" => UpgradeCardIcon::AuthorityAura,
         "unique_slot_tradeoff" => UpgradeCardIcon::AuthorityAura,
         "formation_breach" => UpgradeCardIcon::FormationSquare,
         "mob_fury" => UpgradeCardIcon::MobFury,
@@ -1470,6 +1515,16 @@ pub fn upgrade_display_title(upgrade: &UpgradeConfig) -> &'static str {
         "doctrine_execution_rites" => "Execution Rites",
         "doctrine_countervolley" => "Countervolley Doctrine",
         "doctrine_pike_hedgehog" => "Pike Hedgehog",
+        "doctrine_iron_phalanx" => "Iron Phalanx",
+        "doctrine_hailstorm" => "Hailstorm Doctrine",
+        "doctrine_razor_lance" => "Razor Lance",
+        "doctrine_battle_medics" => "Battle Medics",
+        "doctrine_tax_levy" => "Tax Levy",
+        "doctrine_last_stand" => "Last Stand Doctrine",
+        "doctrine_punitive_rites" => "Punitive Rites",
+        "doctrine_screened_advance" => "Screened Advance",
+        "doctrine_houndmasters" => "Houndmasters",
+        "doctrine_battle_standard" => "Battle Standard",
         "unique_slot_tradeoff" => "War Council Edict",
         "formation_breach" => "Into the Wolf's Dev",
         "mob_fury" => "Mob's Fury",
@@ -1559,6 +1614,16 @@ pub fn upgrade_display_description(upgrade: &UpgradeConfig) -> String {
         "doctrine_execution_rites" => "Major doctrine: conditional execute threshold increases and damage rises. Downside: rescue channels are slower while active.".to_string(),
         "doctrine_countervolley" => "Major doctrine: archer-heavy rosters gain burst damage and attack cadence. Downside: morale loss under pressure increases.".to_string(),
         "doctrine_pike_hedgehog" => "Major doctrine: anti-cavalry lines gain damage and steadier morale under pressure. Downside: formation movement slows.".to_string(),
+        "doctrine_iron_phalanx" => "Major doctrine: shielded-heavy rosters gain steadier morale and frontline pressure. Downside: movement speed is reduced.".to_string(),
+        "doctrine_hailstorm" => "Major doctrine: archer-heavy rosters gain high ranged burst and cadence. Downside: morale loss under pressure increases.".to_string(),
+        "doctrine_razor_lance" => "Major doctrine: cavalry-focused rosters gain burst damage and movement speed. Downside: morale loss under pressure increases.".to_string(),
+        "doctrine_battle_medics" => "Major doctrine: support-heavy rosters gain fast rescue cadence. Downside: global damage is reduced.".to_string(),
+        "doctrine_tax_levy" => "Major doctrine: treasury-focused run with larger gold and luck gains. Downside: attack cadence is reduced.".to_string(),
+        "doctrine_last_stand" => "Major doctrine: frontline-heavy rosters gain durable pressure and morale stability. Downside: rescue cadence slows slightly.".to_string(),
+        "doctrine_punitive_rites" => "Major doctrine: anti-armor rosters gain execute pressure. Downside: rescue channels become slower while active.".to_string(),
+        "doctrine_screened_advance" => "Major doctrine: anti-cavalry lines gain stable pressure and lower morale loss. Downside: movement speed is reduced.".to_string(),
+        "doctrine_houndmasters" => "Major doctrine: skirmisher-heavy rosters gain raid cadence and mobility. Downside: morale loss under pressure increases.".to_string(),
+        "doctrine_battle_standard" => "Major doctrine: frontline command cohesion improves with lower morale loss. Downside: movement speed is reduced.".to_string(),
         "unique_slot_tradeoff" => format!(
             "Gain +{:.0} Unique upgrade slots, but narrows late-run doctrine flexibility.",
             upgrade.value.max(0.0)
@@ -1725,6 +1790,11 @@ fn apply_upgrade(
             buffs.attack_speed_multiplier += 0.12;
             buffs.armor_bonus = (buffs.armor_bonus - 1.5).max(-8.0);
         }
+        "doctrine_tax_levy" => {
+            buffs.gold_gain_multiplier += upgrade.value;
+            buffs.luck_bonus += 0.12;
+            buffs.attack_speed_multiplier = (buffs.attack_speed_multiplier - 0.08).max(0.6);
+        }
         "unlock_formation" => {
             if let Some(formation) = upgrade
                 .formation_id
@@ -1739,7 +1809,16 @@ fn apply_upgrade(
         | "mob_mercy"
         | "doctrine_execution_rites"
         | "doctrine_countervolley"
-        | "doctrine_pike_hedgehog" => {
+        | "doctrine_pike_hedgehog"
+        | "doctrine_iron_phalanx"
+        | "doctrine_hailstorm"
+        | "doctrine_razor_lance"
+        | "doctrine_battle_medics"
+        | "doctrine_last_stand"
+        | "doctrine_punitive_rites"
+        | "doctrine_screened_advance"
+        | "doctrine_houndmasters"
+        | "doctrine_battle_standard" => {
             register_conditional_upgrade(conditional_owned, upgrade);
         }
         _ => {}
@@ -1915,6 +1994,62 @@ fn conditional_effects_from_owned(
                 effects.friendly_move_speed_bonus -= DOCTRINE_PIKE_HEDGEHOG_MOVE_SPEED_PENALTY;
                 effects.friendly_morale_loss_multiplier +=
                     DOCTRINE_PIKE_HEDGEHOG_MORALE_LOSS_MULTIPLIER - 1.0;
+            }
+            "doctrine_iron_phalanx" => {
+                effects.friendly_damage_multiplier += DOCTRINE_IRON_PHALANX_DAMAGE_BONUS;
+                effects.friendly_move_speed_bonus -= DOCTRINE_IRON_PHALANX_MOVE_SPEED_PENALTY;
+                effects.friendly_morale_loss_multiplier +=
+                    DOCTRINE_IRON_PHALANX_MORALE_LOSS_MULTIPLIER - 1.0;
+            }
+            "doctrine_hailstorm" => {
+                effects.friendly_damage_multiplier += DOCTRINE_HAILSTORM_DAMAGE_BONUS;
+                effects.friendly_attack_speed_multiplier += DOCTRINE_HAILSTORM_ATTACK_SPEED_BONUS;
+                effects.friendly_morale_loss_multiplier +=
+                    DOCTRINE_HAILSTORM_MORALE_LOSS_MULTIPLIER - 1.0;
+            }
+            "doctrine_razor_lance" => {
+                effects.friendly_damage_multiplier += DOCTRINE_RAZOR_LANCE_DAMAGE_BONUS;
+                effects.friendly_move_speed_bonus += DOCTRINE_RAZOR_LANCE_MOVE_SPEED_BONUS;
+                effects.friendly_morale_loss_multiplier +=
+                    DOCTRINE_RAZOR_LANCE_MORALE_LOSS_MULTIPLIER - 1.0;
+            }
+            "doctrine_battle_medics" => {
+                effects.friendly_damage_multiplier -= DOCTRINE_BATTLE_MEDICS_DAMAGE_PENALTY;
+                effects.rescue_time_multiplier = effects
+                    .rescue_time_multiplier
+                    .min(DOCTRINE_BATTLE_MEDICS_RESCUE_TIME_MULTIPLIER);
+            }
+            "doctrine_last_stand" => {
+                effects.friendly_damage_multiplier += DOCTRINE_LAST_STAND_DAMAGE_BONUS;
+                effects.friendly_morale_loss_multiplier +=
+                    DOCTRINE_LAST_STAND_MORALE_LOSS_MULTIPLIER - 1.0;
+                effects.rescue_time_multiplier += 0.08;
+            }
+            "doctrine_punitive_rites" => {
+                effects.friendly_damage_multiplier += DOCTRINE_PUNITIVE_RITES_DAMAGE_BONUS;
+                effects.execute_below_health_ratio = effects
+                    .execute_below_health_ratio
+                    .max(DOCTRINE_PUNITIVE_RITES_EXECUTE_THRESHOLD);
+                effects.rescue_time_multiplier += DOCTRINE_PUNITIVE_RITES_RESCUE_PENALTY - 1.0;
+            }
+            "doctrine_screened_advance" => {
+                effects.friendly_damage_multiplier += DOCTRINE_SCREENED_ADVANCE_DAMAGE_BONUS;
+                effects.friendly_move_speed_bonus -= DOCTRINE_SCREENED_ADVANCE_MOVE_SPEED_PENALTY;
+                effects.friendly_morale_loss_multiplier +=
+                    DOCTRINE_SCREENED_ADVANCE_MORALE_LOSS_MULTIPLIER - 1.0;
+            }
+            "doctrine_houndmasters" => {
+                effects.friendly_attack_speed_multiplier +=
+                    DOCTRINE_HOUNDMASTERS_ATTACK_SPEED_BONUS;
+                effects.friendly_move_speed_bonus += DOCTRINE_HOUNDMASTERS_MOVE_SPEED_BONUS;
+                effects.friendly_morale_loss_multiplier +=
+                    DOCTRINE_HOUNDMASTERS_MORALE_LOSS_MULTIPLIER - 1.0;
+            }
+            "doctrine_battle_standard" => {
+                effects.friendly_damage_multiplier += DOCTRINE_BATTLE_STANDARD_DAMAGE_BONUS;
+                effects.friendly_move_speed_bonus -= DOCTRINE_BATTLE_STANDARD_MOVE_SPEED_PENALTY;
+                effects.friendly_morale_loss_multiplier +=
+                    DOCTRINE_BATTLE_STANDARD_MORALE_LOSS_MULTIPLIER - 1.0;
             }
             _ => {}
         }

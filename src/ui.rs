@@ -9951,6 +9951,15 @@ fn conditional_upgrade_hud_title(kind: &str) -> &'static str {
         "doctrine_execution_rites" => "Execution Rites",
         "doctrine_countervolley" => "Countervolley",
         "doctrine_pike_hedgehog" => "Pike Hedgehog",
+        "doctrine_iron_phalanx" => "Iron Phalanx",
+        "doctrine_hailstorm" => "Hailstorm",
+        "doctrine_razor_lance" => "Razor Lance",
+        "doctrine_battle_medics" => "Battle Medics",
+        "doctrine_last_stand" => "Last Stand",
+        "doctrine_punitive_rites" => "Punitive Rites",
+        "doctrine_screened_advance" => "Screened Advance",
+        "doctrine_houndmasters" => "Houndmasters",
+        "doctrine_battle_standard" => "Battle Standard",
         _ => "Conditional Upgrade",
     }
 }

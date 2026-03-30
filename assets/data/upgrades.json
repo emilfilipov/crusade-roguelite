@@ -253,6 +253,114 @@
       "doctrine_tags": ["support", "sustain"]
     },
     {
+      "id": "vanguard_plates",
+      "kind": "armor",
+      "value": 2.2,
+      "reward_lane": "minor",
+      "stack_cap": 4,
+      "diminishing_factor": 0.86,
+      "doctrine_tags": ["defense", "shielded"]
+    },
+    {
+      "id": "shield_drill",
+      "kind": "attack_speed",
+      "value": 0.07,
+      "reward_lane": "minor",
+      "stack_cap": 4,
+      "diminishing_factor": 0.87,
+      "doctrine_tags": ["tempo", "shielded"]
+    },
+    {
+      "id": "heavy_fletching",
+      "kind": "damage",
+      "value": 6.5,
+      "reward_lane": "minor",
+      "stack_cap": 4,
+      "diminishing_factor": 0.88,
+      "doctrine_tags": ["archer", "damage"]
+    },
+    {
+      "id": "skirmisher_stride",
+      "kind": "move_speed",
+      "value": 9.0,
+      "reward_lane": "minor",
+      "stack_cap": 4,
+      "diminishing_factor": 0.85,
+      "doctrine_tags": ["skirmisher", "mobility"]
+    },
+    {
+      "id": "lancer_tempo",
+      "kind": "attack_speed",
+      "value": 0.06,
+      "reward_lane": "minor",
+      "stack_cap": 4,
+      "diminishing_factor": 0.88,
+      "doctrine_tags": ["cavalry", "tempo"]
+    },
+    {
+      "id": "field_ledgers",
+      "kind": "quartermaster",
+      "value": 0.1,
+      "reward_lane": "minor",
+      "stack_cap": 4,
+      "diminishing_factor": 0.9,
+      "doctrine_tags": ["economy", "support"]
+    },
+    {
+      "id": "salvage_crews",
+      "kind": "pickup_radius",
+      "value": 12.0,
+      "reward_lane": "minor",
+      "stack_cap": 3,
+      "diminishing_factor": 0.82,
+      "doctrine_tags": ["economy", "utility"]
+    },
+    {
+      "id": "omen_readers",
+      "kind": "luck",
+      "value": 0.04,
+      "reward_lane": "minor",
+      "stack_cap": 4,
+      "diminishing_factor": 0.86,
+      "doctrine_tags": ["luck", "support", "drops"]
+    },
+    {
+      "id": "precision_drills",
+      "kind": "crit_chance",
+      "value": 0.03,
+      "reward_lane": "minor",
+      "stack_cap": 4,
+      "diminishing_factor": 0.9,
+      "doctrine_tags": ["crit", "anti_armor"]
+    },
+    {
+      "id": "execution_weight",
+      "kind": "crit_damage",
+      "value": 0.14,
+      "reward_lane": "minor",
+      "stack_cap": 4,
+      "diminishing_factor": 0.9,
+      "doctrine_tags": ["crit", "anti_armor"]
+    },
+    {
+      "id": "command_relay",
+      "kind": "aura_radius",
+      "value": 18.0,
+      "reward_lane": "minor",
+      "stack_cap": 4,
+      "diminishing_factor": 0.86,
+      "doctrine_tags": ["aura", "frontline"]
+    },
+    {
+      "id": "triage_order",
+      "kind": "hospitalier_aura",
+      "value": 0.45,
+      "reward_lane": "minor",
+      "stack_cap": 4,
+      "diminishing_factor": 0.84,
+      "doctrine_tags": ["support", "sustain"]
+    },
+    {
       "id": "encirclement_doctrine",
       "kind": "formation_breach",
       "value": 20.0,
@@ -301,6 +409,122 @@
       "effect_trait_modifier_kind": "rescue_speed_multiplier",
       "effect_trait_modifier_value": -0.50,
       "downside": "Locks doctrine around support-heavy compositions."
+    },
+    {
+      "id": "doctrine_iron_phalanx",
+      "kind": "doctrine_iron_phalanx",
+      "value": 1.0,
+      "reward_lane": "major",
+      "one_time": true,
+      "doctrine_tags": ["shielded", "frontline", "control"],
+      "requirement_type": "band_at_least",
+      "requirement_band_stat": "shielded_share",
+      "requirement_band_at_least": "high",
+      "downside": "Slow march doctrine: movement speed drops."
+    },
+    {
+      "id": "doctrine_hailstorm",
+      "kind": "doctrine_hailstorm",
+      "value": 1.0,
+      "reward_lane": "major",
+      "one_time": true,
+      "doctrine_tags": ["archer", "tempo", "burst"],
+      "requirement_type": "band_at_least",
+      "requirement_band_stat": "archer_share",
+      "requirement_band_at_least": "high",
+      "downside": "Sustained pressure increases morale loss."
+    },
+    {
+      "id": "doctrine_razor_lance",
+      "kind": "doctrine_razor_lance",
+      "value": 1.0,
+      "reward_lane": "major",
+      "one_time": true,
+      "doctrine_tags": ["cavalry", "tempo", "burst"],
+      "requirement_type": "band_at_least",
+      "requirement_band_stat": "cavalry_share",
+      "requirement_band_at_least": "moderate",
+      "downside": "All-in pressure increases morale loss."
+    },
+    {
+      "id": "doctrine_battle_medics",
+      "kind": "doctrine_battle_medics",
+      "value": 1.0,
+      "reward_lane": "major",
+      "one_time": true,
+      "doctrine_tags": ["support", "sustain", "economy"],
+      "requirement_type": "band_at_least",
+      "requirement_band_stat": "support_share",
+      "requirement_band_at_least": "high",
+      "downside": "Damage output is reduced while doctrine is active."
+    },
+    {
+      "id": "doctrine_tax_levy",
+      "kind": "doctrine_tax_levy",
+      "value": 0.2,
+      "reward_lane": "major",
+      "one_time": true,
+      "doctrine_tags": ["economy", "luck"],
+      "downside": "Army attack cadence is reduced."
+    },
+    {
+      "id": "doctrine_last_stand",
+      "kind": "doctrine_last_stand",
+      "value": 1.0,
+      "reward_lane": "major",
+      "one_time": true,
+      "doctrine_tags": ["frontline", "sustain"],
+      "requirement_type": "band_at_least",
+      "requirement_band_stat": "frontline_share",
+      "requirement_band_at_least": "moderate",
+      "downside": "Rescue cadence slows slightly."
+    },
+    {
+      "id": "doctrine_punitive_rites",
+      "kind": "doctrine_punitive_rites",
+      "value": 1.0,
+      "reward_lane": "major",
+      "one_time": true,
+      "doctrine_tags": ["anti_armor", "execute"],
+      "requirement_type": "band_at_least",
+      "requirement_band_stat": "anti_armor_share",
+      "requirement_band_at_least": "moderate",
+      "downside": "Rescue channels become slower."
+    },
+    {
+      "id": "doctrine_screened_advance",
+      "kind": "doctrine_screened_advance",
+      "value": 1.0,
+      "reward_lane": "major",
+      "one_time": true,
+      "doctrine_tags": ["anti_cavalry", "control"],
+      "requirement_type": "band_at_least",
+      "requirement_band_stat": "anti_cavalry_share",
+      "requirement_band_at_least": "moderate",
+      "downside": "Formation pace is reduced."
+    },
+    {
+      "id": "doctrine_houndmasters",
+      "kind": "doctrine_houndmasters",
+      "value": 1.0,
+      "reward_lane": "major",
+      "one_time": true,
+      "doctrine_tags": ["skirmisher", "tempo"],
+      "requirement_type": "has_trait",
+      "requirement_trait": "skirmisher",
+      "downside": "Chaos doctrine raises morale loss under pressure."
+    },
+    {
+      "id": "doctrine_battle_standard",
+      "kind": "doctrine_battle_standard",
+      "value": 1.0,
+      "reward_lane": "major",
+      "one_time": true,
+      "doctrine_tags": ["frontline", "aura", "control"],
+      "requirement_type": "band_at_least",
+      "requirement_band_stat": "frontline_share",
+      "requirement_band_at_least": "high",
+      "downside": "Formation pace is reduced."
     }
   ]
 }

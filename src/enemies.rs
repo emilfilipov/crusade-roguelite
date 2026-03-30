@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::ai::{
     chase_step_distance, chase_target_positions, choose_nearest, choose_support_follow_target,
@@ -199,10 +199,8 @@ const MINOR_ARMY_COUNT_MULTIPLIER: f32 = 0.55;
 const MAJOR_ARMY_COUNT_MULTIPLIER: f32 = 1.25;
 const SMALL_ARMY_BATCH_GROWTH_INTERVAL_WAVES: u32 = 20;
 const MINOR_ARMY_BATCH_GROWTH_INTERVAL_WAVES: u32 = 20;
-const MAJOR_ARMY_BATCH_GROWTH_INTERVAL_WAVES: u32 = 20;
 const MAX_SMALL_ARMY_BATCHES_PER_WAVE: u32 = 5;
 const MAX_MINOR_ARMY_BATCHES_PER_WAVE: u32 = 4;
-const MAX_MAJOR_ARMY_BATCHES_PER_WAVE: u32 = 3;
 const MINOR_ARMY_STAT_MULTIPLIER: f32 = 1.12;
 const MAJOR_ARMY_STAT_MULTIPLIER: f32 = 1.30;
 const SMALL_ARMY_LOADOUT_SLOT_COUNT: usize = 3;
@@ -361,6 +359,7 @@ fn spawn_pending_enemy_batches(
     roster_economy: Option<Res<RosterEconomy>>,
     bounds: Option<Res<MapBounds>>,
     commanders: Query<&Transform, With<CommanderUnit>>,
+    alive_enemy_sources: Query<Option<&EnemySpawnSource>, With<EnemyUnit>>,
     mut wave_runtime: ResMut<WaveRuntime>,
 ) {
     if wave_runtime.pending_batches.is_empty() {
@@ -396,10 +395,35 @@ fn spawn_pending_enemy_batches(
     let mut spawn_sequence = wave_runtime.spawn_sequence;
     let mut spawn_rng_state = wave_runtime.spawn_rng_state;
     let mut pending_batches = std::mem::take(&mut wave_runtime.pending_batches);
+    let pending_non_major_waves: HashSet<u32> = pending_batches
+        .iter()
+        .filter(|batch| batch.remaining > 0 && !matches!(batch.lane, EnemyArmyLane::Major))
+        .map(|batch| batch.wave_number)
+        .collect();
+    let alive_non_major_enemy_count = alive_enemy_sources
+        .iter()
+        .filter(|source| {
+            !matches!(
+                source,
+                Some(EnemySpawnSource {
+                    lane: EnemySpawnLane::Major,
+                })
+            )
+        })
+        .count();
     let mut role_mix = std::mem::take(&mut wave_runtime.role_mix);
     let mut remaining = Vec::with_capacity(pending_batches.len());
     for mut batch in pending_batches.drain(..) {
         if current_time + f32::EPSILON < batch.next_spawn_time {
+            remaining.push(batch);
+            continue;
+        }
+        if should_delay_major_batch_spawn(
+            batch.lane,
+            batch.wave_number,
+            alive_non_major_enemy_count,
+            &pending_non_major_waves,
+        ) {
             remaining.push(batch);
             continue;
         }
@@ -1031,6 +1055,16 @@ pub fn is_major_army_wave(wave_number: u32) -> bool {
     wave_number > 0 && wave_number.is_multiple_of(10)
 }
 
+fn should_delay_major_batch_spawn(
+    lane: EnemyArmyLane,
+    wave_number: u32,
+    alive_non_major_enemy_count: usize,
+    pending_non_major_waves: &HashSet<u32>,
+) -> bool {
+    matches!(lane, EnemyArmyLane::Major)
+        && (alive_non_major_enemy_count > 0 || pending_non_major_waves.contains(&wave_number))
+}
+
 fn planned_wave_army_batches(
     base_count: u32,
     wave_number: u32,
@@ -1116,11 +1150,7 @@ fn minor_army_batch_count_for_wave(wave_number: u32) -> u32 {
 }
 
 fn major_army_batch_count_for_wave(wave_number: u32) -> u32 {
-    scaled_batch_count(
-        wave_number.saturating_sub(10),
-        MAJOR_ARMY_BATCH_GROWTH_INTERVAL_WAVES,
-        MAX_MAJOR_ARMY_BATCHES_PER_WAVE,
-    )
+    if wave_number >= MAX_WAVES { 2 } else { 1 }
 }
 
 pub fn enemy_army_level_for_difficulty(difficulty: GameDifficulty, player_level: u32) -> u32 {
@@ -2078,6 +2108,7 @@ pub fn decide_bandit_visual_state(
 #[cfg(test)]
 mod tests {
     use bevy::prelude::{Entity, Vec2};
+    use std::collections::HashSet;
     use std::path::Path;
 
     use crate::ai::{
@@ -2098,8 +2129,8 @@ mod tests {
         is_minor_army_wave, major_wave_preview_target_count_for_batch,
         max_inside_enemy_count_for_formation, next_enemy_stuck_secs, overflow_indices_by_distance,
         pick_next_spawn_role, planned_wave_army_batches, random_spawn_position,
-        should_start_crowd_hold, units_per_second_for_wave, units_to_spawn_for_wave,
-        wave_duration_secs, wave_stat_multiplier,
+        should_delay_major_batch_spawn, should_start_crowd_hold, units_per_second_for_wave,
+        units_to_spawn_for_wave, wave_duration_secs, wave_stat_multiplier,
     };
     use crate::formation::{ActiveFormation, formation_contains_position};
     use crate::map::MapBounds;
@@ -2246,6 +2277,7 @@ mod tests {
         let wave_21 = planned_wave_army_batches(120, 21, 1.0);
         let wave_22 = planned_wave_army_batches(120, 22, 1.0);
         let wave_30 = planned_wave_army_batches(120, 30, 1.0);
+        let wave_100 = planned_wave_army_batches(120, 100, 1.0);
 
         let wave_21_small = wave_21
             .iter()
@@ -2269,10 +2301,45 @@ mod tests {
             .iter()
             .filter(|entry| entry.lane == super::EnemyArmyLane::Major)
             .count();
-        assert!(
-            wave_30_major >= 2,
-            "major lane should split into multiple army batches by wave 30"
+        assert_eq!(
+            wave_30_major, 1,
+            "major lane should remain one batch before wave 100"
         );
+        let wave_100_major = wave_100
+            .iter()
+            .filter(|entry| entry.lane == super::EnemyArmyLane::Major)
+            .count();
+        assert_eq!(wave_100_major, 2, "wave 100 should spawn two major armies");
+    }
+
+    #[test]
+    fn major_batches_wait_for_non_major_enemies_and_batches() {
+        let mut pending = HashSet::new();
+        pending.insert(20u32);
+        assert!(should_delay_major_batch_spawn(
+            super::EnemyArmyLane::Major,
+            20,
+            0,
+            &pending
+        ));
+        assert!(should_delay_major_batch_spawn(
+            super::EnemyArmyLane::Major,
+            20,
+            4,
+            &HashSet::new()
+        ));
+        assert!(!should_delay_major_batch_spawn(
+            super::EnemyArmyLane::Major,
+            20,
+            0,
+            &HashSet::new()
+        ));
+        assert!(!should_delay_major_batch_spawn(
+            super::EnemyArmyLane::Minor,
+            20,
+            99,
+            &pending
+        ));
     }
 
     #[test]
